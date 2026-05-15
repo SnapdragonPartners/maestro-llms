@@ -27,10 +27,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # actions/* are first-party GitHub-owned; pinned by major tag,
-      # consistent with the Morris posture. Third-party actions below
-      # are pinned to commit SHAs (tags are mutable and have been
-      # exploited; see the March 2026 trivy-action incident).
+      # actions/* are first-party GitHub-owned, pinned by major tag.
+      # Linting and govulncheck are installed via `go install @<pinned
+      # version>` (immutable module versions, no third-party action)
+      # and compiled with this job's Go toolchain — building
+      # golangci-lint with an older Go than go.mod targets makes it
+      # refuse to run, which is why the prebuilt action binary is not
+      # used here.
       - name: Checkout repository
         uses: actions/checkout@v6
 
@@ -40,22 +43,30 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Cache Go tool binaries
+        id: cache-go-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: go-tools-${{ runner.os }}-golangci-${{ env.GOLANGCI_VERSION }}-vuln-${{ env.GOVULNCHECK_VERSION }}
+
+      - name: Install Go tools
+        if: steps.cache-go-tools.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@${{ env.GOLANGCI_VERSION }}
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+
       - name: Download dependencies
         run: go mod download
 
       - name: Lint
-        # golangci/golangci-lint-action@v6 pinned to commit SHA.
-        uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84
-        with:
-          version: ${{ env.GOLANGCI_VERSION }}
+        run: golangci-lint run
 
       - name: Build
         run: go build ./...
 
       - name: Vulnerability check
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
-          govulncheck ./...
+        run: govulncheck ./...
 
       - name: Test
         run: go test -cover ./...

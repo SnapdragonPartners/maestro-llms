@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# Git pre-push hook for maestro-llms.
+# Runs lint and unit tests before allowing a push. Bypass with
+# `git push --no-verify` only when you know what you are doing.
+
+set -e
+
+echo "Running pre-push checks..."
+
+echo "1. Linting..."
+if ! make lint; then
+    echo "Lint failed. Fix issues or push with --no-verify to bypass."
+    exit 1
+fi
+
+echo "2. Unit tests..."
+if ! make test; then
+    echo "Unit tests failed. Fix them or push with --no-verify to bypass."
+    exit 1
+fi
+
+echo "All pre-push checks passed."
+exit 0

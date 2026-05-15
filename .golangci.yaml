@@ -254,6 +254,15 @@ issues:
         - gosec
         - unparam
 
+    # fieldalignment prioritizes GC-scan/memory layout over readability.
+    # The core llms package is the public API surface: spec-faithful,
+    # readable field order outweighs the micro-optimization there. Provider,
+    # middleware, ratelimit, and testllm packages keep fieldalignment.
+    - linters:
+        - govet
+      text: "fieldalignment:"
+      path: "llms/[^/]+\\.go$"
+
     # fieldalignment prioritizes memory over readability; skip in tests
     - linters:
         - govet

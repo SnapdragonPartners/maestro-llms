@@ -51,6 +51,8 @@ type InMemoryLimiter struct {
 	maxConcurrency int
 	tokenWaitHits  int64
 	slotWaitHits   int64
+	tokenLimiting  bool
+	slotLimiting   bool
 	mu             sync.Mutex
 }
 
@@ -71,7 +73,14 @@ func NewInMemoryLimiter(cfg Config) *InMemoryLimiter {
 	if poll <= 0 {
 		poll = defaultPollInterval
 	}
-	capacity := int(float64(cfg.TokensPerMinute) * buffer)
+	// A positive rate must yield a positive bucket: with a sub-1 product
+	// (e.g. 1 TPM * 0.9) int truncation would give 0 and silently disable
+	// token limiting. Floor at 1 and keep the fractional refill via carry.
+	tokenLimiting := cfg.TokensPerMinute > 0
+	capacity := 0
+	if tokenLimiting {
+		capacity = max(1, int(float64(cfg.TokensPerMinute)*buffer))
+	}
 	return &InMemoryLimiter{
 		clock:          clock,
 		lastRefill:     clock(),
@@ -81,11 +90,13 @@ func NewInMemoryLimiter(cfg Config) *InMemoryLimiter {
 		availableTok:   capacity,
 		maxCapacity:    capacity,
 		maxConcurrency: cfg.MaxConcurrency,
+		tokenLimiting:  tokenLimiting,
+		slotLimiting:   cfg.MaxConcurrency > 0,
 	}
 }
 
-func (l *InMemoryLimiter) tokenLimited() bool { return l.maxCapacity > 0 }
-func (l *InMemoryLimiter) slotLimited() bool  { return l.maxConcurrency > 0 }
+func (l *InMemoryLimiter) tokenLimited() bool { return l.tokenLimiting }
+func (l *InMemoryLimiter) slotLimited() bool  { return l.slotLimiting }
 
 // refillLocked adds tokens accrued since the last refill, capped at capacity.
 // Caller holds l.mu.
@@ -113,9 +124,7 @@ func (l *InMemoryLimiter) refillLocked() {
 }
 
 func normalizeUnits(u UsageUnits) (tokens, slots int) {
-	tokens = max(u.tokens(), 0)
-	slots = max(u.Requests, 1)
-	return tokens, slots
+	return u.Tokens(), u.Slots()
 }
 
 func (l *InMemoryLimiter) limitErr(req ReservationRequest, reason string, retryAfter time.Duration) *llms.LimitError {
@@ -173,6 +182,13 @@ func (l *InMemoryLimiter) Reserve(ctx context.Context, req ReservationRequest) (
 
 	start := l.clock()
 	for {
+		// Honor cancellation before acquiring so a done context never
+		// consumes capacity (and so a post-sleep cancellation is caught
+		// before the next acquire attempt).
+		if err := ctx.Err(); err != nil {
+			return nil, l.limitErr(req, "context done before rate-limit capacity available", 0)
+		}
+
 		l.mu.Lock()
 		l.refillLocked()
 		ok, retryAfter := l.tryAcquireLocked(tokens, slots)
@@ -181,13 +197,20 @@ func (l *InMemoryLimiter) Reserve(ctx context.Context, req ReservationRequest) (
 			return &reservation{limiter: l, tokens: tokens, slots: slots}, nil
 		}
 
-		if l.maxWait > 0 && l.clock().Sub(start) >= l.maxWait {
-			return nil, l.limitErr(req, "rate limit wait exceeded MaxWait", retryAfter)
+		sleep := l.pollInterval
+		if l.maxWait > 0 {
+			remaining := l.maxWait - l.clock().Sub(start)
+			if remaining <= 0 {
+				return nil, l.limitErr(req, "rate limit wait exceeded MaxWait", retryAfter)
+			}
+			// Don't oversleep the budget: a PollInterval larger than the
+			// remaining MaxWait would block well past it.
+			sleep = min(sleep, remaining)
 		}
 		select {
 		case <-ctx.Done():
 			return nil, l.limitErr(req, "context done while waiting for rate-limit capacity", retryAfter)
-		case <-time.After(l.pollInterval):
+		case <-time.After(sleep):
 		}
 	}
 }
@@ -229,6 +252,18 @@ type reservation struct {
 	released  bool
 }
 
+// effectiveTokens is the total tokens to charge for actual usage. It covers
+// chat (TotalTokens) and embeddings (EmbeddingTokens), and adds cache tokens
+// on top since providers report those separately; overcounting is the safe
+// direction for a limiter.
+func effectiveTokens(u llms.Usage) int {
+	base := u.TotalTokens
+	if base <= 0 {
+		base = u.InputTokens + u.OutputTokens + u.EmbeddingTokens
+	}
+	return base + u.CacheReadTokens + u.CacheWriteTokens
+}
+
 // Commit reconciles actual token usage against the estimate. Lower actual
 // refunds the difference (capped at capacity); higher actual charges the
 // delta (the bucket may go negative, repaid by future refills, so traffic is
@@ -245,11 +280,11 @@ func (r *reservation) Commit(_ context.Context, usage llms.Usage) error {
 	if !l.tokenLimited() {
 		return nil
 	}
-	actual := usage.TotalTokens
-	if actual == 0 {
-		actual = usage.InputTokens + usage.OutputTokens
-	}
-	delta := actual - r.tokens // >0: used more than reserved; <0: refund
+	// Apply accrued refill against the old timestamp first; otherwise a
+	// later Reserve/Stats would refill from before the delta was charged
+	// and erase over-use debt (undercounting traffic).
+	l.refillLocked()
+	delta := effectiveTokens(usage) - r.tokens // >0: used more; <0: refund
 	l.availableTok -= delta
 	l.availableTok = min(l.availableTok, l.maxCapacity)
 	return nil

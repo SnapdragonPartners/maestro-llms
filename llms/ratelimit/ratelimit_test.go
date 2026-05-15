@@ -34,6 +34,15 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
+func mustReserve(t *testing.T, l Limiter, req ReservationRequest) Reservation {
+	t.Helper()
+	r, err := l.Reserve(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Reserve(%+v): %v", req.EstimatedUnits, err)
+	}
+	return r
+}
+
 func chatReq(tokens int) ReservationRequest {
 	return ReservationRequest{
 		Provider: "anthropic", Model: "claude", Operation: OperationChat,
@@ -102,12 +111,47 @@ func TestConcurrencyGateBlocksUntilRelease(t *testing.T) {
 	_ = r3.Release(context.Background())
 }
 
+func TestBlockedReserveProceedsAfterRelease(t *testing.T) {
+	l := NewInMemoryLimiter(Config{MaxConcurrency: 1, PollInterval: 5 * time.Millisecond})
+	r1 := mustReserve(t, l, chatReq(0))
+
+	done := make(chan error, 1)
+	go func() {
+		// Blocks in the poll loop until r1 is released (live context, not
+		// pre-canceled), then should succeed.
+		r2, err := l.Reserve(context.Background(), chatReq(0))
+		if r2 != nil {
+			_ = r2.Release(context.Background())
+		}
+		done <- err
+	}()
+
+	// Give the waiter time to enter the blocked poll loop, then free the slot.
+	time.Sleep(30 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("waiter returned before slot was released: %v", err)
+	default:
+	}
+	if err := r1.Release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("blocked waiter did not proceed after release: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked waiter did not unblock within 2s of release")
+	}
+}
+
 func TestCommitReconciliation(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)} // frozen: no refill interference
 	l := NewInMemoryLimiter(Config{TokensPerMinute: 1000, MaxConcurrency: 2, Clock: clk.Now})
 
 	// Under-use: reserve 200, actually use 50 -> refund 150.
-	r, _ := l.Reserve(context.Background(), chatReq(200))
+	r := mustReserve(t, l, chatReq(200))
 	s, _ := l.Stats(context.Background())
 	if s.AvailableTokens != 700 {
 		t.Fatalf("after reserve want 700, got %d", s.AvailableTokens)
@@ -128,7 +172,7 @@ func TestCommitReconciliation(t *testing.T) {
 
 	// Over-use: reserve 100, actually use 1000 -> bucket goes negative (debt),
 	// so traffic is never undercounted.
-	r2, _ := l.Reserve(context.Background(), chatReq(100))
+	r2 := mustReserve(t, l, chatReq(100))
 	if err := r2.Commit(context.Background(), llms.Usage{InputTokens: 400, OutputTokens: 600}); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +184,7 @@ func TestCommitReconciliation(t *testing.T) {
 
 func TestReleaseIdempotentAndSafeAfterCommit(t *testing.T) {
 	l := NewInMemoryLimiter(Config{TokensPerMinute: 1000, MaxConcurrency: 2})
-	r, _ := l.Reserve(context.Background(), chatReq(10))
+	r := mustReserve(t, l, chatReq(10))
 	if err := r.Commit(context.Background(), llms.Usage{TotalTokens: 10}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +203,7 @@ func TestLazyRefillFromClock(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)}
 	l := NewInMemoryLimiter(Config{TokensPerMinute: 600, MaxConcurrency: 1, Clock: clk.Now})
 	// capacity = 540, refill = 10 tok/sec.
-	r, _ := l.Reserve(context.Background(), chatReq(540))
+	r := mustReserve(t, l, chatReq(540))
 	_ = r.Release(context.Background())
 	s, _ := l.Stats(context.Background())
 	if s.AvailableTokens != 0 {

@@ -28,13 +28,24 @@ type UsageUnits struct {
 	Requests        int
 }
 
-// tokens returns the token count a reservation should hold for these units:
-// TotalTokensMax when set, otherwise InputTokens + OutputTokensMax.
-func (u UsageUnits) tokens() int {
-	if u.TotalTokensMax > 0 {
-		return u.TotalTokensMax
+// Tokens is the canonical token count a reservation should hold for these
+// units: TotalTokensMax when set, otherwise InputTokens + OutputTokensMax,
+// never negative. This normalization is exported so distributed Limiter
+// implementations in other packages account identically to the in-memory one
+// rather than re-deriving it.
+func (u UsageUnits) Tokens() int {
+	t := u.TotalTokensMax
+	if t <= 0 {
+		t = u.InputTokens + u.OutputTokensMax
 	}
-	return u.InputTokens + u.OutputTokensMax
+	return max(t, 0)
+}
+
+// Slots is the canonical number of concurrency slots a reservation holds:
+// Requests when positive, otherwise 1. Exported for the same cross-limiter
+// consistency reason as Tokens.
+func (u UsageUnits) Slots() int {
+	return max(u.Requests, 1)
 }
 
 // Subject identifies who a reservation is on behalf of. All fields are

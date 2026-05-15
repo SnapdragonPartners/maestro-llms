@@ -189,6 +189,12 @@ linters-settings:
       - wrapperFunc
       - importShadow
       - unnamedResult
+      # hugeParam conflicts structurally with the spec: ChatClient /
+      # EmbeddingClient pass ChatRequest/EmbeddingRequest by value
+      # (deliberate value semantics), so every provider, fake, and
+      # middleware method would trip it. Encoded once here rather than
+      # scattering nolints across every implementation.
+      - hugeParam
     settings:
       captLocal:
         paramsOnly: true

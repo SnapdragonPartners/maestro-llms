@@ -32,13 +32,17 @@ func TestFakeChatFixedText(t *testing.T) {
 
 func TestFakeChatScriptedResponsesInOrderThenRepeat(t *testing.T) {
 	c := &FakeChatClient{Responses: []llms.ChatResponse{
-		{Text: "first"}, {Text: "second"},
+		TextResponse("first"), TextResponse("second"),
 	}}
 	got := []string{}
 	for range 4 {
 		r, err := c.Complete(context.Background(), llms.ChatRequest{})
 		if err != nil {
 			t.Fatal(err)
+		}
+		// Message is the source of truth; Text must mirror it.
+		if r.Message.Content[0].Text != r.Text {
+			t.Fatalf("Text %q does not mirror Message %q", r.Text, r.Message.Content[0].Text)
 		}
 		got = append(got, r.Text)
 	}
@@ -62,8 +66,38 @@ func TestFakeChatErrorAndContextCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	c.Reset()
 	if _, err := c.Complete(ctx, llms.ChatRequest{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if len(c.Calls()) != 1 {
+		t.Fatalf("canceled call not recorded: %d calls", len(c.Calls()))
+	}
+}
+
+func TestFakeChatRecordingIsolatedFromCallerMutation(t *testing.T) {
+	c := &FakeChatClient{Text: "ok"}
+	req := llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("original")},
+		Metadata: map[string]string{"k": "v1"},
+	}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	// Mutate the caller's request and its nested slice/map after the call.
+	req.Messages[0].Content[0].Text = "mutated"
+	req.Metadata["k"] = "v2"
+
+	rec := c.Calls()[0]
+	if rec.Messages[0].Content[0].Text != "original" || rec.Metadata["k"] != "v1" {
+		t.Fatalf("recording reflects post-call mutation: %+v / %v", rec.Messages[0].Content[0], rec.Metadata)
+	}
+}
+
+func TestTextResponseIsSpecFaithful(t *testing.T) {
+	r := TextResponse("hi")
+	if r.Message.Role != llms.RoleAssistant || r.Message.Content[0].Text != "hi" || r.Text != "hi" {
+		t.Fatalf("not spec-faithful: %+v", r)
 	}
 }
 

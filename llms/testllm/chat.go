@@ -38,12 +38,17 @@ func (f *FakeChatClient) Model() llms.ModelRef { return f.ModelRef }
 
 // Complete records the request and returns the next scripted response.
 func (f *FakeChatClient) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+	// Record before the context check so a canceled call is still observable
+	// (the doc promises every request is recorded).
+	f.mu.Lock()
+	f.calls = append(f.calls, copyChatRequest(req))
+	f.mu.Unlock()
+
 	if err := ctx.Err(); err != nil {
 		return llms.ChatResponse{}, fmt.Errorf("testllm: context done: %w", err)
 	}
 
 	f.mu.Lock()
-	f.calls = append(f.calls, req)
 	idx := f.idx
 	if idx < len(f.Responses) {
 		f.idx++
@@ -73,7 +78,9 @@ func (f *FakeChatClient) Calls() []llms.ChatRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]llms.ChatRequest, len(f.calls))
-	copy(out, f.calls)
+	for i := range f.calls {
+		out[i] = copyChatRequest(f.calls[i])
+	}
 	return out
 }
 
@@ -83,6 +90,17 @@ func (f *FakeChatClient) Reset() {
 	defer f.mu.Unlock()
 	f.calls = nil
 	f.idx = 0
+}
+
+// TextResponse builds a spec-faithful ChatResponse: Message is the source of
+// truth and Text mirrors it, as providers must populate. Prefer this over
+// hand-setting only Text so scripted fakes do not drift from the contract.
+func TextResponse(s string) llms.ChatResponse {
+	return llms.ChatResponse{
+		Message:    llms.AssistantText(s),
+		Text:       s,
+		StopReason: "end_turn",
+	}
 }
 
 // ToolCallResponse builds a ChatResponse whose assistant turn invokes a single

@@ -53,13 +53,14 @@ func (f *FakeEmbeddingClient) DefaultDimensions() int {
 
 // Embed records the request and returns one vector per input, in input order.
 func (f *FakeEmbeddingClient) Embed(ctx context.Context, req llms.EmbeddingRequest) (llms.EmbeddingResponse, error) {
+	// Record before the context check so a canceled call is still observable.
+	f.mu.Lock()
+	f.calls = append(f.calls, copyEmbeddingRequest(req))
+	f.mu.Unlock()
+
 	if err := ctx.Err(); err != nil {
 		return llms.EmbeddingResponse{}, fmt.Errorf("testllm: context done: %w", err)
 	}
-
-	f.mu.Lock()
-	f.calls = append(f.calls, req)
-	f.mu.Unlock()
 
 	if f.Func != nil {
 		return f.Func(ctx, req)
@@ -90,7 +91,9 @@ func (f *FakeEmbeddingClient) Calls() []llms.EmbeddingRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := make([]llms.EmbeddingRequest, len(f.calls))
-	copy(out, f.calls)
+	for i := range f.calls {
+		out[i] = copyEmbeddingRequest(f.calls[i])
+	}
 	return out
 }
 
@@ -102,14 +105,16 @@ func (f *FakeEmbeddingClient) Reset() {
 }
 
 // hashVector deterministically derives a length-dims float32 vector from text.
-// Each component is the little-endian uint32 of a SHA-256 block mapped to
-// [0, 1), so the same text always yields the same vector everywhere.
+// Each component is a little-endian uint32 of a per-index SHA-256 digest
+// divided by 2^32, giving a value in [0, 1) (strictly < 1), so the same text
+// always yields the same vector everywhere.
 func hashVector(text string, dims int) []float32 {
+	const twoPow32 = float64(1 << 32)
 	out := make([]float32, dims)
 	for i := range out {
 		sum := sha256.Sum256(fmt.Appendf(nil, "%d:%s", i, text))
 		u := binary.LittleEndian.Uint32(sum[:4])
-		out[i] = float32(u) / float32(^uint32(0))
+		out[i] = float32(float64(u) / twoPow32)
 	}
 	return out
 }

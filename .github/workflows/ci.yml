@@ -2,15 +2,35 @@ name: Go CI
 
 on:
   pull_request:
+    branches: [main]
   push:
-    branches:
-      - main
+    branches: [main]
+
+# Least privilege: this workflow only reads the repo.
+permissions:
+  contents: read
+
+# Pinned tool versions. Bumping these is intentional and is part of
+# the "what version analyzed this code" audit trail. GOVULNCHECK_VERSION
+# must be kept in sync by hand with scheduled-security.yml (GitHub
+# Actions has no native cross-workflow env share).
+env:
+  GOLANGCI_VERSION: v1.64.8
+  GOVULNCHECK_VERSION: v1.1.4
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-lint-test:
     runs-on: ubuntu-latest
 
     steps:
+      # actions/* are first-party GitHub-owned; pinned by major tag,
+      # consistent with the Morris posture. Third-party actions below
+      # are pinned to commit SHAs (tags are mutable and have been
+      # exploited; see the March 2026 trivy-action incident).
       - name: Checkout repository
         uses: actions/checkout@v6
 
@@ -20,16 +40,22 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install dependencies
+      - name: Download dependencies
         run: go mod download
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        # golangci/golangci-lint-action@v6 pinned to commit SHA.
+        uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84
         with:
-          version: latest
+          version: ${{ env.GOLANGCI_VERSION }}
 
       - name: Build
         run: go build ./...
+
+      - name: Vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+          govulncheck ./...
 
       - name: Test
         run: go test -cover ./...

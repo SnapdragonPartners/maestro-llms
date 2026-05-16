@@ -12,6 +12,59 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/openai"
 )
 
+// Live test against the real OpenAI Responses API (chat). Skips when
+// OPENAI_API_KEY is unset. OPENAI_CHAT_MODEL overrides the default model.
+func TestIntegrationOpenAIChat(t *testing.T) {
+	key := os.Getenv("OPENAI_API_KEY")
+	if key == "" {
+		t.Skip("OPENAI_API_KEY not set")
+	}
+	model := os.Getenv("OPENAI_CHAT_MODEL")
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+
+	c, err := openai.NewChat(openai.WithAPIKey(key), openai.WithModel(model))
+	if err != nil {
+		t.Fatalf("NewChat: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	temp := float32(0)
+	req := llms.ChatRequest{
+		Purpose:     llms.PurposeChat,
+		System:      []llms.ContentPart{llms.Text("Answer with exactly one lowercase word.")},
+		Messages:    []llms.Message{llms.UserText("Reply with the single word: pong")},
+		MaxTokens:   16,
+		Temperature: &temp,
+	}
+	// Live providers have transient 5xx/429 hiccups; this test exercises our
+	// integration, not provider uptime. Retry only on errors our own
+	// classifier reports retryable (dogfoods llms.Retryable).
+	var resp llms.ChatResponse
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err = c.Complete(ctx, req)
+		if err == nil || !llms.Retryable(err) {
+			break
+		}
+		t.Logf("attempt %d retryable error: %v", attempt+1, err)
+		time.Sleep(time.Duration(attempt+1) * time.Second)
+	}
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Message.Role != llms.RoleAssistant || resp.Text == "" {
+		t.Fatalf("unexpected response: %+v", resp.Message)
+	}
+	if resp.Usage.InputTokens <= 0 || resp.Usage.OutputTokens <= 0 {
+		t.Fatalf("expected positive token usage, got %+v", resp.Usage)
+	}
+	t.Logf("OK: text=%q stop=%q in=%d out=%d",
+		resp.Text, resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens)
+}
+
 // Live test against the real OpenAI embeddings API. Build-tagged so normal
 // `go test` / CI (which is deliberately network-free) never runs it. Skips
 // when OPENAI_API_KEY is unset.

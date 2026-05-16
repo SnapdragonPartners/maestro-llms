@@ -72,26 +72,28 @@ type Client struct {
 // compile-time assertion lives in the test file (a package-level var would
 // trip gochecknoglobals).
 
-// New builds a Client. It returns a *llms.ProviderError of kind config when
-// required values are missing or invalid.
-func New(opts ...Option) (*Client, error) {
-	var s settings
-	for _, o := range opts {
-		o(&s)
-	}
-	if s.apiKey == "" {
-		return nil, &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: "missing API key"}
-	}
-	if s.model == "" {
-		return nil, &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: "missing model"}
-	}
-	if s.hasRetries && s.maxRetries < 0 {
-		return nil, &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: "max retries must be >= 0"}
-	}
-	if s.dimensions < 0 {
-		return nil, &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: "dimensions must be >= 0"}
-	}
+func configErr(msg string) error {
+	return &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: msg}
+}
 
+// validate checks the common required config. checkDimensions is embedding-only.
+func (s *settings) validate(checkDimensions bool) error {
+	switch {
+	case s.apiKey == "":
+		return configErr("missing API key")
+	case s.model == "":
+		return configErr("missing model")
+	case s.hasRetries && s.maxRetries < 0:
+		return configErr("max retries must be >= 0")
+	case checkDimensions && s.dimensions < 0:
+		return configErr("dimensions must be >= 0")
+	default:
+		return nil
+	}
+}
+
+// requestOptions builds the SDK request options shared by all clients.
+func (s *settings) requestOptions() []option.RequestOption {
 	reqOpts := []option.RequestOption{option.WithAPIKey(s.apiKey)}
 	if s.baseURL != "" {
 		reqOpts = append(reqOpts, option.WithBaseURL(s.baseURL))
@@ -103,10 +105,21 @@ func New(opts ...Option) (*Client, error) {
 	if s.hasRetries {
 		retries = s.maxRetries
 	}
-	reqOpts = append(reqOpts, option.WithMaxRetries(retries))
+	return append(reqOpts, option.WithMaxRetries(retries))
+}
 
+// New builds an embedding Client. It returns a *llms.ProviderError of kind
+// config when required values are missing or invalid.
+func New(opts ...Option) (*Client, error) {
+	var s settings
+	for _, o := range opts {
+		o(&s)
+	}
+	if err := s.validate(true); err != nil {
+		return nil, err
+	}
 	return &Client{
-		api:        openai.NewClient(reqOpts...),
+		api:        openai.NewClient(s.requestOptions()...),
 		model:      s.model,
 		dimensions: s.dimensions,
 	}, nil

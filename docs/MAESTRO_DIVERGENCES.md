@@ -45,7 +45,7 @@ cut-over validation) vs **Internal** (no observable change — informational).
 | OC2 | **Behavioral (significant)** | Hard-codes `tool_choice = required` whenever tools are present | Honors caller `ToolChoice` (auto default) | Caller controls tool use | Maestro flows that relied on forced tool use must set `ToolChoice{Type: tool}`/`required` explicitly |
 | OC3 | Internal | Output text via `OutputText()` only | Output items iterated in order; `Message` preserves interleaving | Round-trip source-of-truth ordering | None observable beyond ordering fidelity |
 
-## Google chat — genai (pending)
+## Google chat — genai
 
 | # | Kind | Maestro | maestro-llms | Why | Cut-over action |
 |---|---|---|---|---|---|
@@ -53,4 +53,11 @@ cut-over validation) vs **Internal** (no observable change — informational).
 | G2 | Behavioral | Forces `FunctionCallingConfigMode = ANY` when tools present | Honors caller `ToolChoice` | Caller controls tool use | Same as OC2 for Gemini |
 | G3 | Behavioral | `StopReason` hard-coded `"end_turn"`; usage dropped | Real finish reason + usage populated | Accurate stop/accounting | Maestro can now read real finish reasons |
 
-> Rows for Ollama chat (pending) to be appended in that PR.
+## Ollama chat
+
+| # | Kind | Maestro | maestro-llms | Why | Cut-over action |
+|---|---|---|---|---|---|
+| OL1 | **Behavioral (significant)** | Uses the `github.com/ollama/ollama` SDK (`api` package) | **No SDK dependency** — a hand-rolled minimal `/api/chat` net/http client | The ollama module carries unfixed server-side CVEs (GO-2025-4251/3824/3695, "Fixed in: N/A") that govulncheck attributes to any consumer; importing it fails our security gate. The endpoint is a trivial JSON contract; dropping it satisfies the minimal-deps non-goal and yields real HTTP status/headers + raw tool-arg fidelity. | Behavior parity verified live (chat + tool-use round trip identical). Confirm acceptable; watch for `/api/chat` wire-format drift across Ollama versions (we now own the contract). |
+| OL2 | Behavioral | No `ToolChoice` exposed (model always decides) | Ollama has no tool_choice: `ToolChoiceNone` omits tools (disables); `tool`/`auto` offer tools, model decides (a forced tool cannot be honored) | Spec exposes provider-neutral `ToolChoice`; Ollama can't force | `None` now genuinely disables tools (new capability); a forced `tool` choice is best-effort, not guaranteed |
+| OL3 | Behavioral | `done_reason` canonicalized to `end_turn`/`max_tokens`; usage dropped | Raw `done_reason` as `StopReason`; usage populated (`prompt_eval_count`/`eval_count`) | Accurate stop/accounting, consistent with other providers | Maestro consumers reading the old canonical strings must map raw Ollama reasons |
+| OL4 | Internal | Error classified by string-matching ("connection refused"/"not found") | Real HTTP status via shared `apierr` (typed `httpStatusErr`); transport failures → unknown(retryable) | Consistent typed classification | None observable (connection-refused stays retryable, as before) |

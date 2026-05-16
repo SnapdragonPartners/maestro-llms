@@ -2,7 +2,10 @@ module github.com/SnapdragonPartners/maestro-llms
 
 go 1.26.3
 
-require github.com/anthropics/anthropic-sdk-go v1.37.0
+require (
+	github.com/anthropics/anthropic-sdk-go v1.37.0
+	github.com/openai/openai-go v1.12.0
+)
 
 require (
 	github.com/tidwall/gjson v1.18.0 // indirect

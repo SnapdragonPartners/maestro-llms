@@ -154,6 +154,11 @@ linters-settings:
       - .Wrapf(
     ignoreSigRegexps:
       - \.New.*Error\(
+    ignorePackageGlobs:
+      # apierr.Classify returns the canonical *llms.ProviderError that
+      # providers must return verbatim; wrapping it would break
+      # errors.As(*llms.ProviderError) for callers.
+      - github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/apierr
 
   errorlint:
     errorf: true

@@ -51,7 +51,27 @@ func roleFor(r llms.Role) (string, bool) {
 	}
 }
 
+// toolCallNames maps every tool-call ID in the conversation to its function
+// name. Gemini correlates a function response by name, but ToolCallID is an
+// opaque correlation id that may not equal the name (hand-built messages, or a
+// transcript whose IDs came from OpenAI/Anthropic). The matching prior
+// FunctionCall is always present because the stateless contract requires the
+// caller to pass full history.
+func toolCallNames(req llms.ChatRequest) map[string]string {
+	names := map[string]string{}
+	for i := range req.Messages {
+		for j := range req.Messages[i].Content {
+			p := req.Messages[i].Content[j]
+			if p.Type == llms.ContentToolCall && p.ToolCall != nil && p.ToolCall.ID != "" {
+				names[p.ToolCall.ID] = p.ToolCall.Name
+			}
+		}
+	}
+	return names
+}
+
 func (c *Client) buildContents(req llms.ChatRequest) ([]*genai.Content, *llms.ProviderError) {
+	idToName := toolCallNames(req)
 	var contents []*genai.Content
 	for i := range req.Messages {
 		m := req.Messages[i]
@@ -83,9 +103,15 @@ func (c *Client) buildContents(req llms.ChatRequest) ([]*genai.Content, *llms.Pr
 				if p.ToolResult == nil {
 					return nil, badRequest(c.model, "tool_result content part with nil ToolResult")
 				}
+				// Gemini correlates by function name. Resolve the real name
+				// from the matching prior tool call; fall back to the ID
+				// (best effort) only if no match is in the history.
+				name := p.ToolResult.ToolCallID
+				if n, ok := idToName[p.ToolResult.ToolCallID]; ok {
+					name = n
+				}
 				parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{
-					// Gemini correlates by function name, not an opaque id.
-					Name: p.ToolResult.ToolCallID,
+					Name: name,
 					Response: map[string]any{
 						"content":  p.ToolResult.Content,
 						"is_error": p.ToolResult.IsError,
@@ -116,46 +142,79 @@ func rawToMap(raw json.RawMessage) (map[string]any, error) {
 	return m, nil
 }
 
-func genaiType(t string) genai.Type {
+func genaiType(t string) (genai.Type, bool) {
 	switch t {
 	case "string":
-		return genai.TypeString
+		return genai.TypeString, true
 	case "number":
-		return genai.TypeNumber
+		return genai.TypeNumber, true
 	case "integer":
-		return genai.TypeInteger
+		return genai.TypeInteger, true
 	case "boolean":
-		return genai.TypeBoolean
+		return genai.TypeBoolean, true
 	case "array":
-		return genai.TypeArray
+		return genai.TypeArray, true
 	case jsonObjectType:
-		return genai.TypeObject
+		return genai.TypeObject, true
 	default:
-		return genai.TypeString
+		return genai.TypeUnspecified, false
 	}
 }
 
 // jsonSchemaToGenai recursively converts a parsed JSON Schema to a
-// *genai.Schema. genai uses an uppercase Type enum, so a raw JSON Schema
-// cannot be unmarshaled directly.
-func jsonSchemaToGenai(raw map[string]any) *genai.Schema {
+// *genai.Schema (genai uses an uppercase Type enum, so a raw JSON Schema
+// cannot be unmarshaled directly). An explicitly present but unrecognized or
+// non-string "type" (typo, "null", a JSON-Schema type array, etc.) is a
+// bad_request rather than being silently coerced to a string parameter and
+// sent to Gemini altered. An absent "type" is left unspecified.
+// schemaType resolves the genai type for a parsed schema node. A present but
+// non-string or unrecognized "type" is a bad_request; an absent "type" yields
+// (Unspecified, nil).
+func (c *Client) schemaType(raw map[string]any) (genai.Type, *llms.ProviderError) {
+	tv, present := raw["type"]
+	if !present {
+		return genai.TypeUnspecified, nil
+	}
+	ts, isStr := tv.(string)
+	if !isStr {
+		return genai.TypeUnspecified, badRequest(c.model,
+			fmt.Sprintf("unsupported JSON schema 'type' form %T (expected a string)", tv))
+	}
+	gt, known := genaiType(ts)
+	if !known {
+		return genai.TypeUnspecified, badRequest(c.model, "unsupported JSON schema type: "+ts)
+	}
+	return gt, nil
+}
+
+func (c *Client) jsonSchemaToGenai(raw map[string]any) (*genai.Schema, *llms.ProviderError) {
 	s := &genai.Schema{}
 	if d, ok := raw["description"].(string); ok {
 		s.Description = d
 	}
-	if t, ok := raw["type"].(string); ok {
-		s.Type = genaiType(t)
+	gt, perr := c.schemaType(raw)
+	if perr != nil {
+		return nil, perr
 	}
+	s.Type = gt
 	if props, ok := raw["properties"].(map[string]any); ok {
 		s.Properties = make(map[string]*genai.Schema, len(props))
 		for name, pv := range props {
 			if pm, ok := pv.(map[string]any); ok {
-				s.Properties[name] = jsonSchemaToGenai(pm)
+				cs, perr := c.jsonSchemaToGenai(pm)
+				if perr != nil {
+					return nil, perr
+				}
+				s.Properties[name] = cs
 			}
 		}
 	}
 	if items, ok := raw["items"].(map[string]any); ok {
-		s.Items = jsonSchemaToGenai(items)
+		is, perr := c.jsonSchemaToGenai(items)
+		if perr != nil {
+			return nil, perr
+		}
+		s.Items = is
 	}
 	if req, ok := raw["required"].([]any); ok {
 		for _, r := range req {
@@ -169,7 +228,7 @@ func jsonSchemaToGenai(raw map[string]any) *genai.Schema {
 			s.Enum = append(s.Enum, fmt.Sprint(e))
 		}
 	}
-	return s
+	return s, nil
 }
 
 func (c *Client) buildTools(req llms.ChatRequest) ([]*genai.Tool, *llms.ProviderError) {
@@ -189,7 +248,11 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]*genai.Tool, *llms.Provider
 				return nil, badRequest(c.model, "tool "+t.Name+`: input schema type must be "object"`)
 			}
 			raw["type"] = jsonObjectType
-			schema = jsonSchemaToGenai(raw)
+			s, perr := c.jsonSchemaToGenai(raw)
+			if perr != nil {
+				return nil, perr
+			}
+			schema = s
 		}
 		decls = append(decls, &genai.FunctionDeclaration{
 			Name: t.Name, Description: t.Description, Parameters: schema,

@@ -61,10 +61,13 @@ func TestIntegrationGoogleChat(t *testing.T) {
 	}
 	temp := float32(0)
 	resp := complete(t, c, llms.ChatRequest{
-		Purpose:     llms.PurposeChat,
-		System:      []llms.ContentPart{llms.Text("Answer with exactly one lowercase word.")},
-		Messages:    []llms.Message{llms.UserText("Reply with the single word: pong")},
-		MaxTokens:   16,
+		Purpose:  llms.PurposeChat,
+		System:   []llms.ContentPart{llms.Text("Answer with exactly one lowercase word.")},
+		Messages: []llms.Message{llms.UserText("Reply with the single word: pong")},
+		// gemini-2.5-flash is a thinking model: a tiny budget can be spent
+		// entirely on internal reasoning, returning empty/truncated text.
+		// Give enough room to actually emit the word.
+		MaxTokens:   256,
 		Temperature: &temp,
 	})
 	if resp.Message.Role != llms.RoleAssistant || resp.Text == "" {

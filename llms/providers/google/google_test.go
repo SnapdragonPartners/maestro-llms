@@ -177,6 +177,56 @@ func TestChatBadRequests(t *testing.T) {
 	}
 }
 
+func TestChatUnsupportedSchemaTypeRejected(t *testing.T) {
+	c := newClient(t, jsonHandler(t, 200, respTextJSON))
+	for name, schema := range map[string]string{
+		"unknown leaf type": `{"type":"object","properties":{"x":{"type":"widget"}}}`,
+		"null type":         `{"type":"object","properties":{"x":{"type":"null"}}}`,
+		"type array":        `{"type":"object","properties":{"x":{"type":["string","null"]}}}`,
+	} {
+		_, err := c.Complete(context.Background(), llms.ChatRequest{
+			Messages: []llms.Message{llms.UserText("hi")},
+			Tools:    []llms.ToolDefinition{{Name: "t", InputSchema: json.RawMessage(schema)}},
+		})
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+			t.Fatalf("%s: want bad_request (no silent string coercion), got %v", name, err)
+		}
+	}
+}
+
+func TestChatToolResultNameResolvedFromPriorCall(t *testing.T) {
+	var captured map[string]any
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, respTextJSON)
+	})
+	// Opaque, non-name ID (as OpenAI/Anthropic would produce).
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{
+			llms.UserText("weather?"),
+			{Role: llms.RoleAssistant, Content: []llms.ContentPart{{
+				Type:     llms.ContentToolCall,
+				ToolCall: &llms.ToolCall{ID: "call_abc123", Name: "get_weather", Parameters: json.RawMessage(`{}`)},
+			}}},
+			llms.ToolResultMessage(llms.ToolResult{ToolCallID: "call_abc123", Content: `{}`}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	contents, _ := captured["contents"].([]any)
+	last, _ := contents[len(contents)-1].(map[string]any)
+	parts, _ := last["parts"].([]any)
+	fr, _ := parts[0].(map[string]any)
+	resp, _ := fr["functionResponse"].(map[string]any)
+	if resp["name"] != "get_weather" {
+		t.Fatalf("functionResponse.name not resolved from prior call: %v (want get_weather)", resp["name"])
+	}
+}
+
 func TestNewConfigErrors(t *testing.T) {
 	for _, opts := range [][]Option{
 		{WithModel("m")},

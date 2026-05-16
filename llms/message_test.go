@@ -3,6 +3,7 @@ package llms
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -109,5 +110,26 @@ func TestLimitErrorIsAlwaysRetryable(t *testing.T) {
 func TestRetryableUnknownErrorIsFalse(t *testing.T) {
 	if Retryable(errors.New("some other error")) {
 		t.Fatal("unclassified errors must not be reported retryable")
+	}
+}
+
+func TestRetryAfter(t *testing.T) {
+	if d := RetryAfter(errors.New("plain")); d != 0 {
+		t.Fatalf("unknown error must have no hint, got %v", d)
+	}
+	pe := &ProviderError{Provider: "p", Model: "m", Kind: ErrorKindRateLimited, RetryAfter: 3 * time.Second}
+	if d := RetryAfter(pe); d != 3*time.Second {
+		t.Fatalf("ProviderError hint not surfaced, got %v", d)
+	}
+	le := &LimitError{Provider: "p", Model: "m", RetryAfter: 750 * time.Millisecond}
+	if d := RetryAfter(le); d != 750*time.Millisecond {
+		t.Fatalf("LimitError hint not surfaced, got %v", d)
+	}
+	// Must resolve through a wrapping error, like Retryable does.
+	if d := RetryAfter(fmt.Errorf("wrapped: %w", pe)); d != 3*time.Second {
+		t.Fatalf("RetryAfter must resolve through errors.As, got %v", d)
+	}
+	if d := RetryAfter(&ProviderError{Kind: ErrorKindUnavailable}); d != 0 {
+		t.Fatalf("no hint set must be 0, got %v", d)
 	}
 }

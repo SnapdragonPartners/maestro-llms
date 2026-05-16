@@ -691,20 +691,26 @@ llms/providers/openai
 
 Expected:
 
-- embeddings in v0
-- chat completion if low effort to include from Maestro extraction
-- tool calls if chat is included
+- embeddings (delivered in v0.1)
+- chat via the OpenAI **Responses API**, not Chat Completions: OpenAI is
+  deprecating Chat Completions, and Maestro's tested client already uses
+  Responses. Required for the Maestro cut-over (v0.2), not optional.
+- tool calls (with chat)
 - usage metadata
 - error classification
 - injectable HTTP client or transport where the SDK/provider shape allows it
 
 ### Google
 
-Useful for Maestro; optional for Morris.
+Chat client, required for the Maestro cut-over (v0.2). Extracted from
+Maestro's tested `google.golang.org/genai` implementation. Not needed by
+Morris.
 
 ### Ollama
 
-Useful for Maestro/local development; optional for Morris.
+Chat client for local development, required for the Maestro cut-over
+(v0.2). Extracted from Maestro's tested `github.com/ollama/ollama/api`
+implementation. Not needed by Morris.
 
 ## Configuration Boundary
 
@@ -807,9 +813,12 @@ Morris will apply stricter content classification and audit rules outside the pa
 
 Use semantic versioning.
 
-Suggested initial milestones:
+Milestones (reprioritized 2026-05-15 — see "Roadmap Update" below; the
+original sequencing was Morris-first, but the Maestro cut-over gates on the
+full chat provider set, so chat parity moves ahead of resilience
+middleware).
 
-### v0.1
+### v0.1 — delivered (tagged v0.1.0)
 
 - core chat and embeddings interfaces
 - OpenAI embeddings provider
@@ -819,18 +828,50 @@ Suggested initial milestones:
 - in-memory limiter
 - deterministic fakes
 
-### v0.2
+### v0.2 — Maestro chat parity (next; gates the Maestro cut-over)
 
-- OpenAI chat provider if not in v0.1
+- OpenAI chat provider via the Responses API
+- Google chat provider (genai), extracted from Maestro
+- Ollama chat provider, extracted from Maestro
+- shared internal provider error-classifier helper (introduced here, with
+  four providers, rather than deferred — anthropic/openai are migrated onto
+  it)
+- Maestro consumes the package in one clean cut-over once all four chat
+  providers + embeddings are in (no incremental adoption)
+
+### v0.3 — resilience middleware
+
 - retry/timeout/circuit middleware
 - metrics hook interfaces
 - richer provider error classification
 
-### v0.3
+### v0.4
 
-- Google and Ollama providers from Maestro extraction
-- optional streaming interfaces
+- optional streaming interfaces (`StreamingChatClient`)
 - optional generic Redis/Postgres limiter if it can stay app-neutral
+
+## Roadmap Update — 2026-05-15
+
+v0.1.0 shipped (steps 1–9 below, all merged; live-verified against the real
+Anthropic and OpenAI APIs). Two decisions reshape what comes next:
+
+- **Maestro adoption is a single clean cut-over, not incremental.** Maestro
+  will not route some providers through the package while keeping its own
+  for others — too hard to test. Therefore the cut-over is blocked until the
+  *entire* chat provider set Maestro uses (Anthropic ✓, OpenAI, Google,
+  Ollama) plus embeddings is available.
+- **Consequently, provider chat parity is reprioritized ahead of the
+  resilience middleware.** The original milestones were Morris-first
+  (Anthropic chat + OpenAI embeddings is all Morris needs now). Following
+  that order would strand the Maestro cut-over behind retry/timeout/circuit
+  work it does not need. So v0.2 is now the three remaining chat providers
+  (OpenAI via Responses API, Google, Ollama) + the shared error-classifier;
+  resilience middleware slips to v0.3.
+
+These providers are extractions from Maestro's tested implementations, not
+greenfield, which lowers risk. They reuse the Anthropic provider's
+structure (options pattern, httptest-based unit tests, build-tagged live
+test, typed-error classification).
 
 ## Extraction Plan
 
@@ -843,21 +884,33 @@ Suggested initial milestones:
 7. Extract middleware chain.
 8. Define limiter interfaces and adapt Maestro in-memory limiter.
 9. Add fakes and tests.
-10. Update Maestro to consume the package.
-11. Add Morris dependency once v0.1 is stable enough.
+10. Extract remaining Maestro chat providers (OpenAI Responses API, Google,
+    Ollama) + shared internal error-classifier helper. (v0.2)
+11. Update Maestro to consume the package in one clean cut-over once step 10
+    is complete.
+12. Add Morris dependency (Morris needs only Anthropic chat + OpenAI
+    embeddings, both already in v0.1, so this is not blocked by step 10).
 
 ## Open Questions
 
-1. Should the module path live under `github.com/SnapdragonPartners/maestro-llms` or a different org/path?
-2. Should OpenAI chat ship in v0.1 if the current Maestro extraction makes it nearly free, or stay v0.2 to keep v0.1 focused?
-3. Which exact constructor/options shape works cleanly across the provider SDKs?
-4. Which provider-specific raw response fields, if any, should get normalized instead of left in `Raw`?
+1. Which provider-specific raw response fields, if any, should get normalized instead of left in `Raw`?
 
 Resolved by review:
 
+- Module path is `github.com/SnapdragonPartners/maestro-llms`.
 - Core package import name should be `llms`.
-- OpenAI embeddings and Anthropic chat are required in v0.1.
-- OpenAI chat is optional in v0.1 and should not expand scope.
+- OpenAI embeddings and Anthropic chat are required in v0.1 (delivered).
+- OpenAI chat ships in v0.2 via the **Responses API** (not Chat
+  Completions — OpenAI is deprecating it and Maestro already uses
+  Responses).
+- Google and Ollama chat providers move from v0.3 to v0.2: the Maestro
+  cut-over needs the full chat set and is a single clean cut-over, not
+  incremental.
+- Provider constructor shape is a functional options pattern
+  (`New(WithAPIKey, WithModel, WithBaseURL, WithHTTPClient, ...)`),
+  validated against the v0.1 anthropic/openai providers.
+- Shared provider error-classifier is introduced in v0.2 (four providers),
+  not deferred to v0.3.
 - Model registry is allowed but strictly optional/advisory.
 - `Raw any` is opt-in and outside the stability contract.
 - Limiter stats are a separate optional interface.

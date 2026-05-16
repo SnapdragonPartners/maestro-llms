@@ -22,7 +22,9 @@ type StreamingChatClient interface {
 }
 
 // StreamChunk is one incremental piece of a streamed response. Its shape is a
-// v0 placeholder and may change before streaming ships (v0.3).
+// forward-declared placeholder and may change when streaming is actually
+// designed. Streaming itself is deliberately deferred (no consumer needs it
+// yet) and middleware wraps Complete only — see docs/adr/0003.
 type StreamChunk struct {
 	Delta string
 	Done  bool

@@ -72,7 +72,10 @@ func KindForStatus(status int) llms.ErrorKind {
 		return llms.ErrorKindRateLimited
 	case status == http.StatusRequestTimeout:
 		return llms.ErrorKindTimeout
-	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity:
+	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity ||
+		status == http.StatusNotFound:
+		// 404 (e.g. unknown/retired model) is a permanent client error, not
+		// transient — classify as bad_request so it is not retried.
 		return llms.ErrorKindBadRequest
 	case status >= 500:
 		return llms.ErrorKindUnavailable

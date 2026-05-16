@@ -1,4 +1,4 @@
-.PHONY: build test test-coverage lint fix fix-imports tidy install-lint install-goimports install-hooks clean
+.PHONY: build test test-integration test-coverage lint fix fix-imports tidy install-lint install-goimports install-hooks clean
 
 # Build all packages.
 build: lint
@@ -8,6 +8,12 @@ build: lint
 # Single test: make test TESTARGS='-run TestName ./llms/...'
 test:
 	go test -cover $(TESTARGS) ./...
+
+# Live integration tests against real provider APIs. Build-tagged so the
+# default `test` target and CI stay network-free. Each test skips unless its
+# provider key is set: ANTHROPIC_API_KEY, OPENAI_API_KEY.
+test-integration:
+	go test -tags=integration -run Integration -count=1 -v ./llms/providers/...
 
 # Generate an HTML coverage report.
 test-coverage:

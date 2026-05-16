@@ -45,7 +45,7 @@ cut-over validation) vs **Internal** (no observable change — informational).
 | OC2 | **Behavioral (significant)** | Hard-codes `tool_choice = required` whenever tools are present | Honors caller `ToolChoice` (auto default) | Caller controls tool use | Maestro flows that relied on forced tool use must set `ToolChoice{Type: tool}`/`required` explicitly |
 | OC3 | Internal | Output text via `OutputText()` only | Output items iterated in order; `Message` preserves interleaving | Round-trip source-of-truth ordering | None observable beyond ordering fidelity |
 
-## Google chat — genai (PR #11, pending)
+## Google chat — genai (pending)
 
 | # | Kind | Maestro | maestro-llms | Why | Cut-over action |
 |---|---|---|---|---|---|
@@ -53,4 +53,4 @@ cut-over validation) vs **Internal** (no observable change — informational).
 | G2 | Behavioral | Forces `FunctionCallingConfigMode = ANY` when tools present | Honors caller `ToolChoice` | Caller controls tool use | Same as OC2 for Gemini |
 | G3 | Behavioral | `StopReason` hard-coded `"end_turn"`; usage dropped | Real finish reason + usage populated | Accurate stop/accounting | Maestro can now read real finish reasons |
 
-> Rows for Ollama chat (PR #12) to be appended in that PR.
+> Rows for Ollama chat (pending) to be appended in that PR.

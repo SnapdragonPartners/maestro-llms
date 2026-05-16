@@ -154,6 +154,14 @@ linters-settings:
       - .Wrapf(
     ignoreSigRegexps:
       - \.New.*Error\(
+    ignorePackageGlobs:
+      # apierr.Classify already returns the final, fully-classified
+      # *llms.ProviderError. Wrapping it (%w) would only add a redundant
+      # layer with no extra context and a doubled message, and would stop
+      # the provider boundary from returning the canonical ProviderError as
+      # the top-level value (so plain type assertions / identity still
+      # work, not just errors.As). So providers return it verbatim.
+      - github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/apierr
 
   errorlint:
     errorf: true

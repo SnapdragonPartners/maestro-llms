@@ -107,8 +107,9 @@ func (c *ChatClient) buildTools(req llms.ChatRequest) ([]responses.ToolUnionPara
 			}
 			params = raw
 			params["type"] = "object"
-			// OpenAI rejects a null "required"; it must be an array.
-			if _, ok := params["required"]; !ok {
+			// OpenAI rejects a null "required"; it must be an array. Coerce
+			// both an absent key and an explicit JSON null to [].
+			if v, ok := params["required"]; !ok || v == nil {
 				params["required"] = []string{}
 			}
 		}
@@ -195,14 +196,15 @@ func (c *ChatClient) toParams(req llms.ChatRequest) (responses.ResponseNewParams
 func toChatResponse(resp *responses.Response) llms.ChatResponse {
 	var parts []llms.ContentPart
 	var toolCalls []llms.ToolCall
+	var textMirror strings.Builder
 
-	text := resp.OutputText()
-	if text != "" {
-		parts = append(parts, llms.ContentPart{Type: llms.ContentText, Text: text})
-	}
+	// Iterate output items in provider order so Message preserves any
+	// interleaving of text and tool calls (Message is the round-trip source
+	// of truth; Text is a flattened convenience mirror).
 	for i := range resp.Output {
 		item := resp.Output[i]
-		if item.Type == "function_call" {
+		switch item.Type {
+		case "function_call":
 			fc := item.AsFunctionCall()
 			tc := llms.ToolCall{
 				ID:         fc.CallID,
@@ -211,8 +213,17 @@ func toChatResponse(resp *responses.Response) llms.ChatResponse {
 			}
 			toolCalls = append(toolCalls, tc)
 			parts = append(parts, llms.ContentPart{Type: llms.ContentToolCall, ToolCall: &tc})
+		case "message":
+			for j := range item.Content {
+				ct := item.Content[j]
+				if ct.Type == "output_text" && ct.Text != "" {
+					parts = append(parts, llms.ContentPart{Type: llms.ContentText, Text: ct.Text})
+					textMirror.WriteString(ct.Text)
+				}
+			}
 		}
 	}
+	text := textMirror.String()
 
 	return llms.ChatResponse{
 		Message:    llms.Message{Role: llms.RoleAssistant, Content: parts},

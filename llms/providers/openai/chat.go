@@ -22,7 +22,8 @@ type ChatClient struct {
 // compile-time assertion lives in the test file.
 
 // NewChat builds a Responses-API chat client. It returns a
-// *llms.ProviderError of kind config when required values are missing.
+// *llms.ProviderError of kind config when required values are missing or
+// invalid (e.g. a negative max-retry count).
 func NewChat(opts ...Option) (*ChatClient, error) {
 	var s settings
 	for _, o := range opts {

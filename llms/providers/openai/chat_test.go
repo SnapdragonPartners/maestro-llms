@@ -90,6 +90,69 @@ func TestChatToolCallResponse(t *testing.T) {
 	}
 }
 
+func TestChatResponsePreservesInterleavedOrder(t *testing.T) {
+	// Output interleaves text, a tool call, then more text. Message must
+	// keep that exact order; Text mirror is the flattened concatenation.
+	body := `{"id":"resp_3","object":"response","status":"completed","model":"gpt-test",
+"output":[
+ {"type":"message","id":"m1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"first ","annotations":[]}]},
+ {"type":"function_call","id":"fc1","call_id":"call_x","name":"do","arguments":"{}","status":"completed"},
+ {"type":"message","id":"m2","role":"assistant","status":"completed","content":[{"type":"output_text","text":"second","annotations":[]}]}],
+"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}`
+	c := newChat(t, jsonHandler(t, 200, body, nil))
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("go")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	got := make([]string, len(resp.Message.Content))
+	for i, p := range resp.Message.Content {
+		if p.Type == llms.ContentToolCall {
+			got[i] = "tool:" + p.ToolCall.Name
+		} else {
+			got[i] = "text:" + p.Text
+		}
+	}
+	want := []string{"text:first ", "tool:do", "text:second"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("order not preserved: got %v want %v", got, want)
+	}
+	if resp.Text != "first second" {
+		t.Fatalf("text mirror = %q, want flattened %q", resp.Text, "first second")
+	}
+}
+
+func TestChatNullRequiredCoercedToArray(t *testing.T) {
+	var captured map[string]any
+	c := newChat(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, respTextJSON)
+	})
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+		Tools: []llms.ToolDefinition{{
+			Name:        "t",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{},"required":null}`),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	tools, _ := captured["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %v", captured["tools"])
+	}
+	fn, _ := tools[0].(map[string]any)
+	params, _ := fn["parameters"].(map[string]any)
+	req, ok := params["required"].([]any)
+	if !ok || len(req) != 0 {
+		t.Fatalf("null required not coerced to []: %#v", params["required"])
+	}
+}
+
 func TestChatRequestTranslationStructured(t *testing.T) {
 	var captured map[string]any
 	c := newChat(t, func(w http.ResponseWriter, r *http.Request) {

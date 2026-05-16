@@ -110,3 +110,20 @@ func Retryable(err error) bool {
 	}
 	return false
 }
+
+// RetryAfter returns the backoff hint a known maestro-llms error carries: the
+// provider's Retry-After (from *ProviderError) or the limiter's hint (from
+// *LimitError). It returns 0 when there is no hint or the error is neither
+// type. Symmetric with Retryable so retry/circuit middleware can wait the
+// suggested delay before the next attempt.
+func RetryAfter(err error) time.Duration {
+	var pe *ProviderError
+	if errors.As(err, &pe) {
+		return pe.RetryAfter
+	}
+	var le *LimitError
+	if errors.As(err, &le) {
+		return le.RetryAfter
+	}
+	return 0
+}

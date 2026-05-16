@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the //go:build integration provider tests locally on macOS.
+# Run the //go:build integration provider tests locally (macOS or Linux).
 #
 # Why this exists: macOS (AMFI/Gatekeeper, often plus endpoint-security
 # agents) blocks execution of freshly built *unsigned* binaries — a `go test`
@@ -18,6 +18,12 @@
 # positional arguments (e.g. -test.run TestIntegrationOllama).
 
 set -uo pipefail
+
+# Signing is only needed (and `codesign`/`xattr` only exist) on macOS. On
+# other OSes this script is still a valid way to run the suite — just skip
+# the signing step instead of emitting `codesign: command not found` noise.
+is_macos=0
+[ "$(uname -s)" = "Darwin" ] && is_macos=1
 
 cd "$(dirname "$0")/.."
 root="$(pwd)"
@@ -46,10 +52,12 @@ for pkg in "${pkgs[@]}"; do
 		overall=1
 		continue
 	fi
-	# Strip quarantine/extended attributes, then ad-hoc sign so macOS will
-	# actually exec the fresh binary.
-	xattr -c "$bin" 2>/dev/null || true
-	codesign --force --sign - --timestamp=none "$bin"
+	# On macOS, strip quarantine/extended attributes then ad-hoc sign so the
+	# OS will actually exec the fresh binary. Elsewhere this is unnecessary.
+	if [ "$is_macos" -eq 1 ]; then
+		xattr -c "$bin" 2>/dev/null || true
+		codesign --force --sign - --timestamp=none "$bin"
+	fi
 
 	echo "==> running ${name} integration tests"
 	if ! "$bin" -test.run Integration -test.v -test.timeout="$timeout" "$@"; then

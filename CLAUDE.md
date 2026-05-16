@@ -8,6 +8,8 @@ This repository is **pre-implementation**. It currently contains only `LICENSE` 
 
 `docs/specification.md` is the binding contract for v0. Read it before writing code. The "Normative Clarifications From Engineering Review" and "Resolved by review" sections are decisions, not suggestions — do not relitigate them in code (e.g. tool calls/results are `ContentPart`s not side-channel fields; `System` is a dedicated `ChatRequest` field; `Temperature` is `*float32`; streaming is a separate `StreamingChatClient` interface; local limiter rejections use `LimitError`, not `ProviderError`).
 
+`docs/adr/` is the **Architecture Decision Record** log (see `docs/adr/README.md`): the rationale of record for significant structural choices, with the spec as the contract and `docs/MAESTRO_DIVERGENCES.md` as the cut-over checklist. Read relevant ADRs before changing a documented decision; do not "fix" a deliberate limitation an ADR explains. Significant structural changes should land an ADR in the same PR. Notably ADR-0003: middleware wraps `Complete`/`Embed` only — streaming-aware middleware semantics are deliberately deferred until a real consumer exists, so do not add streaming forwarding to middleware without a superseding ADR.
+
 ## What this package is
 
 `maestro-llms` is an app-neutral Go toolkit wrapping LLM/embedding providers behind stable interfaces, shared by two consumers with deliberately different needs:

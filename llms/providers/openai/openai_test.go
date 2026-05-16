@@ -201,6 +201,22 @@ func TestCountMismatchRejected(t *testing.T) {
 	}
 }
 
+func TestDuplicateIndexRejected(t *testing.T) {
+	// Two data, equal count to inputs (passes the count check), but both
+	// report index 0: one input would be silently left zero-valued.
+	body := `{"object":"list","model":"m","data":[
+ {"object":"embedding","index":0,"embedding":[1]},
+ {"object":"embedding","index":0,"embedding":[2]}],
+"usage":{"prompt_tokens":2,"total_tokens":2}}`
+	c := newClient(t, respond(t, 200, body, nil))
+	_, err := c.Embed(context.Background(), llms.EmbeddingRequest{
+		Inputs: []llms.EmbeddingInput{{ID: "1", Text: "a"}, {ID: "2", Text: "b"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate embedding index") {
+		t.Fatalf("want duplicate-index error, got %v", err)
+	}
+}
+
 func TestNewConfigErrors(t *testing.T) {
 	for _, opts := range [][]Option{
 		{WithModel("m")},  // no key

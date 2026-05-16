@@ -19,6 +19,7 @@ func (c *Client) toResponse(req llms.EmbeddingRequest, resp *openai.CreateEmbedd
 	}
 
 	vectors := make([]llms.EmbeddingVector, len(req.Inputs))
+	filled := make([]bool, len(req.Inputs))
 	for i := range resp.Data {
 		e := resp.Data[i]
 		idx := int(e.Index)
@@ -28,11 +29,26 @@ func (c *Client) toResponse(req llms.EmbeddingRequest, resp *openai.CreateEmbedd
 				Message: "provider returned an out-of-range embedding index",
 			}
 		}
+		if filled[idx] {
+			return llms.EmbeddingResponse{}, &llms.ProviderError{
+				Provider: providerName, Model: c.model, Kind: llms.ErrorKindUnknown,
+				Message: "provider returned a duplicate embedding index",
+			}
+		}
 		values := make([]float32, len(e.Embedding))
 		for j, v := range e.Embedding {
 			values[j] = float32(v)
 		}
 		vectors[idx] = llms.EmbeddingVector{ID: req.Inputs[idx].ID, Values: values}
+		filled[idx] = true
+	}
+	for i := range filled {
+		if !filled[i] {
+			return llms.EmbeddingResponse{}, &llms.ProviderError{
+				Provider: providerName, Model: c.model, Kind: llms.ErrorKindUnknown,
+				Message: "provider did not return a vector for every input",
+			}
+		}
 	}
 
 	return llms.EmbeddingResponse{

@@ -81,20 +81,34 @@ func KindForStatus(status int) llms.ErrorKind {
 	}
 }
 
-// parseRetryAfter reads the Retry-After header (delta-seconds or HTTP-date).
+// maxRetryAfter caps the parsed Retry-After. The header is provider-controlled
+// input: a huge delta-seconds value would overflow time.Duration to a negative
+// number, and a multi-day delay is useless to a limiter/retry anyway, so any
+// larger value is clamped to this bound.
+const maxRetryAfter = 24 * time.Hour
+
+// parseRetryAfter reads the Retry-After header (delta-seconds or HTTP-date),
+// clamped to [0, maxRetryAfter].
 func parseRetryAfter(h http.Header) time.Duration {
 	v := h.Get("Retry-After")
 	if v == "" {
 		return 0
 	}
 	if secs, err := strconv.Atoi(v); err == nil {
-		if secs < 0 {
+		if secs <= 0 {
 			return 0
+		}
+		// Compare in seconds before multiplying to avoid int64 overflow.
+		if int64(secs) >= int64(maxRetryAfter/time.Second) {
+			return maxRetryAfter
 		}
 		return time.Duration(secs) * time.Second
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		if d := time.Until(t); d > 0 {
+			if d > maxRetryAfter {
+				return maxRetryAfter
+			}
 			return d
 		}
 	}

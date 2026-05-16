@@ -47,6 +47,16 @@ func TestParseRetryAfter(t *testing.T) {
 	if d := parseRetryAfter(h); d != 0 {
 		t.Errorf("garbage = %v, want 0", d)
 	}
+	// Over-cap and overflow-prone values clamp to maxRetryAfter (never go
+	// negative from int64 overflow).
+	h.Set("Retry-After", "100000") // 27.7h > 24h cap
+	if d := parseRetryAfter(h); d != maxRetryAfter {
+		t.Errorf("over-cap = %v, want %v", d, maxRetryAfter)
+	}
+	h.Set("Retry-After", "9223372036") // ~maxInt64/1e9; would overflow if multiplied
+	if d := parseRetryAfter(h); d != maxRetryAfter {
+		t.Errorf("overflow-prone = %v, want %v (must not be negative)", d, maxRetryAfter)
+	}
 	h.Set("Retry-After", time.Now().Add(5*time.Second).UTC().Format(http.TimeFormat))
 	if d := parseRetryAfter(h); d <= 0 || d > 6*time.Second {
 		t.Errorf("http-date = %v, want ~5s", d)

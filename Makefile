@@ -1,4 +1,4 @@
-.PHONY: build test test-coverage lint fix fix-imports tidy install-lint install-goimports install-hooks clean
+.PHONY: build test test-integration test-coverage lint fix fix-imports tidy install-lint install-goimports install-hooks clean
 
 # Build all packages.
 build: lint

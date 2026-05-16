@@ -18,6 +18,7 @@ func TestKindForStatus(t *testing.T) {
 		429: llms.ErrorKindRateLimited,
 		408: llms.ErrorKindTimeout,
 		400: llms.ErrorKindBadRequest,
+		404: llms.ErrorKindBadRequest,
 		422: llms.ErrorKindBadRequest,
 		500: llms.ErrorKindUnavailable,
 		503: llms.ErrorKindUnavailable,

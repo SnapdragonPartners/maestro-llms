@@ -1,0 +1,64 @@
+name: Integration (live providers)
+
+# Manual only — never auto-runs. Trigger from the Actions tab.
+# Exercises the //go:build integration tests against the REAL provider APIs
+# (Anthropic, OpenAI chat+embeddings, Google) plus a local Ollama started in
+# the runner. Each provider test skips if its key/host is absent, so a missing
+# secret degrades to a skip rather than a failure.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      # actions/* are first-party, pinned by major tag (same posture as ci.yml).
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Official Ollama install script (curl|sh). Acceptable here: this
+      # workflow is manual-only and not a release/build path.
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-qwen3-0.6b
+
+      - name: Start Ollama and pull model
+        run: |
+          ollama serve &
+          # Poll readiness instead of a fixed sleep, so `pull` can't race
+          # an unready server.
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434/api/tags >/dev/null; then break; fi
+            sleep 1
+          done
+          ollama pull qwen3:0.6b   # ~500MB, CPU-fast; cached after first run
+
+      # Secrets (masked), not Variables. The provider tests read these env
+      # names; the Google test accepts GOOGLE_GENAI_API_KEY. OLLAMA_MODEL
+      # overrides the local default so CI uses the small cached model.
+      - name: Run live integration tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_GENAI_API_KEY: ${{ secrets.GOOGLE_GENAI_API_KEY }}
+          OLLAMA_HOST: http://localhost:11434
+          OLLAMA_MODEL: qwen3:0.6b
+        run: make test-integration

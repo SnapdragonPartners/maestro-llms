@@ -9,6 +9,12 @@ build: lint
 test:
 	go test -cover $(TESTARGS) ./...
 
+# Live integration tests against real provider APIs. Build-tagged so the
+# default `test` target and CI stay network-free. Each test skips unless its
+# provider key is set: ANTHROPIC_API_KEY, OPENAI_API_KEY.
+test-integration:
+	go test -tags=integration -run Integration -count=1 -v ./llms/providers/...
+
 # Generate an HTML coverage report.
 test-coverage:
 	@mkdir -p coverage

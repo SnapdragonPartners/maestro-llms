@@ -36,27 +36,35 @@ func (c *Client) systemText(req llms.ChatRequest) (string, *llms.ProviderError) 
 // blocksForParts converts app-neutral content parts to SDK content blocks,
 // returning tool-result blocks separately so they can be emitted first within
 // a user turn (Anthropic requires tool_result immediately after tool_use).
-func blocksForParts(parts []llms.ContentPart) (toolResults, others []anthropic.ContentBlockParamUnion) {
+// Malformed parts (empty text, nil tool payload, unknown type) are rejected
+// rather than silently dropped: dropping them changes conversation semantics
+// and produces misleading downstream alternation errors.
+func (c *Client) blocksForParts(parts []llms.ContentPart) (toolResults, others []anthropic.ContentBlockParamUnion, perr *llms.ProviderError) {
 	for i := range parts {
 		p := parts[i]
 		switch p.Type {
 		case llms.ContentText:
-			if p.Text != "" {
-				others = append(others, anthropic.NewTextBlock(p.Text))
+			if p.Text == "" {
+				return nil, nil, badRequest(c.model, "empty text content part")
 			}
+			others = append(others, anthropic.NewTextBlock(p.Text))
 		case llms.ContentToolCall:
-			if p.ToolCall != nil {
-				others = append(others, anthropic.NewToolUseBlock(
-					p.ToolCall.ID, p.ToolCall.Parameters, p.ToolCall.Name))
+			if p.ToolCall == nil {
+				return nil, nil, badRequest(c.model, "tool_call content part with nil ToolCall")
 			}
+			others = append(others, anthropic.NewToolUseBlock(
+				p.ToolCall.ID, p.ToolCall.Parameters, p.ToolCall.Name))
 		case llms.ContentToolResult:
-			if p.ToolResult != nil {
-				toolResults = append(toolResults, anthropic.NewToolResultBlock(
-					p.ToolResult.ToolCallID, p.ToolResult.Content, p.ToolResult.IsError))
+			if p.ToolResult == nil {
+				return nil, nil, badRequest(c.model, "tool_result content part with nil ToolResult")
 			}
+			toolResults = append(toolResults, anthropic.NewToolResultBlock(
+				p.ToolResult.ToolCallID, p.ToolResult.Content, p.ToolResult.IsError))
+		default:
+			return nil, nil, badRequest(c.model, "unknown content part type: "+string(p.Type))
 		}
 	}
-	return toolResults, others
+	return toolResults, others, nil
 }
 
 // buildMessages maps the app-neutral conversation to Anthropic's strict
@@ -78,7 +86,10 @@ func (c *Client) buildMessages(req llms.ChatRequest) ([]anthropic.MessageParam, 
 
 	for i := range req.Messages {
 		m := req.Messages[i]
-		tr, other := blocksForParts(m.Content)
+		tr, other, perr := c.blocksForParts(m.Content)
+		if perr != nil {
+			return nil, perr
+		}
 		switch m.Role {
 		case llms.RoleAssistant:
 			flush()
@@ -111,6 +122,46 @@ func (c *Client) buildMessages(req llms.ChatRequest) ([]anthropic.MessageParam, 
 // buildTools converts raw JSON Schema tool definitions. Unknown top-level
 // schema keys are passed through via ExtraFields so $defs/additionalProperties
 // etc. are preserved.
+// parseToolSchema converts one tool's raw JSON Schema. Anthropic requires an
+// object schema (the SDK forces type:"object"); a non-object top-level type is
+// rejected rather than silently dropped. Unknown keys pass through ExtraFields
+// so $defs/additionalProperties etc. are preserved.
+func (c *Client) parseToolSchema(name string, rawSchema json.RawMessage) (anthropic.ToolInputSchemaParam, *llms.ProviderError) {
+	schema := anthropic.ToolInputSchemaParam{}
+	if len(rawSchema) == 0 {
+		return schema, nil
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rawSchema, &raw); err != nil {
+		return schema, badRequest(c.model, "tool "+name+": invalid input schema JSON: "+err.Error())
+	}
+	if tv, ok := raw["type"]; ok {
+		if s, _ := tv.(string); s != "object" {
+			return schema, badRequest(c.model, "tool "+name+`: input schema type must be "object"`)
+		}
+	}
+	if props, ok := raw["properties"]; ok {
+		schema.Properties = props
+	}
+	if reqd, ok := raw["required"].([]any); ok {
+		for _, r := range reqd {
+			if s, ok := r.(string); ok {
+				schema.Required = append(schema.Required, s)
+			}
+		}
+	}
+	extra := map[string]any{}
+	for k, v := range raw {
+		if k != "properties" && k != "required" && k != "type" {
+			extra[k] = v
+		}
+	}
+	if len(extra) > 0 {
+		schema.ExtraFields = extra
+	}
+	return schema, nil
+}
+
 func (c *Client) buildTools(req llms.ChatRequest) ([]anthropic.ToolUnionParam, *llms.ProviderError) {
 	if len(req.Tools) == 0 {
 		return nil, nil
@@ -118,31 +169,9 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]anthropic.ToolUnionParam, *
 	tools := make([]anthropic.ToolUnionParam, 0, len(req.Tools))
 	for i := range req.Tools {
 		t := req.Tools[i]
-		schema := anthropic.ToolInputSchemaParam{}
-		if len(t.InputSchema) > 0 {
-			var raw map[string]any
-			if err := json.Unmarshal(t.InputSchema, &raw); err != nil {
-				return nil, badRequest(c.model, "tool "+t.Name+": invalid input schema JSON: "+err.Error())
-			}
-			if props, ok := raw["properties"]; ok {
-				schema.Properties = props
-			}
-			if reqd, ok := raw["required"].([]any); ok {
-				for _, r := range reqd {
-					if s, ok := r.(string); ok {
-						schema.Required = append(schema.Required, s)
-					}
-				}
-			}
-			extra := map[string]any{}
-			for k, v := range raw {
-				if k != "properties" && k != "required" && k != "type" {
-					extra[k] = v
-				}
-			}
-			if len(extra) > 0 {
-				schema.ExtraFields = extra
-			}
+		schema, perr := c.parseToolSchema(t.Name, t.InputSchema)
+		if perr != nil {
+			return nil, perr
 		}
 		tp := anthropic.ToolParam{Name: t.Name, InputSchema: schema}
 		if t.Description != "" {
@@ -153,16 +182,20 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]anthropic.ToolUnionParam, *
 	return tools, nil
 }
 
-func toolChoice(tc llms.ToolChoice) (anthropic.ToolChoiceUnionParam, bool) {
+func (c *Client) toolChoice(tc llms.ToolChoice) (param anthropic.ToolChoiceUnionParam, set bool, perr *llms.ProviderError) {
 	switch tc.Type {
 	case llms.ToolChoiceAuto:
-		return anthropic.ToolChoiceUnionParam{OfAuto: &anthropic.ToolChoiceAutoParam{}}, true
+		return anthropic.ToolChoiceUnionParam{OfAuto: &anthropic.ToolChoiceAutoParam{}}, true, nil
 	case llms.ToolChoiceNone:
-		return anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}, true
+		return anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}, true, nil
 	case llms.ToolChoiceTool:
-		return anthropic.ToolChoiceUnionParam{OfTool: &anthropic.ToolChoiceToolParam{Name: tc.Name}}, true
+		if tc.Name == "" {
+			return anthropic.ToolChoiceUnionParam{}, false,
+				badRequest(c.model, `tool choice type "tool" requires a tool name`)
+		}
+		return anthropic.ToolChoiceUnionParam{OfTool: &anthropic.ToolChoiceToolParam{Name: tc.Name}}, true, nil
 	default:
-		return anthropic.ToolChoiceUnionParam{}, false
+		return anthropic.ToolChoiceUnionParam{}, false, nil
 	}
 }
 
@@ -198,7 +231,11 @@ func (c *Client) toParams(req llms.ChatRequest) (anthropic.MessageNewParams, err
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
-	if ch, ok := toolChoice(req.ToolChoice); ok {
+	ch, ok, perr := c.toolChoice(req.ToolChoice)
+	if perr != nil {
+		return anthropic.MessageNewParams{}, perr
+	}
+	if ok {
 		params.ToolChoice = ch
 	}
 	return params, nil

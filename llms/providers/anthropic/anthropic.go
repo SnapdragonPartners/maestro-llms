@@ -79,6 +79,9 @@ func New(opts ...Option) (*Client, error) {
 	if s.model == "" {
 		return nil, &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: "missing model"}
 	}
+	if s.hasRetries && s.maxRetries < 0 {
+		return nil, &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: "max retries must be >= 0"}
+	}
 
 	reqOpts := []option.RequestOption{option.WithAPIKey(s.apiKey)}
 	if s.baseURL != "" {

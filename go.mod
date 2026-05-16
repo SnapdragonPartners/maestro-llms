@@ -1,6 +1,6 @@
 module github.com/SnapdragonPartners/maestro-llms
 
-go 1.26
+go 1.26.3
 
 require github.com/anthropics/anthropic-sdk-go v1.37.0
 

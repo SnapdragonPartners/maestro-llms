@@ -219,6 +219,52 @@ func TestNewConfigErrors(t *testing.T) {
 	}
 }
 
+func TestToolChoiceToolRequiresName(t *testing.T) {
+	c := newClient(t, respondJSON(t, 200, textMsgJSON, nil))
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages:   []llms.Message{llms.UserText("hi")},
+		ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceTool}, // Name empty
+	})
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+		t.Fatalf("want bad_request for tool choice without name, got %v", err)
+	}
+}
+
+func TestEmptyContentPartRejected(t *testing.T) {
+	c := newClient(t, respondJSON(t, 200, textMsgJSON, nil))
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{{Type: llms.ContentText, Text: ""}}}},
+	})
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+		t.Fatalf("want bad_request for empty text part (not silent drop), got %v", err)
+	}
+}
+
+func TestNonObjectToolSchemaRejected(t *testing.T) {
+	c := newClient(t, respondJSON(t, 200, textMsgJSON, nil))
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+		Tools: []llms.ToolDefinition{{
+			Name:        "bad",
+			InputSchema: json.RawMessage(`{"type":"array","items":{"type":"string"}}`),
+		}},
+	})
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+		t.Fatalf("want bad_request for non-object tool schema, got %v", err)
+	}
+}
+
+func TestNegativeMaxRetriesRejected(t *testing.T) {
+	_, err := New(WithAPIKey("k"), WithModel("m"), WithMaxRetries(-1))
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
+		t.Fatalf("want config error for negative max retries, got %v", err)
+	}
+}
+
 func TestSystemMustBeTextOnly(t *testing.T) {
 	c := newClient(t, respondJSON(t, 200, textMsgJSON, nil))
 	_, err := c.Complete(context.Background(), llms.ChatRequest{

@@ -45,12 +45,17 @@ func skipIfDown(t *testing.T) {
 
 func complete(t *testing.T, c llms.ChatClient, req llms.ChatRequest) llms.ChatResponse {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
 	var resp llms.ChatResponse
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
-		resp, err = c.Complete(ctx, req)
+		// Per-attempt deadline: a shared context across retries means a
+		// first slow/stuck attempt poisons the rest with an already-expired
+		// context instead of giving each try a fair, bounded window.
+		func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+			resp, err = c.Complete(ctx, req)
+		}()
 		if err == nil || !llms.Retryable(err) {
 			break
 		}
@@ -71,10 +76,13 @@ func TestIntegrationOllamaChat(t *testing.T) {
 	}
 	temp := float32(0)
 	resp := complete(t, c, llms.ChatRequest{
-		Purpose:     llms.PurposeChat,
-		System:      []llms.ContentPart{llms.Text("Answer with exactly one lowercase word.")},
-		Messages:    []llms.Message{llms.UserText("Reply with the single word: pong")},
-		MaxTokens:   64,
+		Purpose:  llms.PurposeChat,
+		System:   []llms.ContentPart{llms.Text("Answer with exactly one lowercase word.")},
+		Messages: []llms.Message{llms.UserText("Reply with the single word: pong")},
+		// CI uses a non-reasoning model (llama3.2:1b). 256 gives headroom
+		// if OLLAMA_MODEL is overridden with a model that emits some
+		// preamble; reasoning models still need think:false / non-reasoning.
+		MaxTokens:   256,
 		Temperature: &temp,
 	})
 	if resp.Message.Role != llms.RoleAssistant || resp.Text == "" {
@@ -102,10 +110,11 @@ func TestIntegrationOllamaToolUse(t *testing.T) {
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`),
 	}
 	first := complete(t, c, llms.ChatRequest{
-		Purpose:  llms.PurposeChat,
-		System:   []llms.ContentPart{llms.Text("Use the get_weather tool when asked about weather.")},
-		Messages: []llms.Message{llms.UserText("What's the weather in Paris? Use the tool.")},
-		Tools:    []llms.ToolDefinition{weather},
+		Purpose:   llms.PurposeChat,
+		System:    []llms.ContentPart{llms.Text("Use the get_weather tool when asked about weather.")},
+		Messages:  []llms.Message{llms.UserText("What's the weather in Paris? Use the tool.")},
+		Tools:     []llms.ToolDefinition{weather},
+		MaxTokens: 512, // bound generation regardless of model verbosity
 	})
 	if len(first.ToolCalls) == 0 {
 		t.Skipf("local model %s did not emit a tool call (model-dependent): %q", modelName(), first.Text)
@@ -130,7 +139,8 @@ func TestIntegrationOllamaToolUse(t *testing.T) {
 				Content:    `{"city":"Paris","temp_c":18,"summary":"clear"}`,
 			}),
 		},
-		Tools: []llms.ToolDefinition{weather},
+		Tools:     []llms.ToolDefinition{weather},
+		MaxTokens: 512,
 	})
 	if final.Text == "" {
 		t.Fatalf("no final answer after tool result: %+v", final.Message)

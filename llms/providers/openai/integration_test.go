@@ -29,9 +29,6 @@ func TestIntegrationOpenAIChat(t *testing.T) {
 		t.Fatalf("NewChat: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
 	temp := float32(0)
 	req := llms.ChatRequest{
 		Purpose:     llms.PurposeChat,
@@ -45,7 +42,13 @@ func TestIntegrationOpenAIChat(t *testing.T) {
 	// classifier reports retryable (dogfoods llms.Retryable).
 	var resp llms.ChatResponse
 	for attempt := 0; attempt < 3; attempt++ {
-		resp, err = c.Complete(ctx, req)
+		// Per-attempt deadline (a shared ctx across retries would let a
+		// first slow attempt poison the rest with an expired context).
+		func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			resp, err = c.Complete(ctx, req)
+		}()
 		if err == nil || !llms.Retryable(err) {
 			break
 		}

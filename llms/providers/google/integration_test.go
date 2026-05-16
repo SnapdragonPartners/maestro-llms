@@ -36,12 +36,16 @@ func model() string {
 // provider 5xx/429 don't make the live test flaky (dogfoods llms.Retryable).
 func complete(t *testing.T, c llms.ChatClient, req llms.ChatRequest) llms.ChatResponse {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	var resp llms.ChatResponse
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
-		resp, err = c.Complete(ctx, req)
+		// Per-attempt deadline (a shared ctx across retries would let a
+		// first slow attempt poison the rest with an expired context).
+		func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			resp, err = c.Complete(ctx, req)
+		}()
 		if err == nil || !llms.Retryable(err) {
 			break
 		}
@@ -100,6 +104,7 @@ func TestIntegrationGoogleToolUse(t *testing.T) {
 		Messages:   []llms.Message{llms.UserText("What's the weather in Paris? Use the tool.")},
 		Tools:      []llms.ToolDefinition{weather},
 		ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceTool, Name: "get_weather"},
+		MaxTokens:  512, // bound generation regardless of model verbosity
 	})
 	if len(first.ToolCalls) == 0 {
 		t.Fatalf("model did not call the tool: %+v", first.Message)
@@ -125,7 +130,8 @@ func TestIntegrationGoogleToolUse(t *testing.T) {
 				Content:    `{"city":"Paris","temp_c":18,"summary":"clear"}`,
 			}),
 		},
-		Tools: []llms.ToolDefinition{weather},
+		Tools:     []llms.ToolDefinition{weather},
+		MaxTokens: 512,
 	})
 	if final.Text == "" {
 		t.Fatalf("no final answer after tool result: %+v", final.Message)

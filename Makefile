@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-coverage lint fix fix-imports tidy install-lint install-goimports install-hooks clean
+.PHONY: build test test-integration test-integration-local test-coverage lint fix fix-imports tidy install-lint install-goimports install-hooks clean
 
 # Build all packages.
 build: lint
@@ -14,6 +14,13 @@ test:
 # provider key is set: ANTHROPIC_API_KEY, OPENAI_API_KEY.
 test-integration:
 	go test -tags=integration -run Integration -count=1 -v ./llms/providers/...
+
+# Local macOS path: compile + ad-hoc codesign each integration test binary
+# before running it. Plain `go test` binaries are unsigned and macOS
+# (AMFI/Gatekeeper, often plus endpoint security) wedges them in dyld before
+# any Go code runs. CI is Linux and uses `test-integration` directly.
+test-integration-local:
+	./scripts/integration-local.sh
 
 # Generate an HTML coverage report.
 test-coverage:

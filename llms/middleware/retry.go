@@ -2,18 +2,20 @@ package middleware
 
 import (
 	"context"
+	"math"
 	"math/rand"
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
-// RetryConfig controls retry behavior. Zero/invalid numeric fields are
-// replaced with defaults by normalize(), so callers override only what they
-// care about. Jitter is the exception: 0 means "jitter disabled" (a caller
-// must be able to opt out for deterministic backoff), so RetryConfig{} yields
-// the default backoff schedule with jitter OFF. Use DefaultRetryConfig() (or
-// set Jitter explicitly) for the recommended jittered policy.
+// RetryConfig controls retry behavior. Zero/invalid numeric fields (including
+// NaN/Inf) are replaced with defaults by normalized(), so callers override
+// only what they care about. Jitter is the exception: 0 means "jitter
+// disabled" — a caller must be able to opt out for deterministic backoff — so
+// RetryConfig{} yields the default backoff schedule with jitter OFF. Use
+// DefaultRetryConfig() (or set Jitter explicitly) for the recommended
+// jittered policy.
 type RetryConfig struct {
 	// MaxAttempts is the total number of attempts including the first.
 	MaxAttempts int
@@ -51,11 +53,17 @@ func (c RetryConfig) normalized() RetryConfig {
 	if c.MaxDelay <= 0 {
 		c.MaxDelay = d.MaxDelay
 	}
-	if c.BackoffFactor < 1 {
+	// Reject NaN/Inf explicitly: NaN compares false to everything, so a NaN
+	// factor/jitter would slip past ordered checks, propagate into the
+	// duration math, collapse waits to ~0, and spin a tight retry loop.
+	if math.IsNaN(c.BackoffFactor) || math.IsInf(c.BackoffFactor, 0) || c.BackoffFactor < 1 {
 		c.BackoffFactor = d.BackoffFactor
 	}
-	if c.Jitter < 0 {
+	switch {
+	case math.IsNaN(c.Jitter) || math.IsInf(c.Jitter, 0) || c.Jitter < 0:
 		c.Jitter = 0
+	case c.Jitter > 1:
+		c.Jitter = 1 // jitter is a +/- fraction; >1 could make 1+delta negative
 	}
 	return c
 }

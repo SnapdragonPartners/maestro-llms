@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -198,6 +199,23 @@ func TestRetryConfigNormalizedDefaults(t *testing.T) {
 	n := RetryConfig{MaxAttempts: -1, BackoffFactor: 0.5, Jitter: -1}.normalized()
 	if n.MaxAttempts != d.MaxAttempts || n.BackoffFactor != d.BackoffFactor || n.Jitter != 0 {
 		t.Fatalf("invalid fields not normalized: %+v", n)
+	}
+
+	// NaN/Inf must not slip through (NaN compares false to everything) and
+	// must not propagate into the backoff math. Jitter > 1 clamps to 1.
+	nan, inf := math.NaN(), math.Inf(1)
+	for _, bf := range []float64{nan, inf, math.Inf(-1)} {
+		if got := (RetryConfig{BackoffFactor: bf}).normalized().BackoffFactor; got != d.BackoffFactor {
+			t.Fatalf("BackoffFactor %v must fall back to default, got %v", bf, got)
+		}
+	}
+	for _, j := range []float64{nan, inf, math.Inf(-1)} {
+		if got := (RetryConfig{Jitter: j}).normalized().Jitter; got != 0 {
+			t.Fatalf("Jitter %v must sanitize to 0, got %v", j, got)
+		}
+	}
+	if got := (RetryConfig{Jitter: 5}).normalized().Jitter; got != 1 {
+		t.Fatalf("Jitter > 1 must clamp to 1, got %v", got)
 	}
 }
 

@@ -1,5 +1,14 @@
 .PHONY: build test test-integration test-integration-local test-coverage lint fix fix-imports tidy install-lint install-goimports install-hooks clean
 
+UNAME_S := $(shell uname -s)
+
+# Default the local/CI Ollama model to a small non-reasoning model so the
+# integration tests work out of the box. `?=` defers to an already-set env
+# var (CI sets it explicitly), and is split from `export` for macOS's stock
+# GNU Make 3.81.
+OLLAMA_MODEL ?= llama3.2:1b
+export OLLAMA_MODEL
+
 # Build all packages.
 build: lint
 	go build ./...
@@ -11,14 +20,24 @@ test:
 
 # Live integration tests against real provider APIs. Build-tagged so the
 # default `test` target and CI stay network-free. Each test skips unless its
-# provider key is set: ANTHROPIC_API_KEY, OPENAI_API_KEY.
+# provider key/host is present (ANTHROPIC_API_KEY/MAESTRO_ANTHROPIC_API_KEY,
+# OPENAI_API_KEY, GEMINI_API_KEY, a reachable Ollama).
+#
+# OS-aware so there is one correct command everywhere: on macOS, plain `go
+# test` binaries are unsigned and AMFI/Gatekeeper (often plus endpoint
+# security) wedges them in dyld before any Go code runs — so we route to the
+# ad-hoc-codesign script. Linux/CI keeps the plain `go test` path unchanged.
 test-integration:
+ifeq ($(UNAME_S),Darwin)
+	@echo "==> macOS: routing through ad-hoc codesign (scripts/integration-local.sh)"
+	./scripts/integration-local.sh
+else
 	go test -tags=integration -run Integration -count=1 -v ./llms/providers/...
+endif
 
-# Local macOS path: compile + ad-hoc codesign each integration test binary
-# before running it. Plain `go test` binaries are unsigned and macOS
-# (AMFI/Gatekeeper, often plus endpoint security) wedges them in dyld before
-# any Go code runs. CI is Linux and uses `test-integration` directly.
+# Explicit escape hatch: force the codesign script regardless of OS. The
+# script itself no-ops the signing on non-Darwin, so this is safe anywhere;
+# `test-integration` already selects it automatically on macOS.
 test-integration-local:
 	./scripts/integration-local.sh
 

@@ -135,25 +135,57 @@ func TestRateLimitChatLimitErrorSkipsInnerCall(t *testing.T) {
 	}
 }
 
-func TestRateLimitChatReleasesAfterContextCancel(t *testing.T) {
+func TestRateLimitChatReleasesAfterMidCallContextCancel(t *testing.T) {
 	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{MaxConcurrency: 1}) // token-unlimited
-	fake := &testllm.FakeChatClient{Err: context.Canceled}
+	ctx, cancel := context.WithCancel(context.Background())
+	// Reserve succeeds first (ctx still live); the cancellation happens
+	// *inside* the call, so the deferred Release(WithoutCancel) path is
+	// the thing actually under test.
+	fake := &testllm.FakeChatClient{
+		Func: func(_ context.Context, _ llms.ChatRequest) (llms.ChatResponse, error) {
+			cancel()
+			return llms.ChatResponse{}, context.Canceled
+		},
+	}
 	c := RateLimitChat(lim, DefaultEstimator{})(fake)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 	if _, err := c.Complete(ctx, llms.ChatRequest{}); err == nil {
 		t.Fatal("expected error from canceled inner call")
 	}
-	// Release must have run on a cancellation-surviving context.
 	st, _ := lim.Stats(context.Background())
 	if st.ActiveRequests != 0 {
-		t.Fatalf("slot leaked after ctx cancel: active=%d", st.ActiveRequests)
+		t.Fatalf("slot leaked after mid-call ctx cancel: active=%d", st.ActiveRequests)
 	}
 	// Slot is free, so a subsequent reservation succeeds.
 	fake2 := &testllm.FakeChatClient{Text: "ok"}
 	if _, err := RateLimitChat(lim, DefaultEstimator{})(fake2).Complete(context.Background(), llms.ChatRequest{}); err != nil {
 		t.Fatalf("slot not actually freed: %v", err)
+	}
+}
+
+func TestRateLimitChatKeepsEstimateWhenUsageUnreported(t *testing.T) {
+	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{
+		TokensPerMinute: 100_000, MaxConcurrency: 2, Clock: frozenClock(),
+	}) // capacity 90_000
+	fake := &testllm.FakeChatClient{
+		// Success but zero Usage (provider did not report it).
+		Responses: []llms.ChatResponse{{Message: llms.AssistantText("hi"), Text: "hi"}},
+	}
+	c := RateLimitChat(lim, DefaultEstimator{})(fake)
+	req := userReq("a moderately sized prompt for estimation")
+	est := DefaultEstimator{}.EstimateChat(req)
+
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := lim.Stats(context.Background())
+	// Estimate must be retained (not refunded to full capacity).
+	if st.AvailableTokens != 90_000-est.Tokens() {
+		t.Fatalf("unreported usage refunded the estimate: avail=%d want=%d",
+			st.AvailableTokens, 90_000-est.Tokens())
+	}
+	if st.ActiveRequests != 0 {
+		t.Fatalf("slot not released: active=%d", st.ActiveRequests)
 	}
 }
 

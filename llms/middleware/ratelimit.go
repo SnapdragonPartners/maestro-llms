@@ -49,9 +49,23 @@ func reserved[Resp any](
 
 	resp, err := call(ctx)
 	if err == nil {
-		_ = res.Commit(context.WithoutCancel(ctx), usageOf(resp))
+		// Only reconcile when the provider actually reported usage. The
+		// core Usage contract leaves fields zero when usage is unknown;
+		// committing a zero Usage would refund the whole estimate and
+		// undercount the limiter. Keeping the estimate is the safe
+		// (overcount) direction when usage is unreported.
+		if u := usageOf(resp); usageReported(u) {
+			_ = res.Commit(context.WithoutCancel(ctx), u)
+		}
 	}
 	return resp, err //nolint:wrapcheck // pass provider errors through unwrapped
+}
+
+// usageReported reports whether any token field is set, i.e. the provider
+// returned usage we can reconcile against.
+func usageReported(u llms.Usage) bool {
+	return u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 ||
+		u.EmbeddingTokens != 0 || u.CacheReadTokens != 0 || u.CacheWriteTokens != 0
 }
 
 type rlChat struct {

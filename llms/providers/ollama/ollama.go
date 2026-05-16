@@ -80,10 +80,11 @@ func New(opts ...Option) (*Client, error) {
 		base = defaultBaseURL
 	}
 	base = strings.TrimRight(base, "/")
-	if u, err := url.Parse(base); err != nil || u.Scheme == "" || u.Host == "" {
+	if u, err := url.Parse(base); err != nil || u.Host == "" ||
+		(u.Scheme != "http" && u.Scheme != "https") {
 		return nil, &llms.ProviderError{
 			Provider: providerName, Kind: llms.ErrorKindConfig,
-			Message: "invalid base URL: " + base, Cause: err,
+			Message: "base URL must be a valid http(s) URL: " + base, Cause: err,
 		}
 	}
 	hc := s.httpClient

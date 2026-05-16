@@ -182,9 +182,22 @@ func TestChatBadRequests(t *testing.T) {
 		"tool choice no name": {
 			Messages:   []llms.Message{llms.UserText("hi")},
 			ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceTool}},
-		"non-object schema": {
+		"non-object schema (array)": {
 			Messages: []llms.Message{llms.UserText("hi")},
 			Tools:    []llms.ToolDefinition{{Name: "x", InputSchema: json.RawMessage(`{"type":"array"}`)}}},
+		"non-object schema (null)": {
+			Messages: []llms.Message{llms.UserText("hi")},
+			Tools:    []llms.ToolDefinition{{Name: "x", InputSchema: json.RawMessage(`null`)}}},
+		"tool_call on user message": {Messages: []llms.Message{{Role: llms.RoleUser,
+			Content: []llms.ContentPart{{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{Name: "x"}}}}}},
+		"tool_result on assistant message": {Messages: []llms.Message{{Role: llms.RoleAssistant,
+			Content: []llms.ContentPart{{Type: llms.ContentToolResult, ToolResult: &llms.ToolResult{ToolCallID: "i"}}}}}},
+		"text on tool message": {Messages: []llms.Message{{Role: llms.RoleTool,
+			Content: []llms.ContentPart{{Type: llms.ContentText, Text: "x"}}}}},
+		"tool choice not in tools": {
+			Messages:   []llms.Message{llms.UserText("hi")},
+			Tools:      []llms.ToolDefinition{{Name: "have", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+			ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceTool, Name: "missing"}},
 	}
 	for name, req := range cases {
 		_, err := c.Complete(context.Background(), req)
@@ -202,6 +215,8 @@ func TestNewConfigErrors(t *testing.T) {
 	for _, opts := range [][]Option{
 		{WithModel("m"), WithMaxRetries(-1)},
 		{WithModel("m"), WithBaseURL("http://[::1]:namedport")},
+		{WithModel("m"), WithBaseURL("ftp://localhost:11434")},
+		{WithModel("m"), WithBaseURL("not-a-url")},
 	} {
 		_, err := New(opts...)
 		var pe *llms.ProviderError

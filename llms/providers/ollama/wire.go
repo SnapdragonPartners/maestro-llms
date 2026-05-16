@@ -101,6 +101,23 @@ func roleFor(r llms.Role) (string, bool) {
 	}
 }
 
+// partAllowed enforces the app-neutral contract's role↔part-type rules: text
+// only on user/assistant, tool_call only on assistant, tool_result only on
+// RoleTool. Anything else (incl. unknown part types) is rejected rather than
+// silently producing an invalid/mislabeled Ollama message.
+func partAllowed(r llms.Role, t llms.ContentPartType) bool {
+	switch t {
+	case llms.ContentText:
+		return r == llms.RoleUser || r == llms.RoleAssistant
+	case llms.ContentToolCall:
+		return r == llms.RoleAssistant
+	case llms.ContentToolResult:
+		return r == llms.RoleTool
+	default:
+		return false
+	}
+}
+
 // messageParts converts one app message into wire messages (a tool result
 // becomes its own role:"tool" message, so one app message can yield several).
 func (c *Client) messageParts(m llms.Message) ([]wireMessage, *llms.ProviderError) {
@@ -113,6 +130,10 @@ func (c *Client) messageParts(m llms.Message) ([]wireMessage, *llms.ProviderErro
 	var toolCalls []wireToolCall
 	for j := range m.Content {
 		p := m.Content[j]
+		if !partAllowed(m.Role, p.Type) {
+			return nil, badRequest(c.model,
+				fmt.Sprintf("%q content part is not valid in a %q message", p.Type, m.Role))
+		}
 		switch p.Type {
 		case llms.ContentText:
 			if p.Text == "" {
@@ -139,8 +160,6 @@ func (c *Client) messageParts(m llms.Message) ([]wireMessage, *llms.ProviderErro
 				Content:    p.ToolResult.Content,
 				ToolCallID: p.ToolResult.ToolCallID,
 			})
-		default:
-			return nil, badRequest(c.model, "unknown content part type: "+string(p.Type))
 		}
 	}
 	if text.Len() > 0 || len(toolCalls) > 0 {
@@ -158,13 +177,14 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]wireTool, *llms.ProviderErr
 		t := req.Tools[i]
 		params := json.RawMessage(`{"type":"object"}`)
 		if len(t.InputSchema) > 0 {
-			var probe struct {
-				Type string `json:"type"`
+			// Must be a JSON object: `null`, arrays, and scalars unmarshal
+			// into a struct without error and would slip past a type-only
+			// check, then be sent as an invalid `parameters`.
+			var obj map[string]any
+			if err := json.Unmarshal(t.InputSchema, &obj); err != nil || obj == nil {
+				return nil, badRequest(c.model, "tool "+t.Name+": input schema must be a JSON object")
 			}
-			if err := json.Unmarshal(t.InputSchema, &probe); err != nil {
-				return nil, badRequest(c.model, "tool "+t.Name+": invalid input schema JSON: "+err.Error())
-			}
-			if probe.Type != "" && probe.Type != "object" {
+			if tv, ok := obj["type"].(string); ok && tv != "object" {
 				return nil, badRequest(c.model, "tool "+t.Name+`: input schema type must be "object"`)
 			}
 			params = t.InputSchema
@@ -175,6 +195,24 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]wireTool, *llms.ProviderErr
 		})
 	}
 	return tools, nil
+}
+
+// validateToolChoice enforces that a forced tool choice names a tool that is
+// actually offered. Ollama cannot enforce tool_choice, but caller intent must
+// not be silently lost.
+func (c *Client) validateToolChoice(req llms.ChatRequest) *llms.ProviderError {
+	if req.ToolChoice.Type != llms.ToolChoiceTool {
+		return nil
+	}
+	if req.ToolChoice.Name == "" {
+		return badRequest(c.model, `tool choice type "tool" requires a tool name`)
+	}
+	for i := range req.Tools {
+		if req.Tools[i].Name == req.ToolChoice.Name {
+			return nil
+		}
+	}
+	return badRequest(c.model, "tool choice references tool not in Tools: "+req.ToolChoice.Name)
 }
 
 func (c *Client) toWire(req llms.ChatRequest) (*wireRequest, *llms.ProviderError) {
@@ -202,13 +240,14 @@ func (c *Client) toWire(req llms.ChatRequest) (*wireRequest, *llms.ProviderError
 		return nil, perr
 	}
 
+	if perr := c.validateToolChoice(req); perr != nil {
+		return nil, perr
+	}
+
 	w := &wireRequest{Model: c.model, Messages: msgs, Stream: false}
 	// Ollama has no tool_choice. ToolChoiceNone disables tools by omitting
 	// them; otherwise tools are offered and the model decides (a forced
 	// "tool" choice cannot be honored — see MAESTRO_DIVERGENCES OL2).
-	if req.ToolChoice.Type == llms.ToolChoiceTool && req.ToolChoice.Name == "" {
-		return nil, badRequest(c.model, `tool choice type "tool" requires a tool name`)
-	}
 	if req.ToolChoice.Type != llms.ToolChoiceNone {
 		w.Tools = tools
 	}

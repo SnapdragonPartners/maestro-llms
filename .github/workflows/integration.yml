@@ -29,6 +29,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Models go under $HOME so actions/cache can actually read/write them.
+      # The official installer otherwise runs Ollama as a systemd service
+      # storing models in /usr/share/ollama/.ollama/models (root-owned), which
+      # the cache action can't use — the cache key would never hit.
+      - name: Configure Ollama model dir
+        run: echo "OLLAMA_MODELS=$HOME/.ollama/models" >> "$GITHUB_ENV"
+
       # Official Ollama install script (curl|sh). Acceptable here: this
       # workflow is manual-only and not a release/build path.
       - name: Install Ollama
@@ -38,10 +45,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
-          key: ollama-models-qwen3-0.6b
+          # llama3.2:1b is a non-reasoning instruct model: deterministic and
+          # fast for CI. (qwen3:0.6b is a reasoning model — its always-on
+          # <think> phase returns empty content under small token budgets and
+          # is unbounded otherwise; unsuitable for a fast deterministic gate.)
+          key: ollama-models-llama3.2-1b
 
       - name: Start Ollama and pull model
         run: |
+          # Don't use the installer's systemd service; run our own server so
+          # it uses $OLLAMA_MODELS (the cached path) rather than the
+          # root-owned service store.
+          sudo systemctl stop ollama 2>/dev/null || true
+          mkdir -p "$OLLAMA_MODELS"
           ollama serve &
           # Poll readiness instead of a fixed sleep, so `pull` can't race
           # an unready server.
@@ -49,7 +65,7 @@ jobs:
             if curl -sf http://localhost:11434/api/tags >/dev/null; then break; fi
             sleep 1
           done
-          ollama pull qwen3:0.6b   # ~500MB, CPU-fast; cached after first run
+          ollama pull llama3.2:1b   # ~1.3GB, CPU-fast; cached after first run
 
       # Secrets (masked), not Variables. The provider tests read these env
       # names; the Google test accepts GOOGLE_GENAI_API_KEY. OLLAMA_MODEL
@@ -60,5 +76,5 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_GENAI_API_KEY: ${{ secrets.GOOGLE_GENAI_API_KEY }}
           OLLAMA_HOST: http://localhost:11434
-          OLLAMA_MODEL: qwen3:0.6b
+          OLLAMA_MODEL: llama3.2:1b
         run: make test-integration

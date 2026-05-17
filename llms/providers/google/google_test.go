@@ -117,6 +117,23 @@ func TestToolChoiceRequiredSendsAnyMode(t *testing.T) {
 	}
 }
 
+func TestToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
+	c := newClient(t, jsonHandler(t, 200, respTextJSON))
+	for _, tc := range []llms.ToolChoice{
+		{Type: llms.ToolChoiceRequired},
+		{Type: llms.ToolChoiceTool, Name: "x"},
+	} {
+		_, err := c.Complete(context.Background(), llms.ChatRequest{
+			Messages:   []llms.Message{llms.UserText("hi")},
+			ToolChoice: tc,
+		})
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+			t.Fatalf("%s with no tools must be bad_request, got %v", tc.Type, err)
+		}
+	}
+}
+
 func TestChatRequestTranslation(t *testing.T) {
 	var captured map[string]any
 	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {

@@ -233,6 +233,10 @@ func (c *Client) toParams(req llms.ChatRequest) (anthropic.MessageNewParams, err
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
+	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
+		return anthropic.MessageNewParams{},
+			badRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
+	}
 	ch, ok, perr := c.toolChoice(req.ToolChoice)
 	if perr != nil {
 		return anthropic.MessageNewParams{}, perr

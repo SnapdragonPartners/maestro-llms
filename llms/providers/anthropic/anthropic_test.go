@@ -262,6 +262,23 @@ func TestToolChoiceRequiredSendsAny(t *testing.T) {
 	}
 }
 
+func TestToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
+	c := newClient(t, respondJSON(t, 200, textMsgJSON, nil))
+	for _, tc := range []llms.ToolChoice{
+		{Type: llms.ToolChoiceRequired},
+		{Type: llms.ToolChoiceTool, Name: "x"},
+	} {
+		_, err := c.Complete(context.Background(), llms.ChatRequest{
+			Messages:   []llms.Message{llms.UserText("hi")},
+			ToolChoice: tc, // no Tools offered
+		})
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+			t.Fatalf("%s with no tools must be bad_request, got %v", tc.Type, err)
+		}
+	}
+}
+
 func TestEmptyContentPartRejected(t *testing.T) {
 	c := newClient(t, respondJSON(t, 200, textMsgJSON, nil))
 	_, err := c.Complete(context.Background(), llms.ChatRequest{

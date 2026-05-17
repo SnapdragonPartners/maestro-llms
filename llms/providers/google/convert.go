@@ -299,6 +299,9 @@ func (c *Client) toParams(req llms.ChatRequest) ([]*genai.Content, *genai.Genera
 	if perr != nil {
 		return nil, nil, perr
 	}
+	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
+		return nil, nil, badRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
+	}
 	tcfg, perr := c.toolConfig(req.ToolChoice)
 	if perr != nil {
 		return nil, nil, perr

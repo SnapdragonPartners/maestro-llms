@@ -34,6 +34,14 @@ type ToolChoice struct {
 	Name string // set when Type == ToolChoiceTool
 }
 
+// RequiresTools reports whether this choice is impossible without at least
+// one offered tool: Required (must call some tool) and Tool (must call a
+// named one). Provider adapters reject such a request up front rather than
+// emitting an impossible call or silently degrading it.
+func (tc ToolChoice) RequiresTools() bool {
+	return tc.Type == ToolChoiceRequired || tc.Type == ToolChoiceTool
+}
+
 // ToolCall is a model request to invoke a tool. Parameters is the exact
 // provider-emitted JSON, preserved verbatim to avoid lossy map[string]any
 // round-trips; callers unmarshal it into their own typed structs.

@@ -184,6 +184,23 @@ func TestToolChoiceRequiredOffersTools(t *testing.T) {
 	}
 }
 
+func TestToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
+	c := newClient(t, jsonHandler(t, 200, respTextJSON))
+	for _, tc := range []llms.ToolChoice{
+		{Type: llms.ToolChoiceRequired},
+		{Type: llms.ToolChoiceTool, Name: "x"},
+	} {
+		_, err := c.Complete(context.Background(), llms.ChatRequest{
+			Messages:   []llms.Message{llms.UserText("hi")},
+			ToolChoice: tc,
+		})
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+			t.Fatalf("%s with no tools must be bad_request (not silently degraded), got %v", tc.Type, err)
+		}
+	}
+}
+
 func TestChatErrorClassification(t *testing.T) {
 	c := newClient(t, jsonHandler(t, 404, `{"error":"model 'm' not found"}`))
 	_, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}})

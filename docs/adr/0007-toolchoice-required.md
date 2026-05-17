@@ -49,6 +49,10 @@ note `required` is best-effort like `tool`.
   needs a guaranteed tool call must not depend on Ollama for it. This is
   documented (spec, OL2, the `ToolChoiceRequired` doc comment) so the
   limitation is explicit, not silent.
+- A `Required` (or `Tool`) choice with **no tools offered** is impossible;
+  every adapter rejects it up front with a `bad_request` `*ProviderError`
+  (via `ToolChoice.RequiresTools()`), rather than emitting an invalid call
+  (Anthropic/OpenAI/Gemini) or silently degrading to a plain chat (Ollama).
 - No behavior change for existing `auto`/`none`/`tool` callers.
 - Per-provider wire-capture tests assert the serialized choice
   (`any` / `"required"` / `ANY` / tools-offered).

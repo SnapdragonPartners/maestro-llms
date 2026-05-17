@@ -144,6 +144,26 @@ func TestChatToolChoiceRequiredSendsRequired(t *testing.T) {
 	}
 }
 
+func TestChatToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
+	c := newChat(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, respTextJSON)
+	})
+	for _, tc := range []llms.ToolChoice{
+		{Type: llms.ToolChoiceRequired},
+		{Type: llms.ToolChoiceTool, Name: "x"},
+	} {
+		_, err := c.Complete(context.Background(), llms.ChatRequest{
+			Messages:   []llms.Message{llms.UserText("hi")},
+			ToolChoice: tc,
+		})
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+			t.Fatalf("%s with no tools must be bad_request, got %v", tc.Type, err)
+		}
+	}
+}
+
 func TestChatNullRequiredCoercedToArray(t *testing.T) {
 	var captured map[string]any
 	c := newChat(t, func(w http.ResponseWriter, r *http.Request) {

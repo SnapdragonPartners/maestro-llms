@@ -183,6 +183,10 @@ func (c *ChatClient) toParams(req llms.ChatRequest) (responses.ResponseNewParams
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
+	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
+		return responses.ResponseNewParams{},
+			chatBadRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
+	}
 	ch, ok, perr := c.toolChoice(req.ToolChoice)
 	if perr != nil {
 		return responses.ResponseNewParams{}, perr

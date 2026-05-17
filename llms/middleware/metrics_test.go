@@ -65,7 +65,9 @@ func TestMetricsChatObservesErrorAndPassesThrough(t *testing.T) {
 	wantErr := &llms.ProviderError{Provider: "p", Model: "m", Kind: llms.ErrorKindUnavailable}
 	fake := &testllm.FakeChatClient{
 		Func: func(_ context.Context, _ llms.ChatRequest) (llms.ChatResponse, error) {
-			return llms.ChatResponse{}, wantErr
+			// A partially-filled response returned ALONGSIDE an error must
+			// not leak into the event's Usage.
+			return llms.ChatResponse{Text: "partial", Usage: llms.Usage{InputTokens: 9}}, wantErr
 		},
 	}
 	c := MetricsChat(rec)(fake)
@@ -80,7 +82,7 @@ func TestMetricsChatObservesErrorAndPassesThrough(t *testing.T) {
 		t.Fatalf("error call must still emit an event with Err set: %+v", ev)
 	}
 	if (ev[0].Usage != llms.Usage{}) {
-		t.Fatalf("error path must report zero usage, got %+v", ev[0].Usage)
+		t.Fatalf("error path must report zero usage even with a partial response, got %+v", ev[0].Usage)
 	}
 }
 

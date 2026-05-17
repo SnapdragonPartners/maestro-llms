@@ -23,7 +23,9 @@ type Event struct {
 	// Err is the call's error (nil on success), passed through unwrapped so
 	// an observer can errors.As it to *llms.ProviderError / *llms.LimitError
 	// / *CircuitOpenError.
-	Err     error
+	Err error
+	// Usage is populated only when Err is nil. On failure it is the zero
+	// value: a partial response returned with an error is not trusted.
 	Usage   llms.Usage
 	Latency time.Duration
 }
@@ -73,15 +75,20 @@ func observed[Resp any](
 ) (Resp, error) {
 	start := time.Now()
 	resp, err := call()
-	obs.Observe(Event{
+	ev := Event{
 		Provider:  m.Provider,
 		Model:     m.Name,
 		Operation: op,
 		Purpose:   purpose,
 		Latency:   time.Since(start),
-		Usage:     usageOf(resp), // zero Usage on the error path (resp is zero)
 		Err:       err,
-	})
+	}
+	// Usage is reported only on success. We do not trust a partially-filled
+	// response returned alongside an error; Err already signals failure.
+	if err == nil {
+		ev.Usage = usageOf(resp)
+	}
+	obs.Observe(ev)
 	return resp, err //nolint:wrapcheck // pass provider/limiter errors through unwrapped
 }
 

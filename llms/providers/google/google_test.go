@@ -91,6 +91,32 @@ func TestChatToolCallResponse(t *testing.T) {
 	}
 }
 
+func TestToolChoiceRequiredSendsAnyMode(t *testing.T) {
+	var captured map[string]any
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, respTextJSON)
+	})
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages:   []llms.Message{llms.UserText("hi")},
+		Tools:      []llms.ToolDefinition{{Name: "t", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceRequired},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	tcfg, _ := captured["toolConfig"].(map[string]any)
+	fcc, _ := tcfg["functionCallingConfig"].(map[string]any)
+	if fcc["mode"] != "ANY" {
+		t.Fatalf("ToolChoiceRequired must send functionCallingConfig.mode ANY, got %v", captured["toolConfig"])
+	}
+	if fcc["allowedFunctionNames"] != nil {
+		t.Fatalf("Required must not restrict tool names, got %v", fcc["allowedFunctionNames"])
+	}
+}
+
 func TestChatRequestTranslation(t *testing.T) {
 	var captured map[string]any
 	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {

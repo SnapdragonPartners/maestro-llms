@@ -246,8 +246,9 @@ func (c *Client) toWire(req llms.ChatRequest) (*wireRequest, *llms.ProviderError
 
 	w := &wireRequest{Model: c.model, Messages: msgs, Stream: false}
 	// Ollama has no tool_choice. ToolChoiceNone disables tools by omitting
-	// them; otherwise tools are offered and the model decides (a forced
-	// "tool" choice cannot be honored — see MAESTRO_DIVERGENCES OL2).
+	// them; otherwise tools are offered and the model decides. Neither a
+	// forced "tool" choice nor "required" can be enforced — both are
+	// best-effort here (see MAESTRO_DIVERGENCES OL2).
 	if req.ToolChoice.Type != llms.ToolChoiceNone {
 		w.Tools = tools
 	}

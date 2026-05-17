@@ -136,6 +136,10 @@ func (c *ChatClient) toolChoice(tc llms.ToolChoice) (responses.ResponseNewParams
 		return responses.ResponseNewParamsToolChoiceUnion{
 			OfToolChoiceMode: openai.Opt(responses.ToolChoiceOptionsNone),
 		}, true, nil
+	case llms.ToolChoiceRequired:
+		return responses.ResponseNewParamsToolChoiceUnion{
+			OfToolChoiceMode: openai.Opt(responses.ToolChoiceOptionsRequired),
+		}, true, nil
 	case llms.ToolChoiceTool:
 		if tc.Name == "" {
 			return responses.ResponseNewParamsToolChoiceUnion{}, false,

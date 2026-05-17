@@ -240,6 +240,28 @@ func TestToolChoiceToolRequiresName(t *testing.T) {
 	}
 }
 
+func TestToolChoiceRequiredSendsAny(t *testing.T) {
+	var captured map[string]any
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, textMsgJSON)
+	})
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages:   []llms.Message{llms.UserText("hi")},
+		Tools:      []llms.ToolDefinition{{Name: "t", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceRequired},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	tc, _ := captured["tool_choice"].(map[string]any)
+	if tc["type"] != "any" {
+		t.Fatalf("ToolChoiceRequired must send Anthropic tool_choice {type:any}, got %v", captured["tool_choice"])
+	}
+}
+
 func TestEmptyContentPartRejected(t *testing.T) {
 	c := newClient(t, respondJSON(t, 200, textMsgJSON, nil))
 	_, err := c.Complete(context.Background(), llms.ChatRequest{

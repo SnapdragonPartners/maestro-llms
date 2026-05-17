@@ -18,6 +18,12 @@ const (
 	ToolChoiceAuto ToolChoiceType = "auto"
 	// ToolChoiceNone forbids tool calls.
 	ToolChoiceNone ToolChoiceType = "none"
+	// ToolChoiceRequired forces the model to call at least one of the
+	// offered tools but lets the model pick which (unlike ToolChoiceTool,
+	// which names a specific tool). Maps to Anthropic "any", OpenAI
+	// "required", Gemini ANY-mode. Ollama cannot enforce tool_choice, so
+	// there it is best-effort: tools are offered, the model decides.
+	ToolChoiceRequired ToolChoiceType = "required"
 	// ToolChoiceTool forces the named tool; ToolChoice.Name must be set.
 	ToolChoiceTool ToolChoiceType = "tool"
 )

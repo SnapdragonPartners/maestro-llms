@@ -188,6 +188,8 @@ func (c *Client) toolChoice(tc llms.ToolChoice) (param anthropic.ToolChoiceUnion
 		return anthropic.ToolChoiceUnionParam{OfAuto: &anthropic.ToolChoiceAutoParam{}}, true, nil
 	case llms.ToolChoiceNone:
 		return anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}, true, nil
+	case llms.ToolChoiceRequired:
+		return anthropic.ToolChoiceUnionParam{OfAny: &anthropic.ToolChoiceAnyParam{}}, true, nil
 	case llms.ToolChoiceTool:
 		if tc.Name == "" {
 			return anthropic.ToolChoiceUnionParam{}, false,

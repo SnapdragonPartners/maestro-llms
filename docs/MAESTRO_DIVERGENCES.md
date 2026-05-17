@@ -44,7 +44,7 @@ cut-over validation) vs **Internal** (no observable change — informational).
 | # | Kind | Maestro | maestro-llms | Why | Cut-over action |
 |---|---|---|---|---|---|
 | OC1 | **Behavioral (significant)** | Entire conversation **string-flattened** into one text blob (`System: …\n[Tool Call: …]\n[Tool Result …]`) | **Structured Responses input items** (message / function_call / function_call_output) | Faithful tool round-trips; not a lossy text hack | Validate Maestro tool-using flows against the structured path; output quality should improve but behavior differs |
-| OC2 | **Behavioral (significant)** | Hard-codes `tool_choice = required` whenever tools are present | Honors caller `ToolChoice` (auto default) | Caller controls tool use | Maestro flows that relied on forced tool use must set `ToolChoice{Type: tool}`/`required` explicitly |
+| OC2 | **Behavioral (significant) — RESOLVED (ADR-0007)** | Hard-codes `tool_choice = required` whenever tools are present | Honors caller `ToolChoice`; `ToolChoiceRequired` now maps to OpenAI `required` (auto still the default) | Caller controls tool use; the forced mode is now expressible | Maestro flows that relied on forced tool use set `ToolChoice{Type: ToolChoiceRequired}` (or `Tool` for a specific tool) |
 | OC3 | Internal | Output text via `OutputText()` only | Output items iterated in order; `Message` preserves interleaving | Round-trip source-of-truth ordering | None observable beyond ordering fidelity |
 
 ## Google chat — genai
@@ -52,7 +52,7 @@ cut-over validation) vs **Internal** (no observable change — informational).
 | # | Kind | Maestro | maestro-llms | Why | Cut-over action |
 |---|---|---|---|---|---|
 | G1 | **Behavioral (significant)** | Caches assistant responses (`responseCache`) to replay Gemini **thought signatures** across turns | **Dropped** — clients are stateless/concurrency-safe; conversation round-trips via the app-neutral message history only | Mutable per-client turn-indexed cache violates the stateless + concurrent-safe contract | Validate multi-turn Gemini tool loops; thinking-model quality may differ without thought-signature replay. Revisit if a stateless encoding is needed. |
-| G2 | Behavioral | Forces `FunctionCallingConfigMode = ANY` when tools present | Honors caller `ToolChoice` | Caller controls tool use | Same as OC2 for Gemini |
+| G2 | Behavioral — RESOLVED (ADR-0007) | Forces `FunctionCallingConfigMode = ANY` when tools present | Honors caller `ToolChoice`; `ToolChoiceRequired` maps to ANY-mode (no name restriction) | Caller controls tool use; forced mode expressible | Same as OC2 for Gemini — set `ToolChoiceRequired` |
 | G3 | Behavioral | `StopReason` hard-coded `"end_turn"`; usage dropped | Real finish reason + usage populated | Accurate stop/accounting | Maestro can now read real finish reasons |
 
 ## Ollama chat
@@ -60,7 +60,7 @@ cut-over validation) vs **Internal** (no observable change — informational).
 | # | Kind | Maestro | maestro-llms | Why | Cut-over action |
 |---|---|---|---|---|---|
 | OL1 | **Behavioral (significant)** | Uses the `github.com/ollama/ollama` SDK (`api` package) | **No SDK dependency** — a hand-rolled minimal `/api/chat` net/http client | The ollama module carries unfixed server-side CVEs (GO-2025-4251/3824/3695, "Fixed in: N/A") that govulncheck attributes to any consumer; importing it fails our security gate. The endpoint is a trivial JSON contract; dropping it satisfies the minimal-deps non-goal and yields real HTTP status/headers + raw tool-arg fidelity. | Behavior parity verified live (chat + tool-use round trip identical). Confirm acceptable; watch for `/api/chat` wire-format drift across Ollama versions (we now own the contract). |
-| OL2 | Behavioral | No `ToolChoice` exposed (model always decides) | Ollama has no tool_choice: `ToolChoiceNone` omits tools (disables); `tool`/`auto` offer tools, model decides (a forced tool cannot be honored) | Spec exposes provider-neutral `ToolChoice`; Ollama can't force | `None` now genuinely disables tools (new capability); a forced `tool` choice is best-effort, not guaranteed |
+| OL2 | Behavioral | No `ToolChoice` exposed (model always decides) | Ollama has no tool_choice: `ToolChoiceNone` omits tools (disables); `auto`/`required`/`tool` offer tools, model decides | Spec exposes provider-neutral `ToolChoice`; Ollama can't force | `None` genuinely disables tools; **both `required` and a named `tool` choice are best-effort on Ollama, not guaranteed** — a caller needing a guaranteed tool call must not rely on Ollama |
 | OL3 | Behavioral | `done_reason` canonicalized to `end_turn`/`max_tokens`; usage dropped | Raw `done_reason` as `StopReason`; usage populated (`prompt_eval_count`/`eval_count`) | Accurate stop/accounting, consistent with other providers | Maestro consumers reading the old canonical strings must map raw Ollama reasons |
 | OL4 | Internal | Error classified by string-matching ("connection refused"/"not found") | Real HTTP status via shared `apierr` (typed `httpStatusErr`); transport failures → unknown(retryable) | Consistent typed classification | None observable (connection-refused stays retryable, as before) |
 

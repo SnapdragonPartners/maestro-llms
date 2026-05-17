@@ -242,11 +242,22 @@ type ToolChoice struct {
 type ToolChoiceType string
 
 const (
-    ToolChoiceAuto ToolChoiceType = "auto"
-    ToolChoiceNone ToolChoiceType = "none"
-    ToolChoiceTool ToolChoiceType = "tool"
+    ToolChoiceAuto     ToolChoiceType = "auto"
+    ToolChoiceNone     ToolChoiceType = "none"
+    ToolChoiceRequired ToolChoiceType = "required"
+    ToolChoiceTool     ToolChoiceType = "tool"
 )
+```
 
+`ToolChoiceAuto` lets the model decide; `ToolChoiceNone` forbids tool calls;
+`ToolChoiceRequired` forces the model to call at least one of the offered
+tools but lets it pick which; `ToolChoiceTool` forces a specific named tool
+(`Name` required). `Required` maps to Anthropic `any`, OpenAI `required`,
+Gemini ANY-mode. Ollama has no `tool_choice`, so a `Required` (or `Tool`)
+choice is best-effort there — tools are offered, the model decides — and
+adapters must not silently lose caller intent (see MAESTRO_DIVERGENCES).
+
+```go
 type ToolCall struct {
     ID         string
     Name       string

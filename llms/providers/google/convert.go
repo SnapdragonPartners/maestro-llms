@@ -272,6 +272,10 @@ func (c *Client) toolConfig(tc llms.ToolChoice) (*genai.ToolConfig, *llms.Provid
 		return mk(genai.FunctionCallingConfigModeAuto, nil), nil
 	case llms.ToolChoiceNone:
 		return mk(genai.FunctionCallingConfigModeNone, nil), nil
+	case llms.ToolChoiceRequired:
+		// ANY mode with no name restriction: the model must call one of the
+		// offered functions but picks which.
+		return mk(genai.FunctionCallingConfigModeAny, nil), nil
 	case llms.ToolChoiceTool:
 		if tc.Name == "" {
 			return nil, badRequest(c.model, `tool choice type "tool" requires a tool name`)

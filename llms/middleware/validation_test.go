@@ -148,6 +148,24 @@ func TestValidationRejections(t *testing.T) {
 	tc("unknown role", "unknown role", llms.ChatRequest{
 		Messages: []llms.Message{{Role: llms.Role("system"), Content: []llms.ContentPart{llms.Text("x")}}},
 	})
+	tc("tool_call on user message", "tool_call only allowed on assistant", llms.ChatRequest{
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{
+			{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{ID: "x", Name: "f"}},
+		}}},
+	})
+	tc("tool_result on assistant message", "tool_result only allowed on tool", llms.ChatRequest{
+		Messages: []llms.Message{
+			llms.UserText("q"),
+			{Role: llms.RoleAssistant, Content: []llms.ContentPart{
+				{Type: llms.ContentToolResult, ToolResult: &llms.ToolResult{ToolCallID: "x"}},
+			}},
+		},
+	})
+	tc("tool_result on user message", "tool_result only allowed on tool", llms.ChatRequest{
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{
+			{Type: llms.ContentToolResult, ToolResult: &llms.ToolResult{ToolCallID: "x"}},
+		}}},
+	})
 }
 
 func TestValidationErrorIsNotRetryable(t *testing.T) {

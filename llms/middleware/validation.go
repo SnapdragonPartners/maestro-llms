@@ -78,7 +78,14 @@ func validateChatRequest(req llms.ChatRequest) error {
 	return nil
 }
 
-// validateParts checks each content part matches its discriminant.
+// validateParts checks each content part matches its discriminant AND is
+// legal for the message role: tool_call only on assistant, tool_result only
+// on tool. Text is allowed on user/assistant here; tool messages are further
+// restricted to tool_result-only by pairingState.tool (so the effective
+// contract is: text on user/assistant, tool_call on assistant, tool_result
+// on tool). Enforcing role/part legality here (not just the payload
+// discriminant) stops malformed transcripts from reaching a provider adapter
+// that would serialize them.
 func validateParts(mi int, m *llms.Message) error {
 	for pi := range m.Content {
 		p := &m.Content[pi]
@@ -88,9 +95,15 @@ func validateParts(mi int, m *llms.Message) error {
 			if p.ToolCall == nil || p.ToolCall.ID == "" {
 				return &ValidationError{fmt.Sprintf("message %d part %d: tool_call missing ToolCall/ID", mi, pi)}
 			}
+			if m.Role != llms.RoleAssistant {
+				return &ValidationError{fmt.Sprintf("message %d part %d: tool_call only allowed on assistant messages, got role %q", mi, pi, m.Role)}
+			}
 		case llms.ContentToolResult:
 			if p.ToolResult == nil || p.ToolResult.ToolCallID == "" {
 				return &ValidationError{fmt.Sprintf("message %d part %d: tool_result missing ToolResult/ToolCallID", mi, pi)}
+			}
+			if m.Role != llms.RoleTool {
+				return &ValidationError{fmt.Sprintf("message %d part %d: tool_result only allowed on tool messages, got role %q", mi, pi, m.Role)}
 			}
 		default:
 			return &ValidationError{fmt.Sprintf("message %d part %d: unknown content type %q", mi, pi, p.Type)}

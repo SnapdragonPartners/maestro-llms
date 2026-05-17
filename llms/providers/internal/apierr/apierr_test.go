@@ -82,16 +82,39 @@ func TestClassifyNilReturnsNil(t *testing.T) {
 	}
 }
 
-func TestClassifyContextErrors(t *testing.T) {
-	for _, in := range []error{context.DeadlineExceeded, context.Canceled,
-		fmt.Errorf("wrapped: %w", context.Canceled)} {
+func TestClassifyDeadlineExceededIsRetryableTimeout(t *testing.T) {
+	for _, in := range []error{context.DeadlineExceeded,
+		fmt.Errorf("wrapped: %w", context.DeadlineExceeded)} {
 		err := Classify("p", "m", in, okExtract(500, nil, "x"))
 		var pe *llms.ProviderError
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindTimeout {
-			t.Fatalf("ctx error %v -> want timeout ProviderError, got %v", in, err)
+			t.Fatalf("deadline %v -> want timeout ProviderError, got %v", in, err)
 		}
 		if !errors.Is(err, in) {
 			t.Fatalf("classified error should unwrap to the cause")
+		}
+		if !llms.Retryable(err) {
+			t.Fatalf("deadline-exceeded must stay retryable (per-attempt timeout composition)")
+		}
+	}
+}
+
+func TestClassifyCanceledIsUnwrappedAndNonRetryable(t *testing.T) {
+	for _, in := range []error{context.Canceled,
+		fmt.Errorf("wrapped: %w", context.Canceled)} {
+		err := Classify("p", "m", in, okExtract(500, nil, "x"))
+		// Returned as-is (not converted to *llms.ProviderError, even when the
+		// input is itself wrapped): non-retryable, but still discoverable via
+		// errors.Is for callers and shutdown logic.
+		var pe *llms.ProviderError
+		if errors.As(err, &pe) {
+			t.Fatalf("context.Canceled must NOT be classified as a ProviderError, got %v", err)
+		}
+		if llms.Retryable(err) {
+			t.Fatalf("context.Canceled must be non-retryable, got retryable %v", err)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("context.Canceled must remain errors.Is-matchable, got %v", err)
 		}
 	}
 }

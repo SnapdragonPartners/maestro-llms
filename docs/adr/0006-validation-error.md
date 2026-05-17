@@ -35,7 +35,11 @@ Scope is **structural and app-neutral only** (divergence M3):
 - Message `Role` must be exactly user/assistant/tool (no system role —
   system is `ChatRequest.System`); unknown roles are rejected here rather
   than reaching a provider adapter.
-- Each `ContentPart` must match its discriminant.
+- Each `ContentPart` must match its discriminant **and be legal for the
+  message role**: text on user/assistant, `tool_call` on assistant,
+  `tool_result` on tool (tool messages are `tool_result`-only). Rejected at
+  this outer layer rather than letting a provider adapter serialize a
+  malformed transcript.
 - Tool-call ↔ tool-result pairing (spec line 359): reject missing,
   duplicate, or orphaned tool results across the conversation.
 

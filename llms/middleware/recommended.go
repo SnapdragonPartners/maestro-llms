@@ -42,6 +42,15 @@ type RecommendedConfig struct {
 // Validation, retry, and circuit are always included (defaults when their
 // configs are zero). Timeout is included only when cfg.Timeout > 0; rate
 // limiting only when cfg.Limiter != nil; metrics only when cfg.Observer != nil.
+//
+// Observability scope: because metrics is innermost (spec order), the
+// Observer sees one Event per real provider attempt — accurate per-attempt
+// latency/usage — but NOT outer rejections: validation failures, limiter
+// rejections, circuit-open fast-fails, or retry-exhaustion as a single
+// aggregate. That is deliberate (moving metrics outward would lose
+// per-attempt granularity and fold backoff sleeps into latency). Apps that
+// also need rejection/aggregate observability should hand-compose with
+// ChainChat and add a second, outer MetricsChat (it is placement-agnostic).
 func RecommendedChat(base llms.ChatClient, cfg RecommendedConfig) llms.ChatClient {
 	mws := []ChatMiddleware{ValidationChat(), RetryChat(cfg.Retry)}
 	if cfg.Timeout > 0 {

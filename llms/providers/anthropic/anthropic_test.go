@@ -279,6 +279,51 @@ func TestToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
 	}
 }
 
+func TestCacheBreakpointMapsToCacheControl(t *testing.T) {
+	var captured map[string]any
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, textMsgJSON)
+	})
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		System: []llms.ContentPart{{Type: llms.ContentText, Text: "sys", CacheBreakpoint: true}},
+		Messages: []llms.Message{
+			{Role: llms.RoleUser, Content: []llms.ContentPart{
+				{Type: llms.ContentText, Text: "cached ctx", CacheBreakpoint: true},
+				{Type: llms.ContentText, Text: "uncached"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	sys, _ := captured["system"].([]any)
+	if len(sys) != 1 {
+		t.Fatalf("system not structured: %v", captured["system"])
+	}
+	if sb, _ := sys[0].(map[string]any); sb["cache_control"] == nil {
+		t.Fatalf("system cache breakpoint not mapped to cache_control: %v", sys[0])
+	}
+
+	msgs, _ := captured["messages"].([]any)
+	m0, _ := msgs[0].(map[string]any)
+	content, _ := m0["content"].([]any)
+	if len(content) != 2 {
+		t.Fatalf("want 2 content blocks, got %v", m0["content"])
+	}
+	b0, _ := content[0].(map[string]any)
+	b1, _ := content[1].(map[string]any)
+	if b0["cache_control"] == nil {
+		t.Fatalf("marked block missing cache_control: %v", b0)
+	}
+	if b1["cache_control"] != nil {
+		t.Fatalf("unmarked block must not have cache_control: %v", b1)
+	}
+}
+
 func TestEmptyContentPartRejected(t *testing.T) {
 	c := newClient(t, respondJSON(t, 200, textMsgJSON, nil))
 	_, err := c.Complete(context.Background(), llms.ChatRequest{

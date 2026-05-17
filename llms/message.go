@@ -38,6 +38,15 @@ type ContentPart struct {
 	Text       string
 	ToolCall   *ToolCall
 	ToolResult *ToolResult
+	// CacheBreakpoint is an optional, provider-neutral hint: everything in
+	// the prompt up to and including this part may be prompt-cached.
+	// Providers that expose explicit inline cache control honor it (Anthropic
+	// maps it to cache_control: ephemeral on the corresponding block);
+	// providers without an inline-breakpoint API ignore it (OpenAI prefix-
+	// caches automatically; Gemini's explicit caching is a separate
+	// cached-content API; Ollama has none). It is purely advisory: setting or
+	// ignoring it never changes the model's output, only cache economics.
+	CacheBreakpoint bool
 }
 
 // Message is one app-neutral conversation turn. Provider adapters translate to

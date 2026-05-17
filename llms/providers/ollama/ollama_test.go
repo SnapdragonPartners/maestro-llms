@@ -201,6 +201,17 @@ func TestToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
 	}
 }
 
+func TestCacheBreakpointIgnoredGracefully(t *testing.T) {
+	c := newClient(t, jsonHandler(t, 200, respTextJSON))
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		System:   []llms.ContentPart{{Type: llms.ContentText, Text: "s", CacheBreakpoint: true}},
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{{Type: llms.ContentText, Text: "hi", CacheBreakpoint: true}}}},
+	})
+	if err != nil {
+		t.Fatalf("cache hint must be a safe no-op for Ollama, got %v", err)
+	}
+}
+
 func TestChatErrorClassification(t *testing.T) {
 	c := newClient(t, jsonHandler(t, 404, `{"error":"model 'm' not found"}`))
 	_, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}})

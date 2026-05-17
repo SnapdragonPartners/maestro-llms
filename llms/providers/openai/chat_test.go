@@ -164,6 +164,20 @@ func TestChatToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
 	}
 }
 
+func TestCacheBreakpointIgnoredGracefully(t *testing.T) {
+	c := newChat(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, respTextJSON)
+	})
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		System:   []llms.ContentPart{{Type: llms.ContentText, Text: "s", CacheBreakpoint: true}},
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{{Type: llms.ContentText, Text: "hi", CacheBreakpoint: true}}}},
+	})
+	if err != nil {
+		t.Fatalf("cache hint must be a safe no-op for OpenAI, got %v", err)
+	}
+}
+
 func TestChatNullRequiredCoercedToArray(t *testing.T) {
 	var captured map[string]any
 	c := newChat(t, func(w http.ResponseWriter, r *http.Request) {

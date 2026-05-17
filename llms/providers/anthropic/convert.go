@@ -47,7 +47,14 @@ func (c *Client) blocksForParts(parts []llms.ContentPart) (toolResults, others [
 			if p.Text == "" {
 				return nil, nil, badRequest(c.model, "empty text content part")
 			}
-			others = append(others, anthropic.NewTextBlock(p.Text))
+			if p.CacheBreakpoint {
+				others = append(others, anthropic.ContentBlockParamUnion{OfText: &anthropic.TextBlockParam{
+					Text:         p.Text,
+					CacheControl: anthropic.NewCacheControlEphemeralParam(),
+				}})
+			} else {
+				others = append(others, anthropic.NewTextBlock(p.Text))
+			}
 		case llms.ContentToolCall:
 			if p.ToolCall == nil {
 				return nil, nil, badRequest(c.model, "tool_call content part with nil ToolCall")
@@ -225,7 +232,17 @@ func (c *Client) toParams(req llms.ChatRequest) (anthropic.MessageNewParams, err
 		MaxTokens: maxTokens,
 	}
 	if sys != "" {
-		params.System = []anthropic.TextBlockParam{{Text: sys}}
+		sysBlock := anthropic.TextBlockParam{Text: sys}
+		// System is flattened to one block; a cache breakpoint on any system
+		// part marks the (whole) system prompt as cacheable — the common
+		// "cache the system prompt" case.
+		for i := range req.System {
+			if req.System[i].CacheBreakpoint {
+				sysBlock.CacheControl = anthropic.NewCacheControlEphemeralParam()
+				break
+			}
+		}
+		params.System = []anthropic.TextBlockParam{sysBlock}
 	}
 	if req.Temperature != nil {
 		params.Temperature = anthropic.Float(float64(*req.Temperature))

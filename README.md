@@ -35,6 +35,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 - **One typed error model.** `*llms.ProviderError` (kind, HTTP status,
   `Retry-After`) and `*llms.LimitError`, both `errors.As`-able, with
   `llms.Retryable` / `llms.RetryAfter` helpers.
+- **Prompt-cache hint.** `ContentPart.CacheBreakpoint` — an optional,
+  advisory marker (no TTL/policy). Anthropic maps it to `cache_control`;
+  OpenAI auto-caches (no-op); Gemini/Ollama ignore it. Output never changes,
+  only cache economics.
 - **Composable middleware**: validation, retry, per-attempt timeout, circuit
   breaker, rate-limit reservation, metrics/observer — plus `Recommended*`
   helpers that wire the spec's recommended order.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -321,6 +322,62 @@ func TestCacheBreakpointMapsToCacheControl(t *testing.T) {
 	}
 	if b1["cache_control"] != nil {
 		t.Fatalf("unmarked block must not have cache_control: %v", b1)
+	}
+}
+
+// Anthropic caps cache_control markers at 4. The advisory hint must never
+// push past it: extra (earliest) breakpoints are emitted as plain text so an
+// over-marked request still succeeds, keeping the LAST ones.
+func TestCacheBreakpointCappedAtFour(t *testing.T) {
+	var captured map[string]any
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &captured)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, textMsgJSON)
+	})
+	// System (1 marker) + 5 marked content parts; budget for content = 3,
+	// so the first 2 are dropped, the last 3 kept → 4 total.
+	parts := make([]llms.ContentPart, 5)
+	for i := range parts {
+		parts[i] = llms.ContentPart{Type: llms.ContentText, Text: fmt.Sprintf("p%d", i), CacheBreakpoint: true}
+	}
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		System:   []llms.ContentPart{{Type: llms.ContentText, Text: "sys", CacheBreakpoint: true}},
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: parts}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	sys, _ := captured["system"].([]any)
+	sysBlock, _ := sys[0].(map[string]any)
+	if sysBlock["cache_control"] == nil {
+		t.Fatal("system breakpoint must be honored")
+	}
+	msgs, _ := captured["messages"].([]any)
+	m0, _ := msgs[0].(map[string]any)
+	content, _ := m0["content"].([]any)
+	if len(content) != 5 {
+		t.Fatalf("want 5 content blocks, got %d", len(content))
+	}
+	var cached int
+	for i, bl := range content {
+		blk, _ := bl.(map[string]any)
+		has := blk["cache_control"] != nil
+		if has {
+			cached++
+		}
+		// First 2 dropped (plain), last 3 kept.
+		if i < 2 && has {
+			t.Fatalf("block %d should have been dropped (over budget), but has cache_control", i)
+		}
+		if i >= 2 && !has {
+			t.Fatalf("block %d should be a kept breakpoint, but has no cache_control", i)
+		}
+	}
+	if total := 1 + cached; total != 4 {
+		t.Fatalf("total cache_control markers = %d, must be capped at 4", total)
 	}
 }
 

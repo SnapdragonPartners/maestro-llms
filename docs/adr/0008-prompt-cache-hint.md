@@ -45,6 +45,14 @@ no per-provider knobs.** It never changes model output, only cache economics.
 Scope is text content + the system prompt (Maestro's actual usage). Marking
 non-text parts (tool_use/tool_result) is currently a no-op.
 
+**Anthropic caps cache_control markers at 4 per request.** Because the hint
+is advisory ("never changes behavior"), exceeding the cap must NOT turn a
+valid request into a provider 400 — and rejecting locally would equally
+violate "advisory." So the adapter caps deterministically: the system block
+(if marked) takes one; the remaining budget goes to the **last** content
+breakpoints (longest cached prefixes); earlier excess is silently emitted as
+plain text. Over-marking degrades cache economics, never correctness.
+
 ## Consequences
 
 - Maestro prompt caching is preserved at cut-over via a neutral hint, not a

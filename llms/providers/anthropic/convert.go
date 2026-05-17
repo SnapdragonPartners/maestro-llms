@@ -33,13 +33,55 @@ func (c *Client) systemText(req llms.ChatRequest) (string, *llms.ProviderError) 
 	return b.String(), nil
 }
 
+// anthropicMaxCacheBreakpoints is Anthropic's hard limit on cache_control
+// markers per request (system + content). Exceeding it is a provider 400, so
+// the advisory CacheBreakpoint hint must never push past it.
+const anthropicMaxCacheBreakpoints = 4
+
+// cacheBudget caps how many content cache breakpoints become cache_control.
+// The earliest `skip` marked parts are dropped (emitted as plain text) so the
+// HONORED ones are the last in conversation order — the longest cached
+// prefixes — and the total stays within the provider limit. Deterministic,
+// and the hint stays advisory: dropping extras never fails the request.
+type cacheBudget struct {
+	skip int
+	seen int
+}
+
+func (b *cacheBudget) honor() bool {
+	keep := b.seen >= b.skip
+	b.seen++
+	return keep
+}
+
+func systemHasBreakpoint(parts []llms.ContentPart) bool {
+	for i := range parts {
+		if parts[i].CacheBreakpoint {
+			return true
+		}
+	}
+	return false
+}
+
+func countContentBreakpoints(msgs []llms.Message) int {
+	n := 0
+	for i := range msgs {
+		for j := range msgs[i].Content {
+			if msgs[i].Content[j].Type == llms.ContentText && msgs[i].Content[j].CacheBreakpoint {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // blocksForParts converts app-neutral content parts to SDK content blocks,
 // returning tool-result blocks separately so they can be emitted first within
 // a user turn (Anthropic requires tool_result immediately after tool_use).
 // Malformed parts (empty text, nil tool payload, unknown type) are rejected
 // rather than silently dropped: dropping them changes conversation semantics
 // and produces misleading downstream alternation errors.
-func (c *Client) blocksForParts(parts []llms.ContentPart) (toolResults, others []anthropic.ContentBlockParamUnion, perr *llms.ProviderError) {
+func (c *Client) blocksForParts(parts []llms.ContentPart, cb *cacheBudget) (toolResults, others []anthropic.ContentBlockParamUnion, perr *llms.ProviderError) {
 	for i := range parts {
 		p := parts[i]
 		switch p.Type {
@@ -47,7 +89,7 @@ func (c *Client) blocksForParts(parts []llms.ContentPart) (toolResults, others [
 			if p.Text == "" {
 				return nil, nil, badRequest(c.model, "empty text content part")
 			}
-			if p.CacheBreakpoint {
+			if p.CacheBreakpoint && cb.honor() {
 				others = append(others, anthropic.ContentBlockParamUnion{OfText: &anthropic.TextBlockParam{
 					Text:         p.Text,
 					CacheControl: anthropic.NewCacheControlEphemeralParam(),
@@ -77,7 +119,7 @@ func (c *Client) blocksForParts(parts []llms.ContentPart) (toolResults, others [
 // buildMessages maps the app-neutral conversation to Anthropic's strict
 // user/assistant alternation: RoleTool and RoleUser both map to user, and
 // consecutive user-side turns are merged so alternation holds.
-func (c *Client) buildMessages(req llms.ChatRequest) ([]anthropic.MessageParam, *llms.ProviderError) {
+func (c *Client) buildMessages(req llms.ChatRequest, cb *cacheBudget) ([]anthropic.MessageParam, *llms.ProviderError) {
 	var out []anthropic.MessageParam
 	var userBuf []anthropic.ContentBlockParamUnion
 
@@ -93,7 +135,7 @@ func (c *Client) buildMessages(req llms.ChatRequest) ([]anthropic.MessageParam, 
 
 	for i := range req.Messages {
 		m := req.Messages[i]
-		tr, other, perr := c.blocksForParts(m.Content)
+		tr, other, perr := c.blocksForParts(m.Content, cb)
 		if perr != nil {
 			return nil, perr
 		}
@@ -213,7 +255,20 @@ func (c *Client) toParams(req llms.ChatRequest) (anthropic.MessageNewParams, err
 	if perr != nil {
 		return anthropic.MessageNewParams{}, perr
 	}
-	msgs, perr := c.buildMessages(req)
+	// Cap cache_control markers at Anthropic's limit. The system block (if
+	// marked) consumes one; the remaining budget goes to the LAST content
+	// breakpoints (longest cached prefixes). Excess is silently emitted as
+	// plain text — the hint is advisory and must not fail the request.
+	sysBP := systemHasBreakpoint(req.System)
+	budget := anthropicMaxCacheBreakpoints
+	if sysBP {
+		budget--
+	}
+	skip := countContentBreakpoints(req.Messages) - budget
+	if skip < 0 {
+		skip = 0
+	}
+	msgs, perr := c.buildMessages(req, &cacheBudget{skip: skip})
 	if perr != nil {
 		return anthropic.MessageNewParams{}, perr
 	}
@@ -235,12 +290,10 @@ func (c *Client) toParams(req llms.ChatRequest) (anthropic.MessageNewParams, err
 		sysBlock := anthropic.TextBlockParam{Text: sys}
 		// System is flattened to one block; a cache breakpoint on any system
 		// part marks the (whole) system prompt as cacheable — the common
-		// "cache the system prompt" case.
-		for i := range req.System {
-			if req.System[i].CacheBreakpoint {
-				sysBlock.CacheControl = anthropic.NewCacheControlEphemeralParam()
-				break
-			}
+		// "cache the system prompt" case. It consumes one of the 4 markers
+		// (accounted for in `budget` above).
+		if sysBP {
+			sysBlock.CacheControl = anthropic.NewCacheControlEphemeralParam()
 		}
 		params.System = []anthropic.TextBlockParam{sysBlock}
 	}

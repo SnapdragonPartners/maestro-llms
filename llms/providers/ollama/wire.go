@@ -201,6 +201,13 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]wireTool, *llms.ProviderErr
 // actually offered. Ollama cannot enforce tool_choice, but caller intent must
 // not be silently lost.
 func (c *Client) validateToolChoice(req llms.ChatRequest) *llms.ProviderError {
+	// Required/Tool are impossible with no tools. Ollama can't enforce
+	// tool_choice, but a Required request with an empty Tools list would
+	// otherwise silently degrade to a plain chat — caller intent must not
+	// be lost (spec: adapters must not silently lose caller intent).
+	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
+		return badRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
+	}
 	if req.ToolChoice.Type != llms.ToolChoiceTool {
 		return nil
 	}
@@ -246,8 +253,9 @@ func (c *Client) toWire(req llms.ChatRequest) (*wireRequest, *llms.ProviderError
 
 	w := &wireRequest{Model: c.model, Messages: msgs, Stream: false}
 	// Ollama has no tool_choice. ToolChoiceNone disables tools by omitting
-	// them; otherwise tools are offered and the model decides (a forced
-	// "tool" choice cannot be honored — see MAESTRO_DIVERGENCES OL2).
+	// them; otherwise tools are offered and the model decides. Neither a
+	// forced "tool" choice nor "required" can be enforced — both are
+	// best-effort here (see MAESTRO_DIVERGENCES OL2).
 	if req.ToolChoice.Type != llms.ToolChoiceNone {
 		w.Tools = tools
 	}

@@ -159,9 +159,14 @@ final, err := client.Complete(ctx, llms.ChatRequest{
 // final.Text is the model's answer using the tool result
 ```
 
-`ToolChoice.Type` is `ToolChoiceAuto` (default), `ToolChoiceNone`, or
-`ToolChoiceTool` (force a named tool). Provider differences (e.g. Ollama
-cannot force a specific tool) are documented in `MAESTRO_DIVERGENCES.md`.
+`ToolChoice.Type` is `ToolChoiceAuto` (default), `ToolChoiceNone`,
+`ToolChoiceRequired` (model must call one of the offered tools, its pick),
+or `ToolChoiceTool` (force a specific named tool). `Required` maps to
+Anthropic `any` / OpenAI `required` / Gemini ANY-mode; on Ollama both
+`Required` and `Tool` are best-effort (it has no `tool_choice`). A
+`Required`/`Tool` choice with no tools offered is rejected up front.
+Provider differences are documented in
+[`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 
 ### Embeddings
 

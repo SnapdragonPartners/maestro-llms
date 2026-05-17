@@ -188,6 +188,8 @@ func (c *Client) toolChoice(tc llms.ToolChoice) (param anthropic.ToolChoiceUnion
 		return anthropic.ToolChoiceUnionParam{OfAuto: &anthropic.ToolChoiceAutoParam{}}, true, nil
 	case llms.ToolChoiceNone:
 		return anthropic.ToolChoiceUnionParam{OfNone: &anthropic.ToolChoiceNoneParam{}}, true, nil
+	case llms.ToolChoiceRequired:
+		return anthropic.ToolChoiceUnionParam{OfAny: &anthropic.ToolChoiceAnyParam{}}, true, nil
 	case llms.ToolChoiceTool:
 		if tc.Name == "" {
 			return anthropic.ToolChoiceUnionParam{}, false,
@@ -230,6 +232,10 @@ func (c *Client) toParams(req llms.ChatRequest) (anthropic.MessageNewParams, err
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+	}
+	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
+		return anthropic.MessageNewParams{},
+			badRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
 	}
 	ch, ok, perr := c.toolChoice(req.ToolChoice)
 	if perr != nil {

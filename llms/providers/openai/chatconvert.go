@@ -136,6 +136,10 @@ func (c *ChatClient) toolChoice(tc llms.ToolChoice) (responses.ResponseNewParams
 		return responses.ResponseNewParamsToolChoiceUnion{
 			OfToolChoiceMode: openai.Opt(responses.ToolChoiceOptionsNone),
 		}, true, nil
+	case llms.ToolChoiceRequired:
+		return responses.ResponseNewParamsToolChoiceUnion{
+			OfToolChoiceMode: openai.Opt(responses.ToolChoiceOptionsRequired),
+		}, true, nil
 	case llms.ToolChoiceTool:
 		if tc.Name == "" {
 			return responses.ResponseNewParamsToolChoiceUnion{}, false,
@@ -178,6 +182,10 @@ func (c *ChatClient) toParams(req llms.ChatRequest) (responses.ResponseNewParams
 	}
 	if len(tools) > 0 {
 		params.Tools = tools
+	}
+	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
+		return responses.ResponseNewParams{},
+			chatBadRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
 	}
 	ch, ok, perr := c.toolChoice(req.ToolChoice)
 	if perr != nil {

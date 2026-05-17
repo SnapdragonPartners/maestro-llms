@@ -18,6 +18,12 @@ const (
 	ToolChoiceAuto ToolChoiceType = "auto"
 	// ToolChoiceNone forbids tool calls.
 	ToolChoiceNone ToolChoiceType = "none"
+	// ToolChoiceRequired forces the model to call at least one of the
+	// offered tools but lets the model pick which (unlike ToolChoiceTool,
+	// which names a specific tool). Maps to Anthropic "any", OpenAI
+	// "required", Gemini ANY-mode. Ollama cannot enforce tool_choice, so
+	// there it is best-effort: tools are offered, the model decides.
+	ToolChoiceRequired ToolChoiceType = "required"
 	// ToolChoiceTool forces the named tool; ToolChoice.Name must be set.
 	ToolChoiceTool ToolChoiceType = "tool"
 )
@@ -26,6 +32,14 @@ const (
 type ToolChoice struct {
 	Type ToolChoiceType
 	Name string // set when Type == ToolChoiceTool
+}
+
+// RequiresTools reports whether this choice is impossible without at least
+// one offered tool: Required (must call some tool) and Tool (must call a
+// named one). Provider adapters reject such a request up front rather than
+// emitting an impossible call or silently degrading it.
+func (tc ToolChoice) RequiresTools() bool {
+	return tc.Type == ToolChoiceRequired || tc.Type == ToolChoiceTool
 }
 
 // ToolCall is a model request to invoke a tool. Parameters is the exact

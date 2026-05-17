@@ -272,6 +272,10 @@ func (c *Client) toolConfig(tc llms.ToolChoice) (*genai.ToolConfig, *llms.Provid
 		return mk(genai.FunctionCallingConfigModeAuto, nil), nil
 	case llms.ToolChoiceNone:
 		return mk(genai.FunctionCallingConfigModeNone, nil), nil
+	case llms.ToolChoiceRequired:
+		// ANY mode with no name restriction: the model must call one of the
+		// offered functions but picks which.
+		return mk(genai.FunctionCallingConfigModeAny, nil), nil
 	case llms.ToolChoiceTool:
 		if tc.Name == "" {
 			return nil, badRequest(c.model, `tool choice type "tool" requires a tool name`)
@@ -294,6 +298,9 @@ func (c *Client) toParams(req llms.ChatRequest) ([]*genai.Content, *genai.Genera
 	tools, perr := c.buildTools(req)
 	if perr != nil {
 		return nil, nil, perr
+	}
+	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
+		return nil, nil, badRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
 	}
 	tcfg, perr := c.toolConfig(req.ToolChoice)
 	if perr != nil {

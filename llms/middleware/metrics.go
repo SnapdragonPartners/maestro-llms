@@ -24,9 +24,9 @@ type Event struct {
 	// an observer can errors.As it. WHICH errors are observable depends on
 	// where MetricsChat sits in the chain: it only sees what the client it
 	// wraps returns. Placed outermost it can observe *ValidationError /
-	// *LimitError / *CircuitOpenError; placed innermost (as RecommendedChat
-	// does) it sees only provider-attempt outcomes (*llms.ProviderError or
-	// nil) — outer rejections never reach it.
+	// *llms.LimitError / *CircuitOpenError; placed innermost (as
+	// RecommendedChat does) it sees only provider-attempt outcomes
+	// (*llms.ProviderError or nil) — outer rejections never reach it.
 	Err error
 	// Usage is populated only when Err is nil. On failure it is the zero
 	// value: a partial response returned with an error is not trusted.

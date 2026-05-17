@@ -20,7 +20,7 @@ cut-over validation) vs **Internal** (no observable change — informational).
 | X2 | Internal | Clients hold mutable per-call state | All clients **stateless & concurrency-safe** (spec requirement) | Safe for middleware fan-out / shared use | None (strict improvement) |
 | X3 | Behavioral | Errors stringly-classified per client | Unified `*llms.ProviderError` via shared `apierr` (typed SDK error → kind/status/Retry-After) | One classification, `errors.As`-able | Maestro error-type switches must move to `llms.ErrorKind` / `errors.As(*llms.ProviderError)` |
 | X4 | Behavioral | Usage often dropped | `Usage` populated incl. cache/embedding tokens where the SDK exposes it | Cost/limit accounting | Maestro can now rely on usage; previously it could not |
-| X5 | Behavioral | (varies) | `apierr` returns `context.Canceled` **unwrapped**: non-retryable, circuit-neutral, still `errors.Is`-matchable. `context.DeadlineExceeded` stays a retryable `timeout` ProviderError | Caller cancel/shutdown is not a provider-health signal; matches Maestro's "don't retry `context.Canceled`" intent | None (improvement); confirm Maestro code switches on `errors.Is(err, context.Canceled)`, not a ProviderError kind |
+| X5 | Behavioral | (varies) | `apierr` returns `context.Canceled` **as-is** (not converted to `*ProviderError`; the incoming error may stay wrapped): non-retryable, circuit-neutral, still `errors.Is(context.Canceled)`. `context.DeadlineExceeded` stays a retryable `timeout` ProviderError | Caller cancel/shutdown is not a provider-health signal; matches Maestro's "don't retry `context.Canceled`" intent | None (improvement); confirm Maestro code switches on `errors.Is(err, context.Canceled)`, not a ProviderError kind |
 
 ## Anthropic chat (PR #5)
 

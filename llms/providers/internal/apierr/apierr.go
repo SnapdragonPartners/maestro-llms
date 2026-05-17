@@ -1,8 +1,11 @@
 // Package apierr provides shared provider-error classification so every
-// provider maps HTTP status, Retry-After, and context errors to
+// provider maps HTTP status, Retry-After, and the deadline path to
 // *llms.ProviderError identically. It is SDK-agnostic: each provider passes a
 // small Extract closure that pulls the status/headers/message out of that
 // provider's own typed SDK error, keeping SDK imports in the provider package.
+//
+// Caller cancellation (context.Canceled) is deliberately NOT classified as a
+// provider error — see Classify.
 package apierr
 
 import (
@@ -20,9 +23,14 @@ import (
 // classifies it as unknown). header may be nil.
 type Extract func(err error) (status int, header http.Header, message string, ok bool)
 
-// Classify maps err to a *llms.ProviderError. It returns nil for a nil err.
-// Context deadline/cancellation are classified as timeout; a recognized API
-// error uses its real status and Retry-After; anything else is unknown.
+// Classify maps err to a *llms.ProviderError, with two deliberate exceptions.
+// It returns nil for a nil err. context.DeadlineExceeded is a retryable
+// timeout *llms.ProviderError (a provider-slowness signal — often the
+// per-attempt timeout middleware). context.Canceled is returned AS-IS (not
+// converted to a *llms.ProviderError): caller cancellation/shutdown is not a
+// provider-health signal, so it stays non-retryable and the caller can still
+// match it with errors.Is(err, context.Canceled). A recognized API error
+// uses its real status and Retry-After; anything else is unknown.
 func Classify(provider, model string, err error, extract Extract) error {
 	if err == nil {
 		return nil
@@ -38,10 +46,11 @@ func Classify(provider, model string, err error, extract Extract) error {
 		}
 	case errors.Is(err, context.Canceled):
 		// Caller-initiated cancellation / shutdown is NOT a provider-health
-		// signal. Return it unwrapped so it stays non-retryable
-		// (llms.Retryable is false for non-ProviderError/LimitError), the
-		// circuit treats it as neutral, retry does not loop on it, and
-		// callers can still match it with errors.Is(err, context.Canceled).
+		// signal. Return err AS-IS (do not convert to *llms.ProviderError;
+		// the incoming error may itself be wrapped, which is fine): it stays
+		// non-retryable (llms.Retryable is false for non-ProviderError/
+		// LimitError), the circuit treats it as neutral, retry does not loop
+		// on it, and callers can still match errors.Is(err, context.Canceled).
 		return err
 	}
 

@@ -80,9 +80,12 @@ func validateChatRequest(req llms.ChatRequest) error {
 
 // validateParts checks each content part matches its discriminant AND is
 // legal for the message role: tool_call only on assistant, tool_result only
-// on tool; text is allowed on any role. Enforcing role/part legality here
-// (not just the payload discriminant) stops malformed transcripts from
-// reaching a provider adapter that would serialize them.
+// on tool. Text is allowed on user/assistant here; tool messages are further
+// restricted to tool_result-only by pairingState.tool (so the effective
+// contract is: text on user/assistant, tool_call on assistant, tool_result
+// on tool). Enforcing role/part legality here (not just the payload
+// discriminant) stops malformed transcripts from reaching a provider adapter
+// that would serialize them.
 func validateParts(mi int, m *llms.Message) error {
 	for pi := range m.Content {
 		p := &m.Content[pi]

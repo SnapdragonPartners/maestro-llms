@@ -103,8 +103,9 @@ func TestClassifyCanceledIsUnwrappedAndNonRetryable(t *testing.T) {
 	for _, in := range []error{context.Canceled,
 		fmt.Errorf("wrapped: %w", context.Canceled)} {
 		err := Classify("p", "m", in, okExtract(500, nil, "x"))
-		// Returned unwrapped: not a ProviderError, so non-retryable, but
-		// still discoverable via errors.Is for callers and shutdown logic.
+		// Returned as-is (not converted to *llms.ProviderError, even when the
+		// input is itself wrapped): non-retryable, but still discoverable via
+		// errors.Is for callers and shutdown logic.
 		var pe *llms.ProviderError
 		if errors.As(err, &pe) {
 			t.Fatalf("context.Canceled must NOT be classified as a ProviderError, got %v", err)

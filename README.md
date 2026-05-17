@@ -277,7 +277,7 @@ import "github.com/SnapdragonPartners/maestro-llms/llms/testllm"
 fake := &testllm.FakeChatClient{Text: "canned reply"}              // fixed text
 fake := &testllm.FakeChatClient{Responses: []llms.ChatResponse{…}} // scripted, in order
 fake := &testllm.FakeChatClient{Err: someErr}                      // always errors
-fake := &testllm.FakeChatClient{Func: func(ctx, req) (llms.ChatResponse, error) {
+fake := &testllm.FakeChatClient{Func: func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
 	// full control: assert on req, return anything, simulate latency/errors
 }}
 ```

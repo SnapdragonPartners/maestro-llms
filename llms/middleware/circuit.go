@@ -82,23 +82,43 @@ type breaker struct {
 	state     circuitState
 	failures  int
 	successes int
+	// probing is true while a single HalfOpen probe call is in flight; it
+	// gates concurrent callers so a recovering provider sees one request at
+	// a time, not a thundering herd.
+	probing bool
 }
 
 // allow reports whether a call may proceed. When Open it rejects with a
-// *CircuitOpenError until OpenTimeout elapses, then transitions to HalfOpen
-// and admits the probe.
+// *CircuitOpenError until OpenTimeout elapses, then moves to HalfOpen and
+// admits a SINGLE probe. While that probe (or any subsequent HalfOpen probe
+// before SuccessThreshold is reached) is in flight, other callers are
+// rejected, so a recovering provider is not hit by a concurrent burst. The
+// probe is bounded by the caller's context/timeout middleware; record()
+// clears the gate.
 func (b *breaker) allow() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.state == stateOpen {
-		remaining := b.cfg.OpenTimeout - time.Since(b.openedAt)
-		if remaining > 0 {
+	switch b.state {
+	case stateClosed:
+		return nil
+	case stateOpen:
+		if remaining := b.cfg.OpenTimeout - time.Since(b.openedAt); remaining > 0 {
 			return &CircuitOpenError{Provider: b.provider, Model: b.model, RetryAfter: remaining}
 		}
+		// Timeout elapsed: this caller becomes the single HalfOpen probe.
 		b.state = stateHalfOpen
 		b.successes = 0
+		b.probing = true
+		return nil
+	case stateHalfOpen:
+		if b.probing {
+			return &CircuitOpenError{Provider: b.provider, Model: b.model} // probe already in flight
+		}
+		b.probing = true // admit the next sequential probe
+		return nil
+	default:
+		return nil
 	}
-	return nil
 }
 
 // record folds a call result into the state. Only llms.Retryable failures
@@ -125,7 +145,7 @@ func (b *breaker) record(err error) {
 		b.failures = 0 // success breaks the streak
 	case stateHalfOpen:
 		if failure {
-			b.trip()
+			b.trip() // probe failed: reopen (trip clears probing)
 			return
 		}
 		b.successes++
@@ -134,9 +154,10 @@ func (b *breaker) record(err error) {
 			b.failures = 0
 			b.successes = 0
 		}
+		b.probing = false // probe done: admit the next sequential probe (or none, if now Closed)
 	case stateOpen:
-		// A probe admitted right at the Open->HalfOpen boundary; treat as
-		// HalfOpen by re-tripping on failure, ignoring an early success.
+		// Defensive: allow() always moves Open->HalfOpen before a call runs,
+		// so this is normally unreachable. Re-trip on failure to be safe.
 		if failure {
 			b.trip()
 		}
@@ -149,6 +170,7 @@ func (b *breaker) trip() {
 	b.openedAt = time.Now()
 	b.failures = 0
 	b.successes = 0
+	b.probing = false
 }
 
 // CircuitChat returns middleware that fails fast while the breaker is open.

@@ -167,6 +167,64 @@ func TestCircuitFailsFastUnderRetry(t *testing.T) {
 	}
 }
 
+// HalfOpen must admit only ONE probe: while it is in flight, concurrent
+// callers are rejected so a recovering provider sees no thundering herd.
+func TestCircuitHalfOpenSingleFlight(t *testing.T) {
+	const open = 20 * time.Millisecond
+	var mode atomic.Int32 // 0 = fail, 1 = probe (signals start, then blocks)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	fake := &testllm.FakeChatClient{
+		Func: func(_ context.Context, _ llms.ChatRequest) (llms.ChatResponse, error) {
+			if mode.Load() == 0 {
+				return llms.ChatResponse{}, retryableErr()
+			}
+			started <- struct{}{}
+			<-release
+			return llms.ChatResponse{Text: "ok"}, nil
+		},
+	}
+	c := CircuitChat(fastCircuit(1, 1, open))(fake)
+
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{}); err == nil {
+		t.Fatal("expected the tripping failure")
+	}
+	mode.Store(1)
+	time.Sleep(open + 10*time.Millisecond) // now eligible for a HalfOpen probe
+
+	var wg sync.WaitGroup
+	probeDone := make(chan error, 1)
+	wg.Go(func() {
+		_, err := c.Complete(context.Background(), llms.ChatRequest{})
+		probeDone <- err
+	})
+	<-started // the single probe is now in flight, holding the HalfOpen slot
+
+	var rejected int32
+	for range 8 {
+		wg.Go(func() {
+			if _, err := c.Complete(context.Background(), llms.ChatRequest{}); errors.As(err, new(*CircuitOpenError)) {
+				atomic.AddInt32(&rejected, 1)
+			}
+		})
+	}
+	time.Sleep(25 * time.Millisecond) // contenders are rejected synchronously in allow()
+	if got := atomic.LoadInt32(&rejected); got != 8 {
+		t.Fatalf("single-flight: all 8 concurrent callers must be rejected while a probe is in flight, got %d", got)
+	}
+
+	close(release)
+	if err := <-probeDone; err != nil {
+		t.Fatalf("probe should succeed: %v", err)
+	}
+	wg.Wait()
+
+	// SuccessThreshold=1 → breaker closed; a subsequent call proceeds.
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{}); err != nil {
+		t.Fatalf("breaker should be closed after the successful probe: %v", err)
+	}
+}
+
 func TestCircuitEmbeddingsTrips(t *testing.T) {
 	var calls int32
 	fake := &testllm.FakeEmbeddingClient{

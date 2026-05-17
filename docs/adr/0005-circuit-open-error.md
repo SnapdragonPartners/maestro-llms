@@ -37,6 +37,16 @@ Introduce `middleware.CircuitOpenError{Provider, Model, RetryAfter}`:
   *caller hint*; it does not make the error retryable for middleware.
 - Recovery is via the `Open → HalfOpen` transition on a **later** call after
   `OpenTimeout`, not via in-call retry.
+- **HalfOpen is single-flight**: exactly one probe call is admitted at a
+  time; concurrent callers get `*CircuitOpenError` until the probe records
+  its result. This protects a recovering provider from a thundering herd —
+  important because this toolkit serves Morris (concurrent, multi-instance),
+  unlike Maestro's single-threaded agent loop which admitted all HalfOpen
+  calls. With `SuccessThreshold > 1`, probes are sequential (each clears the
+  gate for the next) until the breaker closes. The probe is bounded by the
+  caller's context / the timeout middleware; an unbounded hung probe without
+  either would stall recovery, so composing with timeout (the spec's
+  recommended chain) is advised.
 - Only `llms.Retryable(err)` failures count against the breaker; successes
   reset a Closed failure streak; non-retryable/caller errors are **neutral**
   (pass through, no state change) — consistent with ADR-0004.

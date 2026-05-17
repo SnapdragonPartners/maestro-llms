@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-This repository is **pre-implementation**. It currently contains only `LICENSE` (MIT, Snapdragon Partners) and `docs/specification.md`. There is no Go code, `go.mod`, build, or test tooling yet. The first implementation work is the extraction described in the spec's "Extraction Plan".
+**v0.3.0** is the current line. Shipped: core chat/embedding interfaces, errors, fakes, the reservation limiter + in-memory limiter; all four provider chat adapters (Anthropic, OpenAI Responses, Google, Ollama-no-SDK) + OpenAI embeddings; the full provider-neutral middleware set (`Validation`, `Retry`, `Timeout`, `Circuit`, `RateLimit`, `Metrics`) with `ChainChat`/`ChainEmbeddings` and the `Recommended*` helper. Standard Go toolchain is in place (`go.mod`; `make build|test|lint`). The Maestro cut-over (extraction-plan step 11) and Morris wiring are the next milestones; streaming and vLLM remain deliberately deferred.
 
 `docs/specification.md` is the binding contract for v0. Read it before writing code. The "Normative Clarifications From Engineering Review" and "Resolved by review" sections are decisions, not suggestions — do not relitigate them in code (e.g. tool calls/results are `ContentPart`s not side-channel fields; `System` is a dedicated `ChatRequest` field; `Temperature` is `*float32`; streaming is a separate `StreamingChatClient` interface; local limiter rejections use `LimitError`, not `ProviderError`).
 
@@ -42,8 +42,8 @@ Load-bearing structural decisions:
 
 ## Build/test commands
 
-None yet — no Go toolchain is set up. Once `go.mod` exists, the standard Go workflow applies (`go build ./...`, `go test ./...`, single test via `go test -run TestName ./pkg/...`). Update this section with the real commands when tooling lands.
+`make build` (lint + `go build ./...`), `make test` (unit tests w/ coverage; single: `make test TESTARGS='-run TestName ./llms/...'`), `make lint` (gofmt + golangci-lint — the lint gate is strict: `fieldalignment`, `gocritic rangeValCopy`, `revive` unused-params, modernize `min`/`max`/`WaitGroup.Go` all fail CI). Live provider tests: `make test-integration` (OS-aware; see README). CI requires `build-lint-test` + `CodeQL` (aggregate only — see memory).
 
 ## Versioning
 
-Pre-1.0; v0.x minor versions may break. v0.1 scope is fixed: core chat+embeddings interfaces, OpenAI embeddings, Anthropic chat, middleware chaining, limiter interfaces, in-memory limiter, fakes. OpenAI chat is explicitly out of scope for v0.1 unless it falls out of the Maestro extraction for free — do not let it expand v0.1.
+Pre-1.0; v0.x minor versions may break. Shipped lines: v0.1.0 (core + Anthropic chat + OpenAI embeddings), v0.2.0 (OpenAI/Google/Ollama chat + error classifier), v0.3.0 (full middleware set + `Recommended*`). Each PR that intentionally differs from Maestro appends a `docs/MAESTRO_DIVERGENCES.md` row; significant structural decisions land an ADR (`docs/adr/`) in the same PR. Don't expand a release's scope mid-stream — scope is decided up front and tracked in the session plan.

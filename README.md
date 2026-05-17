@@ -9,12 +9,17 @@ settled decisions — read them before implementing.
 
 ## Status
 
-v0.1 shipped (tagged `v0.1.0`): core chat/embedding interfaces, middleware
-chaining, limiter + in-memory limiter, deterministic fakes, Anthropic chat,
-OpenAI embeddings. v0.2 in progress: OpenAI chat (Responses API), Google
-chat, Ollama chat, and a shared provider error classifier. See
-[`docs/specification.md`](docs/specification.md) ("Roadmap Update") and
-[`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
+- **v0.1.0** — core chat/embedding interfaces, middleware chaining, limiter
+  + in-memory limiter, deterministic fakes, Anthropic chat, OpenAI embeddings.
+- **v0.2.0** — OpenAI chat (Responses API), Google chat, Ollama chat (no
+  SDK), shared provider error classifier; full live integration suite.
+- **v0.3.0** — the remaining provider-neutral middleware: validation, retry,
+  per-attempt timeout, circuit breaker, metrics/observer, plus the
+  `Recommended*` chain helper (see [Middleware](#middleware)).
+
+Design rationale for non-obvious decisions lives in
+[`docs/adr/`](docs/adr/). See also [`docs/specification.md`](docs/specification.md)
+and [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 
 ## Layout
 
@@ -25,6 +30,49 @@ llms/ratelimit/      Limiter/Reservation interfaces + in-memory limiter
 llms/providers/      one package per provider (leaf imports)
 llms/testllm/        deterministic fakes for tests
 ```
+
+## Middleware
+
+Middleware is `func(Client) Client`, composed with `ChainChat` /
+`ChainEmbeddings`. **The first argument is the outermost wrapper**, and
+composition order is semantically significant — it changes correctness, not
+just performance.
+
+Provider-neutral middleware (`llms/middleware/`):
+
+| Middleware | Purpose |
+|---|---|
+| `ValidationChat` | Reject structurally invalid requests (text-only `System`, tool-call↔result pairing, roles). Chat only. |
+| `RetryChat` / `RetryEmbeddings` | Retry while `llms.Retryable`, honoring `RetryAfter`; exponential backoff + optional jitter. |
+| `TimeoutChat` / `TimeoutEmbeddings` | Per-attempt `context` deadline. |
+| `CircuitChat` / `CircuitEmbeddings` | Three-state breaker; fast-fails with a non-retryable `*CircuitOpenError`; single-flight HalfOpen probe. |
+| `RateLimitChat` / `RateLimitEmbeddings` | Reservation protocol against a `ratelimit.Limiter`. |
+| `MetricsChat` / `MetricsEmbeddings` | One app-neutral `Event` per call to a narrow `Observer` (success and failure). |
+
+### Recommended order
+
+`RecommendedChat` / `RecommendedEmbeddings` compose the spec's recommended
+order:
+
+```
+validation -> retry -> per-attempt timeout -> circuit -> rate limit -> metrics -> provider
+```
+
+Each retry attempt independently flows through timeout, circuit, and the
+rate-limit reservation (retries are real provider traffic and are gated like
+first attempts); a malformed request is rejected before any of that work.
+This is an opinionated convenience — `ChainChat` remains the primitive for
+custom orders/subsets. Tradeoffs of changing the order (retry vs. reservation,
+total vs. per-attempt timeout) are documented in `docs/specification.md`
+("Recommended order").
+
+Retry/circuit classify failures **only** via `llms.Retryable` (one error
+model, no second classifier — [ADR-0004](docs/adr/0004-retry-circuit-reuse-llms-retryable.md));
+`*CircuitOpenError` and `*ValidationError` are deliberately non-retryable
+([ADR-0005](docs/adr/0005-circuit-open-error.md),
+[ADR-0006](docs/adr/0006-validation-error.md)). All wrappers are
+`Complete`/`Embed`-only — streaming is deferred
+([ADR-0003](docs/adr/0003-middleware-complete-only-defer-streaming.md)).
 
 ## Development
 

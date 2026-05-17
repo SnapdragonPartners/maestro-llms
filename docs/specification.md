@@ -196,10 +196,11 @@ type Message struct {
 }
 
 type ContentPart struct {
-    Type       ContentPartType
-    Text       string
-    ToolCall   *ToolCall
-    ToolResult *ToolResult
+    Type            ContentPartType
+    Text            string
+    ToolCall        *ToolCall
+    ToolResult      *ToolResult
+    CacheBreakpoint bool // optional prompt-cache hint (see below)
 }
 
 type ContentPartType string
@@ -216,6 +217,15 @@ Tool calls and tool results are content parts, not side-channel fields on `Messa
 - assistant messages can contain `tool_call` parts
 - tool-result messages use `RoleTool` and contain `tool_result` parts
 - providers that require a different wire shape translate at the provider boundary
+
+`CacheBreakpoint` is an optional, provider-neutral prompt-cache hint:
+everything up to and including the marked part *may* be prompt-cached. It is
+purely advisory — setting or ignoring it never changes model output, only
+cache economics — and is not a Maestro-shaped `CacheControl` (no TTL/policy
+knobs; see ADR-0008). Anthropic honors it (maps to `cache_control: ephemeral`
+on the block); OpenAI prefix-caches automatically (no-op); Gemini's explicit
+caching is a separate cached-content API the inline hint does not drive;
+Ollama has none. Provider adapters must not error on it.
 
 Provider mapping:
 

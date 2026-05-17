@@ -134,6 +134,17 @@ func TestToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
 	}
 }
 
+func TestCacheBreakpointIgnoredGracefully(t *testing.T) {
+	c := newClient(t, jsonHandler(t, 200, respTextJSON))
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		System:   []llms.ContentPart{{Type: llms.ContentText, Text: "s", CacheBreakpoint: true}},
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{{Type: llms.ContentText, Text: "hi", CacheBreakpoint: true}}}},
+	})
+	if err != nil {
+		t.Fatalf("cache hint must be a safe no-op for Gemini, got %v", err)
+	}
+}
+
 func TestChatRequestTranslation(t *testing.T) {
 	var captured map[string]any
 	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {

@@ -1,143 +1,346 @@
 # maestro-llms
 
-A small, app-neutral Go toolkit for working with LLM and embedding providers
-behind stable interfaces, shared by the Maestro and Morris applications.
+A small, app-neutral Go toolkit for talking to LLM and embedding providers
+behind one stable interface.
 
-The binding design lives in [`docs/specification.md`](docs/specification.md).
-Its "Normative Clarifications" and "Resolved by review" sections record
-settled decisions — read them before implementing.
+`maestro-llms` gives you a single `ChatClient` / `EmbeddingClient` contract,
+one conversation model, and one error model that work the same across
+Anthropic, OpenAI, Google (Gemini), and Ollama — plus composable middleware
+(retry, timeout, circuit breaker, rate limiting, metrics, validation) and
+deterministic fakes for testing. It is intentionally **light**: a thin
+adapter layer, not a framework. It carries no application policy, no agent
+logic, no pricing tables, and the minimum of third-party dependencies.
 
-## Status
+It is shared by two consumers with deliberately different needs — Maestro
+(desktop/local) and Morris (cloud, multi-instance) — so nothing in the
+package may import product-specific assumptions from either. When a feature
+needs app context, the answer is an interface the app implements, not a
+concrete implementation here.
 
-- **v0.1.0** — core chat/embedding interfaces, middleware chaining, limiter
-  + in-memory limiter, deterministic fakes, Anthropic chat, OpenAI embeddings.
-- **v0.2.0** — OpenAI chat (Responses API), Google chat, Ollama chat (no
-  SDK), shared provider error classifier; full live integration suite.
-- **v0.3.0** — the remaining provider-neutral middleware: validation, retry,
-  per-attempt timeout, circuit breaker, metrics/observer, plus the
-  `Recommended*` chain helper (see [Middleware](#middleware)).
+The binding design is [`docs/specification.md`](docs/specification.md).
+Rationale for non-obvious decisions lives in [`docs/adr/`](docs/adr/).
+Intentional differences from the original Maestro implementation are tracked
+in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 
-Design rationale for non-obvious decisions lives in
-[`docs/adr/`](docs/adr/). See also [`docs/specification.md`](docs/specification.md)
-and [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
+## Features
 
-## Layout
+- **One conversation model.** `Message` / `ContentPart` is the single
+  representation; each provider adapter translates to/from that provider's
+  wire shape at the boundary. Tool calls and results are content parts, not
+  side-channel fields, so a conversation round-trips unambiguously.
+- **Four chat providers**: Anthropic (Messages), OpenAI (Responses API),
+  Google (Gemini via genai), Ollama (hand-rolled `/api/chat`, no SDK).
+- **Embeddings**: OpenAI (order/ID-preserving, per-request dimension
+  override).
+- **One typed error model.** `*llms.ProviderError` (kind, HTTP status,
+  `Retry-After`) and `*llms.LimitError`, both `errors.As`-able, with
+  `llms.Retryable` / `llms.RetryAfter` helpers.
+- **Composable middleware**: validation, retry, per-attempt timeout, circuit
+  breaker, rate-limit reservation, metrics/observer — plus `Recommended*`
+  helpers that wire the spec's recommended order.
+- **Deterministic fakes** (`llms/testllm`) so downstream code tests without
+  network.
+- **Provider packages are leaf imports.** The core `llms` package pulls no
+  provider SDKs; you import only the providers you use.
 
+### Not in scope (by design)
+
+- **Streaming.** `StreamingChatClient` is a fixed forward-declared interface
+  but is **not implemented**, and no middleware forwards it
+  ([ADR-0003](docs/adr/0003-middleware-complete-only-defer-streaming.md)). All
+  clients/middleware are `Complete`/`Embed`-only. Streaming is deferred until
+  a real consumer needs it.
+- **OpenAI chat is the Responses API**, not Chat Completions.
+- **No automatic embedding chunking / batching.** The caller owns chunking
+  (it also owns retry policy, progress, source IDs). Providers return a typed
+  error when an input batch exceeds the model limit.
+- **No cost/pricing, no story/request attribution, no agent policy.** The
+  metrics `Observer` emits provider-neutral facts only; pricing and
+  attribution belong to the application.
+- **Pre-1.0.** v0.x minor versions may break.
+
+## Install
+
+```sh
+go get github.com/SnapdragonPartners/maestro-llms@latest
 ```
-llms/                core interfaces and shared types
-llms/middleware/     provider-neutral middleware + chain helpers
-llms/ratelimit/      Limiter/Reservation interfaces + in-memory limiter
-llms/providers/      one package per provider (leaf imports)
-llms/testllm/        deterministic fakes for tests
+
+Requires Go 1.26+. Core import path: `github.com/SnapdragonPartners/maestro-llms/llms`.
+
+## Usage
+
+### Chat
+
+```go
+import (
+	"context"
+	"fmt"
+
+	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic"
+)
+
+func run(ctx context.Context, apiKey string) error {
+	client, err := anthropic.New(
+		anthropic.WithAPIKey(apiKey),
+		anthropic.WithModel("claude-haiku-4-5-20251001"),
+	)
+	if err != nil {
+		return err
+	}
+
+	temp := float32(0)
+	resp, err := client.Complete(ctx, llms.ChatRequest{
+		Purpose:     llms.PurposeChat,
+		System:      []llms.ContentPart{llms.Text("Answer in one sentence.")},
+		Messages:    []llms.Message{llms.UserText("What is a goroutine?")},
+		MaxTokens:   256,
+		Temperature: &temp, // *float32: nil means "provider default"
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(resp.Text)                 // assistant text
+	fmt.Println(resp.StopReason)           // why generation stopped
+	fmt.Println(resp.Usage.InputTokens)    // accounting (zero if unknown)
+	return nil
+}
 ```
 
-## Middleware
+Every provider is constructed the same way and returns an `llms.ChatClient`:
+
+| Provider | Constructor | Notable options |
+|---|---|---|
+| Anthropic | `anthropic.New(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithHTTPClient` |
+| OpenAI (chat) | `openai.NewChat(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithHTTPClient` |
+| Google | `google.New(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries` |
+| Ollama | `ollama.New(...)` | `WithBaseURL`, `WithModel`, `WithHTTPClient` |
+
+`WithMaxRetries` controls *SDK-level* retries; the toolkit defaults provider
+SDK retries to 0 and expects you to use the retry middleware (below) for one
+consistent policy.
+
+### Tool use
+
+Tool calls and results are content parts; a round trip is: request with
+tools → inspect `resp.ToolCalls` → send results back as a tool message.
+
+```go
+weather := llms.ToolDefinition{
+	Name:        "get_weather",
+	Description: "Get the current weather for a city.",
+	InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`),
+}
+
+first, err := client.Complete(ctx, llms.ChatRequest{
+	Purpose:    llms.PurposeChat,
+	Messages:   []llms.Message{llms.UserText("Weather in Paris?")},
+	Tools:      []llms.ToolDefinition{weather},
+	ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceTool, Name: "get_weather"},
+	MaxTokens:  512,
+})
+// ... handle err ...
+
+tc := first.ToolCalls[0] // tc.ID, tc.Name, tc.Parameters (json.RawMessage)
+
+final, err := client.Complete(ctx, llms.ChatRequest{
+	Purpose: llms.PurposeChat,
+	Messages: []llms.Message{
+		llms.UserText("Weather in Paris?"),
+		first.Message, // the assistant turn that requested the tool
+		llms.ToolResultMessage(llms.ToolResult{
+			ToolCallID: tc.ID,
+			Content:    `{"city":"Paris","temp_c":18,"summary":"clear"}`,
+		}),
+	},
+	Tools:     []llms.ToolDefinition{weather},
+	MaxTokens: 512,
+})
+// final.Text is the model's answer using the tool result
+```
+
+`ToolChoice.Type` is `ToolChoiceAuto` (default), `ToolChoiceNone`, or
+`ToolChoiceTool` (force a named tool). Provider differences (e.g. Ollama
+cannot force a specific tool) are documented in `MAESTRO_DIVERGENCES.md`.
+
+### Embeddings
+
+```go
+import "github.com/SnapdragonPartners/maestro-llms/llms/providers/openai"
+
+emb, err := openai.New(
+	openai.WithAPIKey(apiKey),
+	openai.WithModel("text-embedding-3-small"),
+)
+// ... handle err ...
+
+out, err := emb.Embed(ctx, llms.EmbeddingRequest{
+	Purpose:    llms.PurposeEmbedding,
+	Dimensions: 256, // optional per-request override
+	Inputs: []llms.EmbeddingInput{
+		{ID: "a", Text: "the quick brown fox"},
+		{ID: "b", Text: "jumps over the lazy dog"},
+	},
+})
+// out.Vectors preserves input order/IDs; out.Vectors[i].Values is []float32
+// out.Usage.EmbeddingTokens for accounting
+```
+
+### Middleware
 
 Middleware is `func(Client) Client`, composed with `ChainChat` /
-`ChainEmbeddings`. **The first argument is the outermost wrapper**, and
+`ChainEmbeddings`. **The first argument is the outermost wrapper, and
 composition order is semantically significant — it changes correctness, not
-just performance.
-
-Provider-neutral middleware (`llms/middleware/`):
+just performance.**
 
 | Middleware | Purpose |
 |---|---|
-| `ValidationChat` | Reject structurally invalid requests (text-only `System`, tool-call↔result pairing, roles). Chat only. |
+| `ValidationChat` | Reject structurally invalid requests (text-only `System`, tool-call↔result pairing, valid roles). Chat only. |
 | `RetryChat` / `RetryEmbeddings` | Retry while `llms.Retryable`, honoring `RetryAfter`; exponential backoff + optional jitter. |
 | `TimeoutChat` / `TimeoutEmbeddings` | Per-attempt `context` deadline. |
 | `CircuitChat` / `CircuitEmbeddings` | Three-state breaker; fast-fails with a non-retryable `*CircuitOpenError`; single-flight HalfOpen probe. |
 | `RateLimitChat` / `RateLimitEmbeddings` | Reservation protocol against a `ratelimit.Limiter`. |
 | `MetricsChat` / `MetricsEmbeddings` | One app-neutral `Event` per call to a narrow `Observer` (success and failure). |
 
-### Recommended order
+The easy path is `RecommendedChat`, which composes the spec's recommended
+order — `validation → retry → per-attempt timeout → circuit → rate limit →
+metrics → provider`:
 
-`RecommendedChat` / `RecommendedEmbeddings` compose the spec's recommended
-order:
+```go
+import (
+	"time"
+	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
+)
 
+c := middleware.RecommendedChat(client, middleware.RecommendedConfig{
+	Retry:    middleware.DefaultRetryConfig(), // 5 attempts, 1s→30s, ×2, ±10% jitter
+	Timeout:  30 * time.Second,                // per attempt; 0 omits it
+	Circuit:  middleware.DefaultCircuitConfig(),
+	Observer: myObserver,                      // optional; nil omits metrics
+	// Limiter: someLimiter,                   // optional; nil omits rate limiting
+})
+resp, err := c.Complete(ctx, req) // same llms.ChatClient interface
 ```
-validation -> retry -> per-attempt timeout -> circuit -> rate limit -> metrics -> provider
+
+`RecommendedConfig`'s zero value is usable (validation/retry/circuit on with
+defaults; timeout/rate-limit/metrics opt-in). For a custom order or subset,
+`ChainChat` is the primitive:
+
+```go
+c := middleware.ChainChat(client,
+	middleware.ValidationChat(),
+	middleware.RetryChat(middleware.DefaultRetryConfig()),
+	middleware.TimeoutChat(30*time.Second),
+)
 ```
 
 Each retry attempt independently flows through timeout, circuit, and the
-rate-limit reservation (retries are real provider traffic and are gated like
-first attempts); a malformed request is rejected before any of that work.
-This is an opinionated convenience — `ChainChat` remains the primitive for
-custom orders/subsets. Tradeoffs of changing the order (retry vs. reservation,
-total vs. per-attempt timeout) are documented in `docs/specification.md`
-("Recommended order").
+rate-limit reservation (retries are real provider traffic, gated like first
+attempts). The tradeoffs of reordering (retry vs. reservation, total vs.
+per-attempt timeout) are in `docs/specification.md` ("Recommended order").
 
-Retry/circuit classify failures **only** via `llms.Retryable` (one error
-model, no second classifier — [ADR-0004](docs/adr/0004-retry-circuit-reuse-llms-retryable.md));
-`*CircuitOpenError` and `*ValidationError` are deliberately non-retryable
-([ADR-0005](docs/adr/0005-circuit-open-error.md),
-[ADR-0006](docs/adr/0006-validation-error.md)). All wrappers are
-`Complete`/`Embed`-only — streaming is deferred
-([ADR-0003](docs/adr/0003-middleware-complete-only-defer-streaming.md)).
+### Errors
+
+One typed model, resolvable through wrapping with `errors.As`:
+
+```go
+resp, err := c.Complete(ctx, req)
+switch {
+case err == nil:
+	// ok
+case llms.Retryable(err):
+	// transient: rate_limited / timeout / unavailable / local limiter.
+	// llms.RetryAfter(err) gives a backoff hint (0 if none).
+default:
+	var pe *llms.ProviderError
+	if errors.As(err, &pe) {
+		// pe.Kind (auth, config, bad_request, content_policy, ...),
+		// pe.StatusCode, pe.RetryAfter
+	}
+}
+```
+
+`llms.Retryable` is the single classifier — retry and circuit middleware use
+it, no second policy ([ADR-0004](docs/adr/0004-retry-circuit-reuse-llms-retryable.md)).
+`*CircuitOpenError` and `*ValidationError` (from middleware) are deliberately
+**non-retryable** ([ADR-0005](docs/adr/0005-circuit-open-error.md),
+[ADR-0006](docs/adr/0006-validation-error.md)).
+
+### Testing your code (fakes)
+
+Downstream tests should not hit the network. `llms/testllm` provides
+deterministic fakes implementing `llms.ChatClient` / `llms.EmbeddingClient`:
+
+```go
+import "github.com/SnapdragonPartners/maestro-llms/llms/testllm"
+
+fake := &testllm.FakeChatClient{Text: "canned reply"}              // fixed text
+fake := &testllm.FakeChatClient{Responses: []llms.ChatResponse{…}} // scripted, in order
+fake := &testllm.FakeChatClient{Err: someErr}                      // always errors
+fake := &testllm.FakeChatClient{Func: func(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+	// full control: assert on req, return anything, simulate latency/errors
+}}
+```
+
+The fakes are concurrency-safe and record calls, so they compose under the
+same middleware as real clients.
 
 ## Development
 
 ```
-make lint     # gofmt + golangci-lint
-make test     # unit tests with coverage
 make build    # lint + go build ./...
+make test     # unit tests with coverage   (single: make test TESTARGS='-run TestName ./llms/...')
+make lint     # gofmt + golangci-lint  (strict gate — see below)
 make fix      # auto-fix import grouping
-make install-hooks   # install the pre-push lint+test hook
+make install-hooks   # pre-push lint+test hook
 ```
 
-Single test: `make test TESTARGS='-run TestName ./llms/...'`.
+The lint gate is strict and enforced in CI (`build-lint-test` + `CodeQL`):
+`fieldalignment`, `gocritic` (`rangeValCopy`), `revive` (unused params), and
+modernizers (`min`/`max`, `WaitGroup.Go`) all fail the build. Run
+`make lint` before pushing.
 
 ### Live integration tests
 
 Build-tagged (`//go:build integration`) tests exercise the real provider
-APIs. They never run in normal `make test`/CI for unit work, and each skips
-unless its credentials/host are present.
+APIs. They never run in normal `make test`/CI, and each **skips** unless its
+credentials/host are present (so any subset works).
 
-- **Canonical path = CI.** The *Integration (live providers)* workflow
-  (Actions tab, manual `workflow_dispatch`) runs them on Linux against the
-  live APIs plus an Ollama started in the runner. This is the source of
-  truth.
-- **Locally:** `make test-integration` is the one correct command on every
-  OS — it is OS-aware. On **macOS**, AMFI/Gatekeeper (often plus
-  endpoint-security agents) blocks freshly built *unsigned* test binaries (a
-  plain `go test` wedges in `dyld` before any Go code runs), so the target
-  automatically routes through a compile + ad-hoc codesign step; on Linux it
-  runs `go test` directly. (`make test-integration-local` forces the
-  codesign path explicitly and is safe on any OS — rarely needed.)
-- **Anthropic key:** the Anthropic test reads `ANTHROPIC_API_KEY` first
-  (the CI secret), then falls back to `MAESTRO_ANTHROPIC_API_KEY`. Use the
-  prefixed var locally to keep `ANTHROPIC_API_KEY` unset so Claude Code's
-  OAuth subscription auth keeps working in the same shell.
+- **`make test-integration`** is the one correct command on every OS — it is
+  OS-aware. On **macOS**, AMFI/Gatekeeper blocks freshly built *unsigned*
+  test binaries (a plain `go test` wedges in `dyld`), so the target routes
+  through a compile + ad-hoc codesign step; on Linux it runs `go test`
+  directly. The canonical run is the *Integration (live providers)* CI
+  workflow (manual `workflow_dispatch`, Linux + a runner Ollama).
 
-#### Running them
-
-Each provider runs **simple chat** and a **tool-use round trip**; OpenAI also
-runs **embeddings**. A provider whose key/host is absent is skipped (not
-failed), so you can exercise any subset by setting only those vars.
-
-| Provider | Key / host (skips if unset) | Model override (default) |
+| Provider | Key / host (skipped if unset) | Model override (default) |
 |---|---|---|
 | Anthropic | `ANTHROPIC_API_KEY`, else `MAESTRO_ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-haiku-4-5-20251001`) |
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-4o-mini`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`) |
 | Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`) |
-| Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` — the Makefile defaults this to `llama3.2:1b`; raw `go test` falls back to `ministral-3:14b-instruct-2512-fp16` |
-
-Full run, all four providers (same command on macOS and Linux):
+| Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`) |
 
 ```sh
-MAESTRO_ANTHROPIC_API_KEY=sk-ant-… \
-OPENAI_API_KEY=sk-… \
-GEMINI_API_KEY=… \
-make test-integration
+MAESTRO_ANTHROPIC_API_KEY=sk-ant-… OPENAI_API_KEY=sk-… GEMINI_API_KEY=… make test-integration
 ```
 
-The Makefile defaults `OLLAMA_MODEL=llama3.2:1b` (a small non-reasoning model)
-unless you set it. To exercise just one provider, set only its key/host and
-leave the rest unset — the others skip, e.g.
-`OPENAI_API_KEY=… make test-integration`.
+The `MAESTRO_ANTHROPIC_API_KEY` fallback lets you keep `ANTHROPIC_API_KEY`
+unset locally so Claude Code's OAuth auth keeps working in the same shell.
+Point Ollama at a **non-reasoning** model (e.g. `llama3.2:1b`): reasoning
+models emit a separate `thinking` field this client does not surface.
 
-Ollama caveat: point it at a **non-reasoning** model (e.g. `llama3.2:1b`).
-Reasoning models (e.g. `qwen3`) emit a separate `thinking` field that this
-client does not surface, so `content` is empty under small token budgets and
-unbounded otherwise; a `think` control is not exposed in v0.2.
+## Contributing
 
 Work lands via pull request; `main` is branch-protected and CI must pass.
+Conventions: a PR that intentionally diverges from Maestro appends a row to
+`docs/MAESTRO_DIVERGENCES.md`; a significant structural decision lands an ADR
+in `docs/adr/` in the same PR. Don't relitigate decisions the spec or an ADR
+already settled, and don't "fix" a deliberate limitation an ADR explains.
+
+## Versioning & license
+
+Pre-1.0; v0.x minor versions may break. Shipped lines: **v0.1.0** (core +
+Anthropic chat + OpenAI embeddings), **v0.2.0** (OpenAI/Google/Ollama chat +
+error classifier), **v0.3.0** (full middleware set + `Recommended*`).
+
+MIT — see [`LICENSE`](LICENSE).

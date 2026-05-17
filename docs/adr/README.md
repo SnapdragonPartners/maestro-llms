@@ -39,3 +39,4 @@ Copy `0001`'s structure as the template.
 | [0002](0002-ollama-no-sdk-hand-rolled-client.md) | Ollama provider: no SDK, hand-rolled `/api/chat` client | Accepted |
 | [0003](0003-middleware-complete-only-defer-streaming.md) | Middleware wraps `Complete` only; defer streaming semantics | Accepted |
 | [0004](0004-retry-circuit-reuse-llms-retryable.md) | Retry/circuit middleware reuse `llms.Retryable`, not a ported classifier | Accepted |
+| [0005](0005-circuit-open-error.md) | Circuit breaker emits a distinct, non-retryable `CircuitOpenError` | Accepted |

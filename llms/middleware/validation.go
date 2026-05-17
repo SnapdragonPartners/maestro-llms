@@ -116,6 +116,11 @@ func (s *pairingState) step(mi int, m *llms.Message) error {
 		if len(s.pending) > 0 {
 			return &ValidationError{fmt.Sprintf("message %d: user turn before tool results delivered for: %s", mi, idList(s.pending))}
 		}
+	default:
+		// Valid roles are exactly user/assistant/tool (there is no system
+		// role — system is ChatRequest.System). Reject anything else at the
+		// outermost validator instead of letting it reach a provider adapter.
+		return &ValidationError{fmt.Sprintf("message %d: unknown role %q", mi, m.Role)}
 	}
 	return nil
 }

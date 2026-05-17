@@ -32,6 +32,9 @@ Scope is **structural and app-neutral only** (divergence M3):
 
 - `System` parts must be text-only (spec §System, line 178).
 - At least one message; no empty message content.
+- Message `Role` must be exactly user/assistant/tool (no system role —
+  system is `ChatRequest.System`); unknown roles are rejected here rather
+  than reaching a provider adapter.
 - Each `ContentPart` must match its discriminant.
 - Tool-call ↔ tool-result pairing (spec line 359): reject missing,
   duplicate, or orphaned tool results across the conversation.

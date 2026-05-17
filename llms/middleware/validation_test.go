@@ -132,6 +132,22 @@ func TestValidationRejections(t *testing.T) {
 	tc("assistant before prior results", "previous tool calls have no results", llms.ChatRequest{
 		Messages: []llms.Message{llms.UserText("q"), asstCall("a"), asstCall("b")},
 	})
+	tc("tool_result nil payload", "tool_result missing", llms.ChatRequest{
+		Messages: []llms.Message{{Role: llms.RoleTool, Content: []llms.ContentPart{
+			{Type: llms.ContentToolResult, ToolResult: nil},
+		}}},
+	})
+	tc("tool_result empty ToolCallID", "tool_result missing", llms.ChatRequest{
+		Messages: []llms.Message{{Role: llms.RoleTool, Content: []llms.ContentPart{
+			{Type: llms.ContentToolResult, ToolResult: &llms.ToolResult{ToolCallID: ""}},
+		}}},
+	})
+	tc("non-result part on tool message", "may only contain tool_result", llms.ChatRequest{
+		Messages: []llms.Message{{Role: llms.RoleTool, Content: []llms.ContentPart{llms.Text("hi")}}},
+	})
+	tc("unknown role", "unknown role", llms.ChatRequest{
+		Messages: []llms.Message{{Role: llms.Role("system"), Content: []llms.ContentPart{llms.Text("x")}}},
+	})
 }
 
 func TestValidationErrorIsNotRetryable(t *testing.T) {

@@ -199,9 +199,17 @@ func TestContextCanceledClassified(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
 	_, err := c.Complete(ctx, llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}})
+	// Caller cancellation is not a provider failure: returned unwrapped,
+	// non-retryable, still errors.Is-matchable (see apierr X5 / divergences).
 	var pe *llms.ProviderError
-	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindTimeout {
-		t.Fatalf("want timeout ProviderError, got %v", err)
+	if errors.As(err, &pe) {
+		t.Fatalf("context.Canceled must not be a ProviderError, got %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want errors.Is(context.Canceled), got %v", err)
+	}
+	if llms.Retryable(err) {
+		t.Fatalf("context.Canceled must be non-retryable, got %v", err)
 	}
 }
 

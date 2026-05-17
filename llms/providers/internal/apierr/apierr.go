@@ -30,15 +30,19 @@ func Classify(provider, model string, err error, extract Extract) error {
 
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
+		// A tripped deadline (often the per-attempt timeout middleware) is a
+		// provider-slowness signal: classify as a retryable timeout.
 		return &llms.ProviderError{
 			Provider: provider, Model: model,
 			Kind: llms.ErrorKindTimeout, Message: "request deadline exceeded", Cause: err,
 		}
 	case errors.Is(err, context.Canceled):
-		return &llms.ProviderError{
-			Provider: provider, Model: model,
-			Kind: llms.ErrorKindTimeout, Message: "request canceled", Cause: err,
-		}
+		// Caller-initiated cancellation / shutdown is NOT a provider-health
+		// signal. Return it unwrapped so it stays non-retryable
+		// (llms.Retryable is false for non-ProviderError/LimitError), the
+		// circuit treats it as neutral, retry does not loop on it, and
+		// callers can still match it with errors.Is(err, context.Canceled).
+		return err
 	}
 
 	status, header, message, ok := extract(err)

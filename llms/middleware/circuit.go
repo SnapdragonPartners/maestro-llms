@@ -128,11 +128,19 @@ func (b *breaker) allow() error {
 func (b *breaker) record(err error) {
 	success := err == nil
 	failure := err != nil && llms.Retryable(err)
-	if !success && !failure {
-		return // neutral: caller/non-retryable error, no health signal
-	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if !success && !failure {
+		// Neutral (caller / non-retryable) error: not a provider-health
+		// signal, so no count or state change. But a HalfOpen probe still
+		// holds the single-flight gate — release it, or a neutral-erroring
+		// probe wedges the breaker in HalfOpen forever (no later probe is
+		// ever admitted).
+		if b.state == stateHalfOpen {
+			b.probing = false
+		}
+		return
+	}
 	switch b.state {
 	case stateClosed:
 		if failure {

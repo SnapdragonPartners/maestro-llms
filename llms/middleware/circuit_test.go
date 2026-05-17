@@ -225,6 +225,48 @@ func TestCircuitHalfOpenSingleFlight(t *testing.T) {
 	}
 }
 
+// A HalfOpen probe that returns a NEUTRAL (non-retryable) error must release
+// the single-flight gate, or the breaker wedges in HalfOpen forever and never
+// admits another probe. Regression for the record() early-return.
+func TestCircuitHalfOpenNeutralErrorReleasesGate(t *testing.T) {
+	const open = 20 * time.Millisecond
+	authErr := &llms.ProviderError{Provider: "p", Model: "m", Kind: llms.ErrorKindAuth}
+	sw := &errSwitch{err: retryableErr()}
+	fake := &testllm.FakeChatClient{Func: sw.fn()}
+	c := CircuitChat(fastCircuit(1, 1, open))(fake)
+
+	// Trip (FailureThreshold=1).
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{}); err == nil {
+		t.Fatal("expected the tripping failure")
+	}
+	// Probe returns a neutral, non-retryable error.
+	sw.set(authErr)
+	time.Sleep(open + 10*time.Millisecond)
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{}); !errors.As(err, new(*llms.ProviderError)) {
+		t.Fatalf("HalfOpen probe should reach the client and return its error, got %v", err)
+	}
+	// The gate must have been released: the next call is admitted as a new
+	// probe (returns the provider error), NOT rejected as CircuitOpenError.
+	_, err := c.Complete(context.Background(), llms.ChatRequest{})
+	if errors.As(err, new(*CircuitOpenError)) {
+		t.Fatal("breaker wedged: neutral-error probe did not release the HalfOpen gate")
+	}
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindAuth {
+		t.Fatalf("want the auth error from a freshly admitted probe, got %v", err)
+	}
+
+	// And it can still fully recover once the provider is healthy again.
+	sw.set(nil)
+	time.Sleep(open + 10*time.Millisecond)
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{}); err != nil {
+		t.Fatalf("recovery probe should succeed, got %v", err)
+	}
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{}); errors.As(err, new(*CircuitOpenError)) {
+		t.Fatal("breaker should be closed after a successful recovery probe")
+	}
+}
+
 func TestCircuitEmbeddingsTrips(t *testing.T) {
 	var calls int32
 	fake := &testllm.FakeEmbeddingClient{

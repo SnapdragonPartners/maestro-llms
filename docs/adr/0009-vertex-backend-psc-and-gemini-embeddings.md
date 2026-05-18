@@ -146,7 +146,8 @@ Appended as PRs land (this ADR's prose above is unchanged — append-only).
   requires `MaxInputBytes>0` or `NewEmbeddings` fails (rather than look
   safe while Vertex truncates). govulncheck: no called vulnerabilities.
 - **PR-E** (docs/wrap): README real Vertex/Gemini-embeddings usage section
-  (replaces the "Planned v0.4" pointer), spec/CLAUDE.md v0.4 status. **v0.4
+  (replaces the "Planned v0.4" pointer); `docs/specification.md` and
+  `CLAUDE.md` updated to v0.4 status. **v0.4
   implementation is complete** — Anthropic-on-Vertex (`anthropicvertex`),
   Gemini/Vertex embeddings (`google.NewEmbeddings`), task-typed embeddings,
   PSC endpoint/transport injection, fail-closed truncation guard, and

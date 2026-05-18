@@ -209,44 +209,59 @@ ignored where not (OpenAI).
 For Google Vertex AI (e.g. behind Private Service Connect), auth and the
 endpoint are **app-supplied** — the toolkit does no ADC discovery. Anthropic
 on Vertex lives in a separate leaf package so the base `anthropic` package
-stays Google-dependency-free:
+stays Google-dependency-free.
+
+The two Vertex entry points take **different Google credential types** (they
+come from their respective vendor SDKs — the toolkit deliberately does not
+wrap/unify them): `anthropicvertex` takes
+`*golang.org/x/oauth2/google.Credentials`, while `google.NewEmbeddings`
+takes `*cloud.google.com/go/auth.Credentials`. Both are derived by your app
+from the same GCP identity (service account / Workload Identity); you build
+each from its token source.
 
 ```go
 import (
+	cloudauth "cloud.google.com/go/auth"
+	oauth2google "golang.org/x/oauth2/google"
+
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic/anthropicvertex"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/google"
 )
 
-// Claude via Vertex. creds is *google.Credentials YOU built (service
-// account / Workload Identity); for PSC also pass WithEndpoint + an
-// WithHTTPClient whose transport reaches the PSC endpoint AND carries
-// Google auth (overriding the SDK's client discards its auth — ADR-0009).
+// Claude via Vertex. anthCreds is *oauth2google.Credentials YOU built. For
+// PSC also pass WithEndpoint + a WithHTTPClient whose transport reaches the
+// PSC endpoint AND carries Google auth (overriding the SDK's client discards
+// its auth — ADR-0009).
+var anthCreds *oauth2google.Credentials // = your service-account/WIF creds
 chat, err := anthropicvertex.New(
 	anthropicvertex.WithRegion("us-central1"),
 	anthropicvertex.WithProjectID("my-proj"),
 	anthropicvertex.WithModel("claude-sonnet-4@20250514"),
-	anthropicvertex.WithCredentials(creds),
+	anthropicvertex.WithCredentials(anthCreds),
 	// anthropicvertex.WithEndpoint(pscURL), anthropicvertex.WithHTTPClient(pscClient),
 ) // returns the same *anthropic.Client (all translation/middleware reused)
 
-// gemini-embedding-001 via Vertex. AutoTruncate=false is fail-closed:
-// MaxInputBytes is REQUIRED (genai cannot send autoTruncate:false, so an
-// oversized input is rejected client-side rather than silently truncated).
+// gemini-embedding-001 via Vertex. embCreds is the *cloud.google.com/go/auth
+// Credentials type (note: different from anthCreds above). AutoTruncate=false
+// is fail-closed: MaxInputBytes is REQUIRED (genai cannot send
+// autoTruncate:false, so an oversized input is rejected client-side rather
+// than silently truncated).
+var embCreds *cloudauth.Credentials // = same GCP identity, genai's cred type
 emb, err := google.NewEmbeddings(google.EmbeddingConfig{
 	Model:         "gemini-embedding-001",
 	Project:       "my-proj",
 	Location:      "us-central1",
-	Credentials:   creds,
-	MaxInputBytes: 8000,        // required unless AutoTruncate=true
+	Credentials:   embCreds,
+	MaxInputBytes: 8000, // required unless AutoTruncate=true
 	// Endpoint: pscURL, HTTPClient: pscClient,
 })
 ```
 
 `gemini-embedding-001` is single-input: a multi-input request is rejected with
-a typed `bad_request` (the toolkit never fans out — the app owns chunking). A
-plain `WithAPIKey` selects the direct Gemini API instead of Vertex; mixing API
-key and Vertex fields fails closed. PSC/DNS/VPC-SC/IAM is your
-infrastructure's concern, not the toolkit's.
+a typed `bad_request` (the toolkit never fans out — the app owns chunking).
+Setting `EmbeddingConfig.APIKey` instead selects the direct Gemini API rather
+than Vertex; mixing the API key with Vertex fields fails closed.
+PSC/DNS/VPC-SC/IAM is your infrastructure's concern, not the toolkit's.
 
 ### Middleware
 

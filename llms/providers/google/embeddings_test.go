@@ -220,6 +220,59 @@ func TestEmbedOrderIDsAndCountMismatch(t *testing.T) {
 	}
 }
 
+func TestMixedBackendConfigRejected(t *testing.T) {
+	for _, cfg := range []EmbeddingConfig{
+		{Model: "m", APIKey: "k", Project: "p", MaxInputBytes: 10},
+		{Model: "m", APIKey: "k", Location: "us", MaxInputBytes: 10},
+		{Model: "m", APIKey: "k", Credentials: auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}}), MaxInputBytes: 10},
+	} {
+		_, err := NewEmbeddings(cfg)
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
+			t.Fatalf("mixed API-key + Vertex config must fail closed, got %v", err)
+		}
+	}
+}
+
+func TestSingleInputRuleNormalizesModelName(t *testing.T) {
+	for _, model := range []string{
+		"gemini-embedding-001",
+		"models/gemini-embedding-001",
+		"projects/p/locations/us/publishers/google/models/gemini-embedding-001",
+	} {
+		called := false
+		c := newEmbed(t, model, func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			_, _ = io.WriteString(w, `{"embeddings":[{"values":[1]}]}`)
+		}, nil)
+		_, err := c.Embed(context.Background(), llms.EmbeddingRequest{
+			Inputs: []llms.EmbeddingInput{{ID: "1", Text: "a"}, {ID: "2", Text: "b"}},
+		})
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+			t.Fatalf("%s: multi-input must be bad_request, got %v", model, err)
+		}
+		if called {
+			t.Fatalf("%s: provider must not be called (no fan-out)", model)
+		}
+	}
+}
+
+func TestNegativeDimensionsRejected(t *testing.T) {
+	_, err := NewEmbeddings(EmbeddingConfig{Model: "m", APIKey: "k", MaxInputBytes: 10, Dimensions: -1})
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
+		t.Fatalf("negative config Dimensions must be a config error, got %v", err)
+	}
+	c := newEmbed(t, "gemini-embedding-001", embedOK(`{"values":[1]}`), nil)
+	_, err = c.Embed(context.Background(), llms.EmbeddingRequest{
+		Dimensions: -5, Inputs: []llms.EmbeddingInput{{ID: "1", Text: "x"}},
+	})
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+		t.Fatalf("negative request Dimensions must be bad_request, got %v", err)
+	}
+}
+
 type stubTokenProvider struct{}
 
 func (stubTokenProvider) Token(context.Context) (*auth.Token, error) {

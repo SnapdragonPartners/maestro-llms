@@ -465,8 +465,8 @@ provider-neutral, advisory, honored only where the provider supports them
 are *not* app context smuggled through `Metadata` — task type materially
 changes the vectors for retrieval.
 
-The remaining v0.4 items below are **design of record, not yet implemented**
-(Vertex backend + Gemini embeddings provider land in subsequent PRs):
+The remaining v0.4 behavior below is **implemented** (Anthropic-on-Vertex via
+the `anthropicvertex` package, and the Gemini/Vertex embeddings client):
 
 `gemini-embedding-001` accepts **one input per call**: this is simply the
 "batch limit" rule above with a limit of 1 — the client returns a typed

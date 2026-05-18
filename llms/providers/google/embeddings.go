@@ -3,7 +3,9 @@ package google
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
+	"strings"
 
 	"cloud.google.com/go/auth"
 	"google.golang.org/genai"
@@ -85,8 +87,18 @@ const defaultBatchLimit = 250
 // gemini-embedding-001) return 1: a multi-input request is rejected up front
 // with a typed error — the client never fans out or chunks (the application
 // owns batching; ADR-0009).
+// baseModel strips genai/Vertex path and "models/" prefixes so the
+// single-input rule still matches "models/gemini-embedding-001" and
+// "projects/.../publishers/google/models/gemini-embedding-001".
+func baseModel(model string) string {
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		model = model[i+1:]
+	}
+	return model
+}
+
 func batchLimit(model string) int {
-	switch model {
+	switch baseModel(model) {
 	case "gemini-embedding-001":
 		return 1
 	default:
@@ -94,13 +106,26 @@ func batchLimit(model string) int {
 	}
 }
 
-// NewEmbeddings builds a Gemini/Vertex embedding client. It returns a
-// *llms.ProviderError of kind config when required values are missing.
-func NewEmbeddings(cfg EmbeddingConfig) (*EmbeddingClient, error) {
-	if cfg.Model == "" {
-		return nil, configErr("missing model")
+// validate checks backend-independent constraints (model, dimensions, and
+// the fail-closed ambiguous-backend rule).
+func (cfg EmbeddingConfig) validate() error {
+	switch {
+	case cfg.Model == "":
+		return configErr("missing model")
+	case cfg.Dimensions < 0 || cfg.Dimensions > math.MaxInt32:
+		return configErr("Dimensions must be >= 0 and fit int32 (0 = model default)")
+	case cfg.APIKey != "" && (cfg.Project != "" || cfg.Location != "" || cfg.Credentials != nil):
+		// genai treats API key and Vertex (project/location/credentials) as
+		// mutually exclusive. Fail closed rather than silently pick the
+		// public API-key backend and bypass Vertex/PSC.
+		return configErr("ambiguous backend: set APIKey (Gemini API) OR Project/Location/Credentials (Vertex), not both")
 	}
+	return nil
+}
 
+// backendConfig selects the genai backend and applies the fail-closed
+// truncation contract + endpoint/transport injection.
+func backendConfig(cfg EmbeddingConfig) (*genai.ClientConfig, error) {
 	cc := &genai.ClientConfig{}
 	switch {
 	case cfg.APIKey != "":
@@ -121,11 +146,10 @@ func NewEmbeddings(cfg EmbeddingConfig) (*EmbeddingClient, error) {
 		return nil, configErr("missing credentials: set APIKey (Gemini API) or Project+Location+Credentials (Vertex)")
 	}
 
-	// Fail-closed truncation contract (ADR-0009 refinement). genai cannot
-	// send autoTruncate:false, so:
-	//   - AutoTruncate=true is Vertex-only (Gemini API rejects it).
-	//   - AutoTruncate=false needs a client-side guard (MaxInputBytes>0),
-	//     else the API would look safe while Vertex silently truncates.
+	// Fail-closed truncation contract (ADR-0009 refinement): genai cannot
+	// send autoTruncate:false, so AutoTruncate=true is Vertex-only, and
+	// AutoTruncate=false needs a client-side guard (MaxInputBytes>0) — else
+	// the API would look safe while Vertex silently truncates.
 	if cfg.AutoTruncate {
 		if cc.Backend == genai.BackendGeminiAPI {
 			return nil, configErr("AutoTruncate is Vertex-only; the Gemini API backend does not support it")
@@ -140,6 +164,19 @@ func NewEmbeddings(cfg EmbeddingConfig) (*EmbeddingClient, error) {
 	}
 	if cfg.HTTPClient != nil {
 		cc.HTTPClient = cfg.HTTPClient
+	}
+	return cc, nil
+}
+
+// NewEmbeddings builds a Gemini/Vertex embedding client. It returns a
+// *llms.ProviderError of kind config when required values are missing.
+func NewEmbeddings(cfg EmbeddingConfig) (*EmbeddingClient, error) {
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	cc, err := backendConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	api, err := genai.NewClient(context.Background(), cc)
@@ -197,6 +234,9 @@ func taskType(t llms.EmbeddingTask) string {
 func (c *EmbeddingClient) Embed(ctx context.Context, req llms.EmbeddingRequest) (llms.EmbeddingResponse, error) {
 	if len(req.Inputs) == 0 {
 		return llms.EmbeddingResponse{}, badRequest(c.model, "no inputs")
+	}
+	if req.Dimensions < 0 || req.Dimensions > math.MaxInt32 {
+		return llms.EmbeddingResponse{}, badRequest(c.model, "Dimensions must be >= 0 and fit int32")
 	}
 	if limit := batchLimit(c.model); len(req.Inputs) > limit {
 		return llms.EmbeddingResponse{}, badRequest(c.model,

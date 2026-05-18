@@ -75,6 +75,16 @@ get right, and likely-to-be-redone investment.
 - No core interface changes — `StreamingChatClient` staying optional is what
   makes this deferral non-breaking, exactly as the spec intended.
 
+## Revisited 2026-05-17
+
+The reopen condition ("a real consumer needs it") was tested against Morris
+ADR 0008, which had expected streaming. Decision: streaming remains
+**deferred for the Morris MVP / cut-over** — Morris is adjusting its ADR 0008
+expectation rather than blocking the cut-over on streaming. This ADR stands
+unchanged; streaming-aware design is still its own future track, not
+triggered now. (Recorded under ADR-0009, the Vertex/PSC work, which is
+explicitly streaming-free.)
+
 ## References
 
 - `llms/chat.go` — `ChatClient` / `StreamingChatClient` / `StreamChunk`

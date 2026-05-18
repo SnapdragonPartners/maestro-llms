@@ -395,5 +395,9 @@ already settled, and don't "fix" a deliberate limitation an ADR explains.
 Pre-1.0; v0.x minor versions may break. Shipped lines: **v0.1.0** (core +
 Anthropic chat + OpenAI embeddings), **v0.2.0** (OpenAI/Google/Ollama chat +
 error classifier), **v0.3.0** (full middleware set + `Recommended*`).
+**Planned — v0.4 (design only, not yet implemented; see
+[ADR-0009](docs/adr/0009-vertex-backend-psc-and-gemini-embeddings.md)):**
+Vertex AI backend for Anthropic + Gemini embeddings, PSC endpoint/transport
+injection, and task-typed embeddings (`EmbeddingTask`/`Title`).
 
 MIT — see [`LICENSE`](LICENSE).

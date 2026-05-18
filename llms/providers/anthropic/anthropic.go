@@ -59,9 +59,13 @@ func WithMaxRetries(n int) Option {
 // they take precedence (e.g. they can override the base URL or replace auth).
 // This is how alternate backends (e.g. Anthropic via Vertex AI — see the
 // anthropicvertex subpackage) inject their auth/endpoint WITHOUT this base
-// package importing any backend SDK, preserving leaf imports. Supplying
-// request options makes the API key optional: when present, the caller owns
-// authentication.
+// package importing any backend SDK, preserving leaf imports.
+//
+// Supplying ANY request option makes the API key optional — the caller then
+// owns authentication entirely. The package does not, and cannot, verify
+// that the options actually supply auth: a non-auth option still relaxes the
+// key requirement, and a genuinely missing credential surfaces only at call
+// time, not at construction.
 func WithRequestOptions(opts ...option.RequestOption) Option {
 	return func(s *settings) { s.extraReqOpts = append(s.extraReqOpts, opts...) }
 }

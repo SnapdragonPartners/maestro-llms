@@ -419,13 +419,21 @@ type EmbeddingRequest struct {
     Inputs     []EmbeddingInput
     Purpose    Purpose
     Dimensions int
+    Task       EmbeddingTask // advisory; honored where supported, else ignored
     Metadata   map[string]string
 }
 
 type EmbeddingInput struct {
-    ID   string
-    Text string
+    ID    string
+    Text  string
+    Title string // optional; only meaningful with EmbeddingTaskRetrievalDocument
 }
+
+// EmbeddingTask is a provider-neutral, advisory embedding-intent hint.
+// Constants: Unspecified (zero), RetrievalDocument, RetrievalQuery,
+// SemanticSimilarity, Classification, Clustering, QuestionAnswering,
+// FactVerification, CodeRetrievalQuery.
+type EmbeddingTask string
 ```
 
 ### Embedding Response
@@ -449,23 +457,16 @@ The response must preserve input ordering. IDs are included so callers can defen
 
 Provider clients should return a typed validation/config error when `Inputs` exceeds the provider or model batch limit. Automatic chunking is intentionally outside v0 provider clients; applications own chunking because they also own retry policy, progress reporting, source IDs, and ingestion transaction boundaries.
 
-### v0.4 design (ADR-0009): task-typed embeddings, Vertex, single-input models
+### v0.4 (ADR-0009): task-typed embeddings, Vertex, single-input models
 
-The current types above are the binding contract; the additions below are
-**planned for v0.4 (not yet implemented)** — design of record, not current
-API:
+`Task`/`Title` (shown in the types above) are **implemented in v0.4 core**:
+provider-neutral, advisory, honored only where the provider supports them
+(Gemini retrieval-document/-query etc.) and ignored elsewhere (OpenAI). They
+are *not* app context smuggled through `Metadata` — task type materially
+changes the vectors for retrieval.
 
-```go
-// PLANNED (v0.4, ADR-0009) — not in the current EmbeddingRequest/Input:
-type EmbeddingTask string                 // provider-neutral embedding intent
-// EmbeddingRequest gains: Task  EmbeddingTask
-// EmbeddingInput   gains: Title string   // only with a retrieval-document task
-```
-
-`Task`/`Title` are provider-neutral, advisory, and honored only where the
-provider supports them (Gemini retrieval-document/-query etc.); other
-providers (OpenAI) ignore them. They are *not* app context smuggled through
-`Metadata` — task type materially changes the vectors for retrieval.
+The remaining v0.4 items below are **design of record, not yet implemented**
+(Vertex backend + Gemini embeddings provider land in subsequent PRs):
 
 `gemini-embedding-001` accepts **one input per call**: this is simply the
 "batch limit" rule above with a limit of 1 — the client returns a typed

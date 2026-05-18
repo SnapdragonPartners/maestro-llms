@@ -120,6 +120,35 @@ func TestDimensionsOverrideAndDefault(t *testing.T) {
 	}
 }
 
+// OpenAI does not support task-typed embeddings: Task/Title must be a clean
+// no-op — the call succeeds and neither field leaks into the wire request.
+func TestEmbedIgnoresTaskAndTitle(t *testing.T) {
+	okBody := `{"object":"list","model":"m","data":[{"object":"embedding","index":0,"embedding":[1]}],"usage":{"prompt_tokens":1,"total_tokens":1}}`
+	var got map[string]any
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &got)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, okBody)
+	})
+	resp, err := c.Embed(context.Background(), llms.EmbeddingRequest{
+		Task:   llms.EmbeddingTaskRetrievalDocument,
+		Inputs: []llms.EmbeddingInput{{ID: "1", Text: "x", Title: "doc title"}},
+	})
+	if err != nil {
+		t.Fatalf("Task/Title must be ignored by OpenAI, got %v", err)
+	}
+	if len(resp.Vectors) != 1 {
+		t.Fatalf("want 1 vector, got %d", len(resp.Vectors))
+	}
+	if _, ok := got["task"]; ok {
+		t.Fatalf("task must not be sent to OpenAI: %v", got["task"])
+	}
+	if _, ok := got["title"]; ok {
+		t.Fatalf("title must not be sent to OpenAI: %v", got["title"])
+	}
+}
+
 func TestEmptyAndOverLimitInputsRejected(t *testing.T) {
 	called := false
 	c := newClient(t, func(w http.ResponseWriter, _ *http.Request) {

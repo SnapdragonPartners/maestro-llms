@@ -419,19 +419,13 @@ type EmbeddingRequest struct {
     Inputs     []EmbeddingInput
     Purpose    Purpose
     Dimensions int
-    Task       EmbeddingTask // v0.4 (ADR-0009); zero value = unspecified
     Metadata   map[string]string
 }
 
 type EmbeddingInput struct {
-    ID    string
-    Text  string
-    Title string // v0.4 (ADR-0009); only meaningful with a retrieval-document task
+    ID   string
+    Text string
 }
-
-// EmbeddingTask is a provider-neutral embedding intent (v0.4, ADR-0009),
-// honored where supported (Gemini task types) and ignored where not (OpenAI).
-type EmbeddingTask string
 ```
 
 ### Embedding Response
@@ -456,6 +450,17 @@ The response must preserve input ordering. IDs are included so callers can defen
 Provider clients should return a typed validation/config error when `Inputs` exceeds the provider or model batch limit. Automatic chunking is intentionally outside v0 provider clients; applications own chunking because they also own retry policy, progress reporting, source IDs, and ingestion transaction boundaries.
 
 ### v0.4 design (ADR-0009): task-typed embeddings, Vertex, single-input models
+
+The current types above are the binding contract; the additions below are
+**planned for v0.4 (not yet implemented)** — design of record, not current
+API:
+
+```go
+// PLANNED (v0.4, ADR-0009) — not in the current EmbeddingRequest/Input:
+type EmbeddingTask string                 // provider-neutral embedding intent
+// EmbeddingRequest gains: Task  EmbeddingTask
+// EmbeddingInput   gains: Title string   // only with a retrieval-document task
+```
 
 `Task`/`Title` are provider-neutral, advisory, and honored only where the
 provider supports them (Gemini retrieval-document/-query etc.); other

@@ -255,7 +255,10 @@ limiter. You construct it and hand it to the rate-limit middleware (directly
 or via `RecommendedConfig.Limiter`); the middleware does the bookkeeping.
 
 ```go
-import "github.com/SnapdragonPartners/maestro-llms/llms/ratelimit"
+import (
+	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
+	"github.com/SnapdragonPartners/maestro-llms/llms/ratelimit"
+)
 
 lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{
 	TokensPerMinute: 100_000, // 0 = token-unlimited
@@ -266,7 +269,10 @@ lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{
 c := middleware.RecommendedChat(client, middleware.RecommendedConfig{
 	Limiter: lim, // nil => rate-limit middleware omitted
 })
-// or explicitly: middleware.RateLimitChat(lim, middleware.DefaultEstimator{})
+// or compose just the rate-limit middleware yourself (it returns a
+// ChatMiddleware, so apply it via ChainChat):
+//   c := middleware.ChainChat(client,
+//           middleware.RateLimitChat(lim, middleware.DefaultEstimator{}))
 ```
 
 `ratelimit.Config`'s zero value is usable (a zero dimension is "unlimited").

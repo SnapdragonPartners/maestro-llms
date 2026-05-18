@@ -1,7 +1,10 @@
 # 0009. Vertex AI backend (Anthropic + Gemini embeddings), PSC endpoint injection, task-typed embeddings
 
-- **Status:** Accepted (design; implementation is a v0.4-class multi-PR series, not in this docs change)
+- **Status:** Accepted
 - **Date:** 2026-05-17
+
+> Design decision of record. The implementation is a v0.4-class multi-PR
+> series and is **not** included in the docs change that introduced this ADR.
 
 ## Context
 

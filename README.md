@@ -30,8 +30,12 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   side-channel fields, so a conversation round-trips unambiguously.
 - **Four chat providers**: Anthropic (Messages), OpenAI (Responses API),
   Google (Gemini via genai), Ollama (hand-rolled `/api/chat`, no SDK).
-- **Embeddings**: OpenAI (order/ID-preserving, per-request dimension
-  override).
+- **Embeddings**: OpenAI and Gemini/Vertex (`gemini-embedding-001`),
+  order/ID-preserving, per-request dimension override, task-typed
+  (`EmbeddingTask`/`Title`, advisory).
+- **Vertex AI backend**: Claude via `anthropicvertex` (separate leaf
+  package — base `anthropic` stays Google-dep-free) and Gemini embeddings;
+  app-supplied auth + PSC endpoint/transport injection, no ADC discovery.
 - **One typed error model.** `*llms.ProviderError` (kind, HTTP status,
   `Retry-After`) and `*llms.LimitError`, both `errors.As`-able, with
   `llms.Retryable` / `llms.RetryAfter` helpers.
@@ -194,6 +198,55 @@ out, err := emb.Embed(ctx, llms.EmbeddingRequest{
 // out.Vectors preserves input order/IDs; out.Vectors[i].Values is []float32
 // out.Usage.EmbeddingTokens for accounting
 ```
+
+Task-typed embeddings are provider-neutral and advisory: `EmbeddingRequest.Task`
+(e.g. `llms.EmbeddingTaskRetrievalDocument` / `…RetrievalQuery`) and an
+optional `EmbeddingInput.Title` are honored where supported (Gemini) and
+ignored where not (OpenAI).
+
+### Vertex AI (Anthropic & Gemini embeddings)
+
+For Google Vertex AI (e.g. behind Private Service Connect), auth and the
+endpoint are **app-supplied** — the toolkit does no ADC discovery. Anthropic
+on Vertex lives in a separate leaf package so the base `anthropic` package
+stays Google-dependency-free:
+
+```go
+import (
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic/anthropicvertex"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/google"
+)
+
+// Claude via Vertex. creds is *google.Credentials YOU built (service
+// account / Workload Identity); for PSC also pass WithEndpoint + an
+// WithHTTPClient whose transport reaches the PSC endpoint AND carries
+// Google auth (overriding the SDK's client discards its auth — ADR-0009).
+chat, err := anthropicvertex.New(
+	anthropicvertex.WithRegion("us-central1"),
+	anthropicvertex.WithProjectID("my-proj"),
+	anthropicvertex.WithModel("claude-sonnet-4@20250514"),
+	anthropicvertex.WithCredentials(creds),
+	// anthropicvertex.WithEndpoint(pscURL), anthropicvertex.WithHTTPClient(pscClient),
+) // returns the same *anthropic.Client (all translation/middleware reused)
+
+// gemini-embedding-001 via Vertex. AutoTruncate=false is fail-closed:
+// MaxInputBytes is REQUIRED (genai cannot send autoTruncate:false, so an
+// oversized input is rejected client-side rather than silently truncated).
+emb, err := google.NewEmbeddings(google.EmbeddingConfig{
+	Model:         "gemini-embedding-001",
+	Project:       "my-proj",
+	Location:      "us-central1",
+	Credentials:   creds,
+	MaxInputBytes: 8000,        // required unless AutoTruncate=true
+	// Endpoint: pscURL, HTTPClient: pscClient,
+})
+```
+
+`gemini-embedding-001` is single-input: a multi-input request is rejected with
+a typed `bad_request` (the toolkit never fans out — the app owns chunking). A
+plain `WithAPIKey` selects the direct Gemini API instead of Vertex; mixing API
+key and Vertex fields fails closed. PSC/DNS/VPC-SC/IAM is your
+infrastructure's concern, not the toolkit's.
 
 ### Middleware
 
@@ -400,10 +453,9 @@ already settled, and don't "fix" a deliberate limitation an ADR explains.
 
 Pre-1.0; v0.x minor versions may break. Shipped lines: **v0.1.0** (core +
 Anthropic chat + OpenAI embeddings), **v0.2.0** (OpenAI/Google/Ollama chat +
-error classifier), **v0.3.0** (full middleware set + `Recommended*`).
-**Planned — v0.4 (design only, not yet implemented; see
-[ADR-0009](docs/adr/0009-vertex-backend-psc-and-gemini-embeddings.md)):**
-Vertex AI backend for Anthropic + Gemini embeddings, PSC endpoint/transport
-injection, and task-typed embeddings (`EmbeddingTask`/`Title`).
+error classifier), **v0.3.0** (full middleware set + `Recommended*`),
+**v0.4.0** (Anthropic-on-Vertex + Gemini/Vertex embeddings, PSC
+endpoint/transport injection, task-typed embeddings — see
+[ADR-0009](docs/adr/0009-vertex-backend-psc-and-gemini-embeddings.md)).
 
 MIT — see [`LICENSE`](LICENSE).

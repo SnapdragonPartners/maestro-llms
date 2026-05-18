@@ -248,6 +248,56 @@ rate-limit reservation (retries are real provider traffic, gated like first
 attempts). The tradeoffs of reordering (retry vs. reservation, total vs.
 per-attempt timeout) are in `docs/specification.md` ("Recommended order").
 
+### Rate limiting
+
+`llms/ratelimit` ships a process-local **token-bucket + concurrency-semaphore**
+limiter. You construct it and hand it to the rate-limit middleware (directly
+or via `RecommendedConfig.Limiter`); the middleware does the bookkeeping.
+
+```go
+import (
+	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
+	"github.com/SnapdragonPartners/maestro-llms/llms/ratelimit"
+)
+
+lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{
+	TokensPerMinute: 100_000, // 0 = token-unlimited
+	MaxConcurrency:  8,        // 0 = concurrency-unlimited
+	// MaxWait: 0 => block until ctx is done; BufferFactor defaults to 0.9
+})
+
+c := middleware.RecommendedChat(client, middleware.RecommendedConfig{
+	Limiter: lim, // nil => rate-limit middleware omitted
+})
+// or compose just the rate-limit middleware yourself (it returns a
+// ChatMiddleware, so apply it via ChainChat):
+//   c := middleware.ChainChat(client,
+//           middleware.RateLimitChat(lim, middleware.DefaultEstimator{}))
+```
+
+`ratelimit.Config`'s zero value is usable (a zero dimension is "unlimited").
+The protocol the middleware runs per call is a **reservation**: `Reserve`
+(estimate units up front) → run the request → `Commit` (actual `Usage`) →
+`Release`. Over-use drives the bucket negative (debt repaid by future
+refills) so traffic is never undercounted; `Release` always runs, even if
+the request's context was canceled.
+
+A limiter that exposes the optional `LimiterStats` capability (the in-memory
+one does) can be type-asserted for a point-in-time snapshot:
+
+```go
+if s, ok := any(lim).(ratelimit.LimiterStats); ok {
+	snap, _ := s.Stats(ctx) // available tokens, in-flight count, ...
+}
+```
+
+**Distributed limiting:** the in-memory limiter is for single-process/local
+use. For a multi-instance deployment (e.g. Cloud Run) implement
+`ratelimit.Limiter` (`Reserve` returning a `Reservation` with `Commit`/
+`Release`) backed by shared storage and pass *that* to the same middleware —
+nothing else changes. The package intentionally ships only the in-memory
+implementation; the shared backend is the application's to provide.
+
 ### Errors
 
 One typed model, resolvable through wrapping with `errors.As`:
@@ -351,5 +401,9 @@ already settled, and don't "fix" a deliberate limitation an ADR explains.
 Pre-1.0; v0.x minor versions may break. Shipped lines: **v0.1.0** (core +
 Anthropic chat + OpenAI embeddings), **v0.2.0** (OpenAI/Google/Ollama chat +
 error classifier), **v0.3.0** (full middleware set + `Recommended*`).
+**Planned — v0.4 (design only, not yet implemented; see
+[ADR-0009](docs/adr/0009-vertex-backend-psc-and-gemini-embeddings.md)):**
+Vertex AI backend for Anthropic + Gemini embeddings, PSC endpoint/transport
+injection, and task-typed embeddings (`EmbeddingTask`/`Title`).
 
 MIT — see [`LICENSE`](LICENSE).

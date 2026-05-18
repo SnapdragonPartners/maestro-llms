@@ -449,6 +449,43 @@ The response must preserve input ordering. IDs are included so callers can defen
 
 Provider clients should return a typed validation/config error when `Inputs` exceeds the provider or model batch limit. Automatic chunking is intentionally outside v0 provider clients; applications own chunking because they also own retry policy, progress reporting, source IDs, and ingestion transaction boundaries.
 
+### v0.4 design (ADR-0009): task-typed embeddings, Vertex, single-input models
+
+The current types above are the binding contract; the additions below are
+**planned for v0.4 (not yet implemented)** — design of record, not current
+API:
+
+```go
+// PLANNED (v0.4, ADR-0009) — not in the current EmbeddingRequest/Input:
+type EmbeddingTask string                 // provider-neutral embedding intent
+// EmbeddingRequest gains: Task  EmbeddingTask
+// EmbeddingInput   gains: Title string   // only with a retrieval-document task
+```
+
+`Task`/`Title` are provider-neutral, advisory, and honored only where the
+provider supports them (Gemini retrieval-document/-query etc.); other
+providers (OpenAI) ignore them. They are *not* app context smuggled through
+`Metadata` — task type materially changes the vectors for retrieval.
+
+`gemini-embedding-001` accepts **one input per call**: this is simply the
+"batch limit" rule above with a limit of 1 — the client returns a typed
+`bad_request`/validation error when `len(Inputs) > 1`. It must **not**
+internally fan out or otherwise make a hidden chunking exception; applications
+set their batch size from model metadata/config and keep ownership of
+chunking.
+
+Silent truncation is a retrieval-quality and auditability hazard. The Google
+embeddings client exposes an auto-truncate option defaulting to **off**
+(oversized input → typed error), overriding Vertex's truncate-by-default.
+
+Anthropic and Gemini-embedding access via **Vertex AI** is a separate-package
+backend (`anthropic/anthropicvertex`) plus a low-level
+`anthropic.WithRequestOptions` escape hatch, preserving leaf imports.
+Credentials and the endpoint (for PSC) are **app-supplied** — the package
+exposes endpoint/base-URL override and HTTP-client/transport injection; it
+performs no ADC discovery. Networking (PSC, DNS, VPC-SC, IAM) is the
+application's infrastructure concern, not this package's. See ADR-0009.
+
 ## Usage Metadata
 
 Usage should be normalized across chat and embeddings.

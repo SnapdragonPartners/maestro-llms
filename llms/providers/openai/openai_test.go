@@ -124,10 +124,9 @@ func TestDimensionsOverrideAndDefault(t *testing.T) {
 // no-op — the call succeeds and neither field leaks into the wire request.
 func TestEmbedIgnoresTaskAndTitle(t *testing.T) {
 	okBody := `{"object":"list","model":"m","data":[{"object":"embedding","index":0,"embedding":[1]}],"usage":{"prompt_tokens":1,"total_tokens":1}}`
-	var got map[string]any
+	var rawBody []byte
 	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &got)
+		rawBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, okBody)
 	})
@@ -141,11 +140,20 @@ func TestEmbedIgnoresTaskAndTitle(t *testing.T) {
 	if len(resp.Vectors) != 1 {
 		t.Fatalf("want 1 vector, got %d", len(resp.Vectors))
 	}
-	if _, ok := got["task"]; ok {
-		t.Fatalf("task must not be sent to OpenAI: %v", got["task"])
+
+	// Body must decode (else the absence checks below would pass vacuously)
+	// and look like a real embeddings request.
+	var got map[string]any
+	if err := json.Unmarshal(rawBody, &got); err != nil {
+		t.Fatalf("request body did not decode as JSON: %v (%s)", err, rawBody)
 	}
-	if _, ok := got["title"]; ok {
-		t.Fatalf("title must not be sent to OpenAI: %v", got["title"])
+	if _, ok := got["input"]; !ok {
+		t.Fatalf("request does not look like an embeddings call: %s", rawBody)
+	}
+	// Robust against nesting too: neither key may appear anywhere in the
+	// serialized request.
+	if low := strings.ToLower(string(rawBody)); strings.Contains(low, `"task"`) || strings.Contains(low, `"title"`) {
+		t.Fatalf("Task/Title leaked into the OpenAI wire request: %s", rawBody)
 	}
 }
 

@@ -117,4 +117,18 @@ func TestNewConfigValidation(t *testing.T) {
 			t.Fatalf("missing %s: want a config *ProviderError, got %v", name, err)
 		}
 	}
+
+	// Non-nil Credentials with a nil TokenSource must be rejected: otherwise
+	// Google's transport silently falls back to ambient ADC, violating the
+	// app-supplied-credentials-only contract.
+	_, err := anthropicvertex.New(
+		anthropicvertex.WithRegion("us-central1"),
+		anthropicvertex.WithProjectID("p"),
+		anthropicvertex.WithModel("m"),
+		anthropicvertex.WithCredentials(&google.Credentials{}),
+	)
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
+		t.Fatalf("empty credentials (nil TokenSource): want a config *ProviderError, got %v", err)
+	}
 }

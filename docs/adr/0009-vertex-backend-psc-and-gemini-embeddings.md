@@ -3,19 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-05-17
 
-> Design decision of record. Implementation is a v0.4-class multi-PR series.
->
-> **Implementation progress:** PR-A `anthropic.WithRequestOptions` (merged).
-> PR-C `EmbeddingTask`/`Title` (open). PR-B `anthropicvertex` package
-> realizes the Anthropic-on-Vertex path with option **(a)** confirmed (use
-> the SDK's Vertex middleware; do not reimplement it). Implemented option
-> order: `vertex.WithCredentials(...)` first, then the caller's
-> `option.WithBaseURL(pscEndpoint)` and `option.WithHTTPClient(pscClient)`
-> LAST — Vertex path/`anthropic_version` middleware always applies; the
-> network transport + endpoint are whatever is applied last, so a PSC client
-> overrides Vertex's self-built one and therefore MUST carry Google auth
-> itself. `govulncheck` on the new Google-auth deps: no called
-> vulnerabilities (leaf-isolated to `anthropicvertex` importers).
+> Design decision of record. The implementation is a v0.4-class multi-PR
+> series and is **not** included in the docs change that introduced this ADR.
 
 ## Context
 
@@ -124,3 +113,22 @@ does not reopen it. See ADR-0003's revisited note.
 - ADR-0003 (streaming deferred — revisited 2026-05-17), ADR-0001 (process)
 - `github.com/anthropics/anthropic-sdk-go/vertex`; `google.golang.org/genai`
   (`BackendVertexAI`, `EmbedContent`)
+
+## Implementation progress
+
+Appended as PRs land (this ADR's prose above is unchanged — append-only).
+
+- **PR-A** (`anthropic.WithRequestOptions`): merged.
+- **PR-C** (`EmbeddingTask` / `EmbeddingInput.Title`): open.
+- **PR-B** (`anthropicvertex`): realizes the Anthropic-on-Vertex path with
+  option **(a)** confirmed — use the SDK's Vertex middleware, do not
+  reimplement it. Implemented option order: `vertex.WithCredentials(...)`
+  first, then the caller's `option.WithBaseURL(pscEndpoint)` and
+  `option.WithHTTPClient(pscClient)` LAST. The Vertex path /
+  `anthropic_version` middleware always applies; the network transport +
+  endpoint are whatever is applied last, so a PSC client overrides Vertex's
+  self-built one and therefore MUST carry Google auth itself. A non-nil
+  `*google.Credentials` with a nil `TokenSource` is rejected up front (it
+  would otherwise let Google's transport fall back to ambient ADC).
+  `govulncheck` on the new Google-auth deps: no called vulnerabilities,
+  leaf-isolated to `anthropicvertex` importers.

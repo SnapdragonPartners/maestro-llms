@@ -112,6 +112,11 @@ func New(opts ...Option) (*anthropic.Client, error) {
 		return nil, cfgErr("missing model")
 	case s.creds == nil:
 		return nil, cfgErr("missing Google credentials (this package does no ADC discovery)")
+	case s.creds.TokenSource == nil:
+		// A non-nil Credentials with a nil TokenSource makes Google's
+		// transport fall back to ambient ADC — silently violating the
+		// app-supplied-credentials-only contract. Reject it explicitly.
+		return nil, cfgErr("Google credentials have no TokenSource (refusing to fall back to ADC)")
 	}
 
 	// Order is load-bearing (ADR-0009): Vertex option first (middleware +

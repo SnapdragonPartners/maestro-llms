@@ -132,3 +132,16 @@ Appended as PRs land (this ADR's prose above is unchanged — append-only).
   would otherwise let Google's transport fall back to ambient ADC).
   `govulncheck` on the new Google-auth deps: no called vulnerabilities,
   leaf-isolated to `anthropicvertex` importers.
+- **PR-D** (`google.NewEmbeddings`): Gemini/Vertex embedding client.
+  Realizes Task→Gemini-task mapping, `Title`, per-request dimensions,
+  order/ID preservation, and `gemini-embedding-001` single-input rejection
+  (no fan-out). **Auto-truncate refinement:** genai's
+  `EmbedContentConfig.AutoTruncate` is `bool,omitempty`, so
+  `autoTruncate:false` is unrepresentable on the wire and Vertex would
+  silently truncate by default. We therefore do NOT rely on the Vertex
+  flag for the safe path: `maestro-llms` enforces no-silent-truncation
+  with a client-side maximum input-byte guard (`MaxInputBytes`, literal
+  UTF-8 bytes — not tokens). Fail-closed: `AutoTruncate=true` is
+  Vertex-only (Gemini-API construction fails); `AutoTruncate=false`
+  requires `MaxInputBytes>0` or `NewEmbeddings` fails (rather than look
+  safe while Vertex truncates). govulncheck: no called vulnerabilities.

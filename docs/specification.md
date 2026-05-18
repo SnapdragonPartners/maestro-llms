@@ -475,9 +475,14 @@ internally fan out or otherwise make a hidden chunking exception; applications
 set their batch size from model metadata/config and keep ownership of
 chunking.
 
-Silent truncation is a retrieval-quality and auditability hazard. The Google
-embeddings client exposes an auto-truncate option defaulting to **off**
-(oversized input → typed error), overriding Vertex's truncate-by-default.
+Silent truncation is a retrieval-quality and auditability hazard. genai
+cannot send `autoTruncate:false` (its field is `bool,omitempty`), so the
+Google embeddings client does **not** rely on the Vertex flag for safety: it
+enforces no-silent-truncation with a client-side `MaxInputBytes` guard
+(literal UTF-8 bytes). Fail-closed — `AutoTruncate=true` opts into Vertex
+truncation (Vertex-only); `AutoTruncate=false` requires `MaxInputBytes>0` or
+construction fails, so the API can never *look* safe while Vertex silently
+truncates (ADR-0009 implementation refinement).
 
 Anthropic and Gemini-embedding access via **Vertex AI** is a separate-package
 backend (`anthropic/anthropicvertex`) plus a low-level

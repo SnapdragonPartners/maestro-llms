@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go/option"
+
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
@@ -277,6 +279,59 @@ func TestToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
 			t.Fatalf("%s with no tools must be bad_request, got %v", tc.Type, err)
 		}
+	}
+}
+
+func TestWithRequestOptionsAllowsNoAPIKeyAndThreads(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, textMsgJSON)
+	}))
+	defer srv.Close()
+	// No API key — auth is the caller's via request options (the Vertex shape).
+	c, err := New(WithModel("claude-test"), WithRequestOptions(option.WithBaseURL(srv.URL)))
+	if err != nil {
+		t.Fatalf("no API key + WithRequestOptions must be allowed, got %v", err)
+	}
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if !hit {
+		t.Fatal("request did not reach the WithRequestOptions base URL")
+	}
+}
+
+func TestNoAPIKeyNoRequestOptionsStillErrors(t *testing.T) {
+	_, err := New(WithModel("m"))
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
+		t.Fatalf("missing key with no request options must still be a config error, got %v", err)
+	}
+}
+
+func TestRequestOptionsTakePrecedence(t *testing.T) {
+	var hit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, textMsgJSON)
+	}))
+	defer srv.Close()
+	// Derived WithBaseURL points somewhere unusable; the WithRequestOptions
+	// base URL is applied last and must win.
+	c, err := New(WithAPIKey("k"), WithModel("claude-test"),
+		WithBaseURL("http://127.0.0.1:1"),
+		WithRequestOptions(option.WithBaseURL(srv.URL)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if !hit {
+		t.Fatal("WithRequestOptions did not take precedence over WithBaseURL")
 	}
 }
 

@@ -23,12 +23,13 @@ type Option func(*settings)
 
 //nolint:govet // fieldalignment: internal one-shot config struct, layout irrelevant.
 type settings struct {
-	apiKey     string
-	model      string
-	baseURL    string
-	httpClient option.HTTPClient
-	maxRetries int
-	hasRetries bool
+	apiKey       string
+	model        string
+	baseURL      string
+	httpClient   option.HTTPClient
+	maxRetries   int
+	hasRetries   bool
+	extraReqOpts []option.RequestOption
 }
 
 // WithAPIKey sets the Anthropic API key.
@@ -53,6 +54,18 @@ func WithMaxRetries(n int) Option {
 	return func(s *settings) { s.maxRetries = n; s.hasRetries = true }
 }
 
+// WithRequestOptions is a low-level escape hatch: the given SDK request
+// options are applied LAST, after the ones derived from the other Options, so
+// they take precedence (e.g. they can override the base URL or replace auth).
+// This is how alternate backends (e.g. Anthropic via Vertex AI — see the
+// anthropicvertex subpackage) inject their auth/endpoint WITHOUT this base
+// package importing any backend SDK, preserving leaf imports. Supplying
+// request options makes the API key optional: when present, the caller owns
+// authentication.
+func WithRequestOptions(opts ...option.RequestOption) Option {
+	return func(s *settings) { s.extraReqOpts = append(s.extraReqOpts, opts...) }
+}
+
 // Client is an llms.ChatClient backed by the official Anthropic SDK. Its size
 // is dominated by the embedded third-party anthropic.Client, so reordering our
 // two fields cannot meaningfully change layout.
@@ -73,7 +86,10 @@ func New(opts ...Option) (*Client, error) {
 	for _, o := range opts {
 		o(&s)
 	}
-	if s.apiKey == "" {
+	// The API key is required UNLESS the caller supplied request options:
+	// those carry the caller's own auth (e.g. Vertex), so the key is theirs
+	// to own, not ours to demand.
+	if s.apiKey == "" && len(s.extraReqOpts) == 0 {
 		return nil, &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: "missing API key"}
 	}
 	if s.model == "" {
@@ -83,7 +99,10 @@ func New(opts ...Option) (*Client, error) {
 		return nil, &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: "max retries must be >= 0"}
 	}
 
-	reqOpts := []option.RequestOption{option.WithAPIKey(s.apiKey)}
+	var reqOpts []option.RequestOption
+	if s.apiKey != "" {
+		reqOpts = append(reqOpts, option.WithAPIKey(s.apiKey))
+	}
 	if s.baseURL != "" {
 		reqOpts = append(reqOpts, option.WithBaseURL(s.baseURL))
 	}
@@ -95,6 +114,8 @@ func New(opts ...Option) (*Client, error) {
 		retries = s.maxRetries
 	}
 	reqOpts = append(reqOpts, option.WithMaxRetries(retries))
+	// Caller-supplied options last: they win over the derived ones.
+	reqOpts = append(reqOpts, s.extraReqOpts...)
 
 	return &Client{api: anthropic.NewClient(reqOpts...), model: s.model}, nil
 }

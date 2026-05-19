@@ -148,8 +148,11 @@ workflows should set an explicit limit from their domain.
 `ToolChoice` overrides `Request.ToolChoice` when non-zero. Supplying both a
 non-zero `Config.ToolChoice` and a non-zero `Request.ToolChoice` is a
 configuration error. If both are zero, the loop should default to
-`llms.ToolChoiceAuto`. Applications that require tool use can set
-`llms.ToolChoiceRequired`, but should remember that Ollama cannot enforce it.
+`llms.ToolChoice{Type: llms.ToolChoiceAuto}` (the `ToolChoice*` constants
+are `llms.ToolChoiceType` values, not `llms.ToolChoice` literals).
+Applications that require tool use can set
+`llms.ToolChoice{Type: llms.ToolChoiceRequired}`, but should remember that
+Ollama cannot enforce it.
 
 Callbacks are optional observation hooks. They must not be required for
 correctness.

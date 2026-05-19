@@ -43,7 +43,10 @@ guarantees follow.
   with five kinds: `FinalAnswer`, `MaxIterations`, `LLMError`, `ToolError`,
   `Canceled`. Cancellation is detected via `errors.Is(err,
   context.Canceled)`, matching the toolkit's contract that caller cancel
-  is **not** converted into a `*llms.ProviderError` (cross-cutting X5).
+  is **not** converted into a `*llms.ProviderError` (see
+  [`MAESTRO_DIVERGENCES.md`](../MAESTRO_DIVERGENCES.md) row X5: `apierr`
+  returns `context.Canceled` as-is; `context.DeadlineExceeded` stays a
+  retryable `timeout` `ProviderError`).
 - Fail-closed configuration: `Request.Tools` and `Config.Tools` both set is
   a config error; `Request.ToolChoice` and `Config.ToolChoice` both
   non-zero is a config error; duplicate tool names or nil `Execute`

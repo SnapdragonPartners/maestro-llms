@@ -197,6 +197,20 @@ func (c *ChatClient) toParams(req llms.ChatRequest) (responses.ResponseNewParams
 	return params, nil
 }
 
+// openaiStopReason surfaces the real finish reason. The Responses envelope
+// Status ("completed"/"incomplete"/"failed") is not a finish reason; on a
+// truncation the actual reason ("max_output_tokens"/"content_filter") is in
+// incomplete_details.reason. Deriving it here makes OpenAI consistent with
+// the other adapters (which all pass the raw provider finish reason through
+// StopReason) so consumers can detect length-truncation/content-filter
+// without reaching into Raw. See MAESTRO_DIVERGENCES OC4.
+func openaiStopReason(resp *responses.Response) llms.StopReason {
+	if resp.Status == responses.ResponseStatusIncomplete && resp.IncompleteDetails.Reason != "" {
+		return llms.StopReason(resp.IncompleteDetails.Reason)
+	}
+	return llms.StopReason(resp.Status)
+}
+
 // toChatResponse maps a Responses API result to the app-neutral
 // ChatResponse. Message is the source of truth; Text and ToolCalls mirror it.
 // ToolCall.ID carries the Responses call_id so a subsequent tool result
@@ -237,7 +251,7 @@ func toChatResponse(resp *responses.Response) llms.ChatResponse {
 		Message:    llms.Message{Role: llms.RoleAssistant, Content: parts},
 		Text:       text,
 		ToolCalls:  toolCalls,
-		StopReason: llms.StopReason(resp.Status),
+		StopReason: openaiStopReason(resp),
 		Usage: llms.Usage{
 			InputTokens:       int(resp.Usage.InputTokens),
 			OutputTokens:      int(resp.Usage.OutputTokens),

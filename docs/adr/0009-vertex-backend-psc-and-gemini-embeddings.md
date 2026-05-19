@@ -153,3 +153,12 @@ Appended as PRs land (this ADR's prose above is unchanged — append-only).
   PSC endpoint/transport injection, fail-closed truncation guard, and
   single-input rejection are all merged. Infra (PSC/DNS/VPC-SC/IAM/SA)
   remains Morris/OpenTofu, as scoped.
+- **Live-validated 2026-05-18.** An end-to-end test against real Google
+  Vertex AI succeeded for **both** Anthropic (via `anthropicvertex`) and
+  Gemini embeddings (run from a separate Morris Vertex spike). This confirms
+  the parts that could only be stubbed in unit tests held against real
+  Vertex/PSC: the genai/anthropic-sdk Vertex wire shapes (path rewrite,
+  `anthropic_version`, predictions/embeddings parsing), the
+  auth-vs-PSC-transport precedence, single-input rejection, and the
+  fail-closed `MaxInputBytes` guard. No code change resulted — the design
+  was validated as built. v0.4 is implemented *and* live-proven.

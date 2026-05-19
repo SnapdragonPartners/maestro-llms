@@ -49,6 +49,14 @@ type ToolCall struct {
 	ID         string
 	Name       string
 	Parameters json.RawMessage
+	// ProviderSignature is an opaque, provider-owned blob that must be
+	// round-tripped unchanged when this tool call is sent back in a later
+	// turn. The core never interprets it. It exists so provider-required
+	// per-tool-call state survives the stateless response→app→request loop
+	// without a per-client cache: e.g. Gemini 3's mandatory functionCall
+	// `thought_signature`. Providers that don't use it leave it nil and
+	// ignore it (like ContentPart.CacheBreakpoint). See ADR-0010.
+	ProviderSignature []byte
 }
 
 // ToolResult is the result of executing a ToolCall, sent back in a RoleTool

@@ -269,9 +269,10 @@ adapters must not silently lose caller intent (see MAESTRO_DIVERGENCES).
 
 ```go
 type ToolCall struct {
-    ID         string
-    Name       string
-    Parameters json.RawMessage
+    ID                string
+    Name              string
+    Parameters        json.RawMessage
+    ProviderSignature []byte // opaque, provider-owned; round-trip unchanged
 }
 
 type ToolResult struct {
@@ -282,6 +283,14 @@ type ToolResult struct {
 ```
 
 Tool schemas should remain raw JSON Schema so the package does not force a schema-generation library.
+
+`ToolCall.ProviderSignature` is an opaque, provider-owned blob the core never
+interprets. It carries provider-required per-tool-call state that must survive
+the stateless response→app→request round-trip (the app already replays the
+assistant turn in history) without a per-client cache — e.g. Gemini 3's
+mandatory functionCall `thought_signature`. Adapters that don't need it leave
+it nil and ignore it, exactly like `ContentPart.CacheBreakpoint`. See
+ADR-0010.
 
 `ToolCall.Parameters` is `json.RawMessage` to preserve exact provider-emitted JSON and avoid lossy `map[string]any` round-trips. Applications can unmarshal into typed structs.
 

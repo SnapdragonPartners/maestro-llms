@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
-// defaultMaxIterations is the runaway bound used when Config.MaxIterations
-// is zero. It is not a tuning recommendation — applications with known
-// workflows should set their own bound from their domain.
+// defaultMaxIterations is the runaway bound applied when
+// Config.MaxIterations is unset (<= 0). It is not a tuning recommendation
+// — applications with known workflows should set their own bound from
+// their domain. Negative values are treated identically to zero (use the
+// default) rather than rejected, since negatives are functionally a
+// "leave at default" mistake, not an attack surface.
 const defaultMaxIterations = 8
 
 // ConfigError is the error type Run puts in Outcome.Err when it rejects a
@@ -175,7 +179,16 @@ func executeCalls(
 ) ([]llms.ToolResult, *Outcome) {
 	results := make([]llms.ToolResult, len(resp.ToolCalls))
 	for i := range resp.ToolCalls {
-		call := resp.ToolCalls[i]
+		// Defensive copy: resp.ToolCalls[i] is a shallow value, but
+		// Parameters and ProviderSignature are slices whose backing
+		// arrays are also reachable through resp.Message.Content (which
+		// we already appended verbatim to the transcript at step 7).
+		// Handing the shallow value to an executor or observer that
+		// mutates these bytes would corrupt the transcript we'll send
+		// back to the provider on the next Complete and would
+		// undermine the ADR-0010 ProviderSignature round-trip
+		// guarantee, so we clone before dispatch and event emission.
+		call := cloneToolCall(resp.ToolCalls[i])
 		start := time.Now()
 		result, execErr := dispatch(ctx, call, toolByName)
 		latency := time.Since(start)
@@ -230,6 +243,19 @@ func dispatch(ctx context.Context, call llms.ToolCall, toolByName map[string]Too
 		}, nil
 	}
 	return tool.Execute(ctx, call)
+}
+
+// cloneToolCall returns a value-copy of c with independent backing arrays
+// for the slice-typed fields (Parameters, ProviderSignature) so the
+// transcript we already appended verbatim at step 7 cannot be mutated
+// through the call we hand to executors and event observers.
+func cloneToolCall(c llms.ToolCall) llms.ToolCall {
+	return llms.ToolCall{
+		ID:                c.ID,
+		Name:              c.Name,
+		Parameters:        slices.Clone(c.Parameters),
+		ProviderSignature: slices.Clone(c.ProviderSignature),
+	}
 }
 
 // isCanceled reports whether the loop should treat err as
@@ -329,6 +355,17 @@ func validateConfig(cfg Config) ([]llms.ToolDefinition, llms.ToolChoice, error) 
 	if isZeroToolChoice(effective) {
 		effective = llms.ToolChoice{Type: llms.ToolChoiceAuto}
 	}
+	// Reject unknown ToolChoice.Type values up front. Several provider
+	// adapters silently fall through on an unknown type and drop the
+	// caller's intent; failing closed here keeps that misuse out of the
+	// transcript and surfaces it as a *ConfigError before any provider
+	// call. The empty type is excluded because it has already been
+	// normalized to Auto above.
+	if !isKnownToolChoiceType(effective.Type) {
+		return nil, llms.ToolChoice{}, &ConfigError{
+			Reason: fmt.Sprintf("unknown ToolChoice.Type %q; must be one of auto/none/required/tool", effective.Type),
+		}
+	}
 	if effective.RequiresTools() && len(cfg.Tools) == 0 {
 		return nil, llms.ToolChoice{}, &ConfigError{
 			Reason: fmt.Sprintf("ToolChoice %q requires at least one Config.Tools entry", effective.Type),
@@ -351,6 +388,18 @@ func validateConfig(cfg Config) ([]llms.ToolDefinition, llms.ToolChoice, error) 
 
 func isZeroToolChoice(tc llms.ToolChoice) bool {
 	return tc.Type == "" && tc.Name == ""
+}
+
+// isKnownToolChoiceType reports whether t is one of the toolkit's defined
+// ToolChoice type constants. Used by validateConfig to fail closed before
+// a provider adapter silently drops an unknown value.
+func isKnownToolChoiceType(t llms.ToolChoiceType) bool {
+	switch t {
+	case llms.ToolChoiceAuto, llms.ToolChoiceNone, llms.ToolChoiceRequired, llms.ToolChoiceTool:
+		return true
+	default:
+		return false
+	}
 }
 
 // indexTools builds the name -> Tool lookup the dispatcher uses. validateConfig

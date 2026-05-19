@@ -33,20 +33,26 @@ type ToolResult struct {
 	IsError bool
 }
 
-// Config drives a single Run. Client, Request, and Tools are required.
+// Config drives a single Run. Client and Request are required (Request.Messages
+// must be non-empty). Tools is required only when the effective ToolChoice
+// requires at least one tool — an empty Tools slice with the default
+// ToolChoiceAuto is allowed and is equivalent to a single Complete call.
+//
 // Defaults: MaxIterations <= 0 uses defaultMaxIterations; a zero ToolChoice
-// (in both Request and Config) defaults to llms.ToolChoiceAuto.
+// (in both Request and Config) defaults to llms.ToolChoice{Type:
+// llms.ToolChoiceAuto}.
 //
 // Fail-closed configuration: see Run for the validation rules — duplicated
 // tools across Request.Tools/Config.Tools, duplicated ToolChoice across
-// Request/Config, duplicate tool names, nil Execute, and
-// ToolChoice.RequiresTools with no tools are all rejected before any
-// provider call.
+// Request/Config, duplicate tool names, nil Execute, unknown
+// ToolChoice.Type values, and ToolChoice.RequiresTools with no tools are
+// all rejected before any provider call.
 //
 // OnIteration and OnToolCall are optional observation hooks. They must
-// never be required for correctness; the loop does not block on them and
-// applications correlate events by closing over their own state in the
-// callback.
+// never be required for correctness, but they ARE invoked synchronously on
+// the loop's goroutine — a slow callback will block the next provider
+// call or tool execution. Applications correlate events by closing over
+// their own state in the callback.
 type Config struct {
 	Request       llms.ChatRequest
 	Client        llms.ChatClient

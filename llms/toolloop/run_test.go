@@ -505,6 +505,127 @@ func bytesEqual(a, b []byte) bool {
 	return true
 }
 
+// Defensive copy ---------------------------------------------------------
+
+func TestRun_DefensiveCopy_ExecutorMutationDoesNotCorruptTranscript(t *testing.T) {
+	// A misbehaving executor mutates the in-bytes of call.Parameters and
+	// call.ProviderSignature. The transcript fed to the next Complete
+	// must contain the ORIGINAL bytes the provider emitted, not the
+	// mutated ones — otherwise we silently break the ADR-0010
+	// ProviderSignature round-trip and could send corrupted tool args.
+	origParams := []byte(`{"x":1}`)
+	origSig := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	tc := llms.ToolCall{
+		ID:                "c1",
+		Name:              "echo",
+		Parameters:        origParams,
+		ProviderSignature: origSig,
+	}
+	asstTurn := llms.ChatResponse{
+		Message: llms.Message{
+			Role:    llms.RoleAssistant,
+			Content: []llms.ContentPart{{Type: llms.ContentToolCall, ToolCall: &tc}},
+		},
+		ToolCalls:  []llms.ToolCall{tc},
+		StopReason: "tool_use",
+	}
+	client := scriptedResponses(asstTurn, finalTextResp("ok", llms.Usage{}))
+
+	mutatingTool := toolloop.Tool{
+		Definition: llms.ToolDefinition{Name: "echo"},
+		Execute: func(_ context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
+			// Mutate every byte in both slices. If the loop handed us
+			// a shallow copy, these writes would land in the same
+			// backing array as the transcript's assistant turn.
+			for i := range call.Parameters {
+				call.Parameters[i] = 'X'
+			}
+			for i := range call.ProviderSignature {
+				call.ProviderSignature[i] = 0xFF
+			}
+			return toolloop.ToolResult{Content: "ok"}, nil
+		},
+	}
+	out := toolloop.Run(context.Background(), toolloop.Config{
+		Client:  client,
+		Request: userReq("hi"),
+		Tools:   []toolloop.Tool{mutatingTool},
+	})
+	if out.Kind != toolloop.OutcomeFinalAnswer {
+		t.Fatalf("kind = %q, want final_answer", out.Kind)
+	}
+
+	// The second provider request must carry the ORIGINAL bytes.
+	calls := client.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("provider call count = %d, want 2", len(calls))
+	}
+	second := calls[1]
+	asst := second.Messages[len(second.Messages)-2]
+	if len(asst.Content) != 1 || asst.Content[0].ToolCall == nil {
+		t.Fatalf("assistant content shape wrong: %+v", asst.Content)
+	}
+	gotParams := asst.Content[0].ToolCall.Parameters
+	if !bytesEqual(gotParams, origParams) {
+		t.Fatalf("Parameters in next request = %s, want %s (executor mutation leaked into transcript)",
+			gotParams, origParams)
+	}
+	gotSig := asst.Content[0].ToolCall.ProviderSignature
+	if !bytesEqual(gotSig, origSig) {
+		t.Fatalf("ProviderSignature in next request = %x, want %x (executor mutation leaked into transcript)",
+			gotSig, origSig)
+	}
+}
+
+func TestRun_DefensiveCopy_EventObserverMutationDoesNotCorruptTranscript(t *testing.T) {
+	// Same hazard via OnToolCall instead of Execute: an observer that
+	// pokes Call.Parameters or Call.ProviderSignature must not be able
+	// to corrupt what the loop will send on the next Complete.
+	origParams := []byte(`{"y":2}`)
+	origSig := []byte{0x01, 0x02, 0x03}
+	tc := llms.ToolCall{
+		ID:                "c1",
+		Name:              "echo",
+		Parameters:        origParams,
+		ProviderSignature: origSig,
+	}
+	asstTurn := llms.ChatResponse{
+		Message: llms.Message{
+			Role:    llms.RoleAssistant,
+			Content: []llms.ContentPart{{Type: llms.ContentToolCall, ToolCall: &tc}},
+		},
+		ToolCalls:  []llms.ToolCall{tc},
+		StopReason: "tool_use",
+	}
+	client := scriptedResponses(asstTurn, finalTextResp("ok", llms.Usage{}))
+
+	out := toolloop.Run(context.Background(), toolloop.Config{
+		Client:  client,
+		Request: userReq("hi"),
+		Tools:   []toolloop.Tool{echoTool()},
+		OnToolCall: func(e toolloop.ToolCallEvent) {
+			for i := range e.Call.Parameters {
+				e.Call.Parameters[i] = 'Z'
+			}
+			for i := range e.Call.ProviderSignature {
+				e.Call.ProviderSignature[i] = 0xEE
+			}
+		},
+	})
+	if out.Kind != toolloop.OutcomeFinalAnswer {
+		t.Fatalf("kind = %q, want final_answer", out.Kind)
+	}
+	asst := client.Calls()[1].Messages[len(client.Calls()[1].Messages)-2]
+	gotParams := asst.Content[0].ToolCall.Parameters
+	if !bytesEqual(gotParams, origParams) {
+		t.Fatalf("Parameters mutated by observer: %s, want %s", gotParams, origParams)
+	}
+	gotSig := asst.Content[0].ToolCall.ProviderSignature
+	if !bytesEqual(gotSig, origSig) {
+		t.Fatalf("ProviderSignature mutated by observer: %x, want %x", gotSig, origSig)
+	}
+}
+
 // Events -----------------------------------------------------------------
 
 func TestRun_Events_IndexAndCounts(t *testing.T) {
@@ -642,6 +763,20 @@ func TestRun_ConfigErrors(t *testing.T) {
 				ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceTool, Name: "missing"},
 			},
 			want: `not in Config.Tools`,
+		},
+		{
+			// Fail closed on unknown ToolChoice.Type: several provider
+			// adapters silently drop unknown values via a default
+			// switch branch, which would silently subvert caller
+			// intent. Reject at the loop boundary.
+			name: "unknown ToolChoice.Type",
+			cfg: toolloop.Config{
+				Client:     &testllm.FakeChatClient{},
+				Request:    baseReq,
+				Tools:      []toolloop.Tool{baseTool},
+				ToolChoice: llms.ToolChoice{Type: llms.ToolChoiceType("bogus")},
+			},
+			want: `unknown ToolChoice.Type`,
 		},
 	}
 	for _, tc := range cases {

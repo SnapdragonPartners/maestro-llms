@@ -46,6 +46,11 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 - **Composable middleware**: validation, retry, per-attempt timeout, circuit
   breaker, rate-limit reservation, metrics/observer — plus `Recommended*`
   helpers that wire the spec's recommended order.
+- **Tool loop helper** (`llms/toolloop`): synchronous, app-neutral helper
+  for multi-turn tool round trips over a `ChatClient`. Executes
+  app-supplied tools, preserves provider signatures, returns a typed
+  `Outcome`. Deliberately a tool loop, not an agent loop — see
+  [ADR-0011](docs/adr/0011-toolloop-helper.md).
 - **Deterministic fakes** (`llms/testllm`) so downstream code tests without
   network.
 - **Provider packages are leaf imports.** The core `llms` package pulls no
@@ -175,6 +180,53 @@ Anthropic `any` / OpenAI `required` / Gemini ANY-mode; on Ollama both
 `Required`/`Tool` choice with no tools offered is rejected up front.
 Provider differences are documented in
 [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
+
+### Tool loop (`llms/toolloop`)
+
+For multi-turn tool use, `llms/toolloop` wraps the round trip shown above
+over a `ChatClient`: it sends the request, executes every tool call the
+model emits, appends the matching tool results, and repeats until the
+model returns a final answer or the loop hits a stop condition.
+
+```go
+import "github.com/SnapdragonPartners/maestro-llms/llms/toolloop"
+
+weather := toolloop.Tool{
+	Definition: llms.ToolDefinition{Name: "get_weather", InputSchema: schemaJSON},
+	Execute: func(ctx context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
+		// Unmarshal call.Parameters yourself. Return ToolResult{IsError: true}
+		// for model-visible failures the loop should let the model recover
+		// from; return a non-nil error for loop-fatal ones.
+		return toolloop.ToolResult{Content: `{"city":"Paris","temp_c":18}`}, nil
+	},
+}
+
+out := toolloop.Run(ctx, toolloop.Config{
+	Client:  client,
+	Request: llms.ChatRequest{Messages: []llms.Message{llms.UserText("Weather in Paris?")}},
+	Tools:   []toolloop.Tool{weather},
+})
+
+switch out.Kind {
+case toolloop.OutcomeFinalAnswer:
+	fmt.Println(out.Response.Text)
+case toolloop.OutcomeMaxIterations, toolloop.OutcomeLLMError,
+	toolloop.OutcomeToolError, toolloop.OutcomeCanceled:
+	// inspect out.Err, out.Messages, out.TotalUsage
+}
+```
+
+Pre-execute `MaxIterations` stop: if the limit-hitting assistant turn has
+tool calls, that turn is appended to `out.Messages` as diagnostic state
+but its tool calls are not executed — the transcript ends with unresolved
+tool calls and is not directly re-feedable into `Complete` without
+appending tool results for the unresolved calls first.
+
+The helper is deliberately a tool loop, not an agent loop: no agent state,
+persistence, audit taxonomy, authorization, tool registries, or built-in
+tool adapters. See [`docs/toolloop-proposal.md`](docs/toolloop-proposal.md)
+and [ADR-0011](docs/adr/0011-toolloop-helper.md) for the full design and
+binding non-goals.
 
 ### Embeddings
 

@@ -523,6 +523,12 @@ Anthropic chat + OpenAI embeddings), **v0.2.0** (OpenAI/Google/Ollama chat +
 error classifier), **v0.3.0** (full middleware set + `Recommended*`),
 **v0.4.0** (Anthropic-on-Vertex + Gemini/Vertex embeddings, PSC
 endpoint/transport injection, task-typed embeddings — see
-[ADR-0009](docs/adr/0009-vertex-backend-psc-and-gemini-embeddings.md)).
+[ADR-0009](docs/adr/0009-vertex-backend-psc-and-gemini-embeddings.md)),
+**v0.4.1** (OpenAI `incomplete_details.reason` surfaced as `StopReason`),
+**v0.4.2** (Gemini `thought_signature` round-trip via
+`ToolCall.ProviderSignature` — see
+[ADR-0010](docs/adr/0010-toolcall-provider-signature.md)),
+**v0.5.0** (`llms/toolloop` synchronous tool-loop helper — see
+[ADR-0011](docs/adr/0011-toolloop-helper.md)).
 
 MIT — see [`LICENSE`](LICENSE).

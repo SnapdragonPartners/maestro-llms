@@ -96,9 +96,15 @@ func (c *Client) buildContents(req llms.ChatRequest) ([]*genai.Content, *llms.Pr
 				if err != nil {
 					return nil, badRequest(c.model, "tool_call "+p.ToolCall.Name+": invalid parameters JSON: "+err.Error())
 				}
-				parts = append(parts, &genai.Part{FunctionCall: &genai.FunctionCall{
-					ID: p.ToolCall.ID, Name: p.ToolCall.Name, Args: args,
-				}})
+				parts = append(parts, &genai.Part{
+					FunctionCall: &genai.FunctionCall{
+						ID: p.ToolCall.ID, Name: p.ToolCall.Name, Args: args,
+					},
+					// Replay Gemini's opaque thought_signature so multi-turn
+					// tool loops don't 400 (G1 / ADR-0010). nil for non-Gemini
+					// callers — genai omits the empty field.
+					ThoughtSignature: p.ToolCall.ProviderSignature,
+				})
 			case llms.ContentToolResult:
 				if p.ToolResult == nil {
 					return nil, badRequest(c.model, "tool_result content part with nil ToolResult")
@@ -356,7 +362,15 @@ func toChatResponse(result *genai.GenerateContentResponse) llms.ChatResponse {
 						id = fc.Name // Gemini correlates by name
 					}
 					args, _ := json.Marshal(fc.Args)
-					tc := llms.ToolCall{ID: id, Name: fc.Name, Parameters: args}
+					// Gemini 3 attaches an opaque thought_signature to the
+					// functionCall part and REQUIRES it back on later turns
+					// (hard 400 otherwise). Carry it statelessly via the
+					// tool call so the app's normal history round-trip
+					// preserves it (G1 / ADR-0010).
+					tc := llms.ToolCall{
+						ID: id, Name: fc.Name, Parameters: args,
+						ProviderSignature: p.ThoughtSignature,
+					}
 					toolCalls = append(toolCalls, tc)
 					parts = append(parts, llms.ContentPart{Type: llms.ContentToolCall, ToolCall: &tc})
 				case p.Text != "":

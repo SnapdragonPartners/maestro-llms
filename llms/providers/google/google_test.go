@@ -1,18 +1,70 @@
 package google
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
 var _ llms.ChatClient = (*Client)(nil)
+
+// Gemini 3 requires the opaque functionCall thought_signature to be replayed
+// on later turns (hard 400 otherwise). The toolkit must surface it from the
+// response and round-trip it on the next request via ToolCall.ProviderSignature
+// (G1 / ADR-0010) — no per-client cache.
+func TestThoughtSignatureRoundTrips(t *testing.T) {
+	sig := []byte("opaque-thought-sig-\x00\x01\xff")
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	// Turn 1: response carries a functionCall part + thoughtSignature.
+	turn1 := `{"candidates":[{"content":{"role":"model","parts":[` +
+		`{"functionCall":{"name":"list_files","args":{"path":"."}},"thoughtSignature":"` + sigB64 + `"}` +
+		`]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":4,"totalTokenCount":7}}`
+	c1 := newClient(t, jsonHandler(t, 200, turn1))
+	resp, err := c1.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("list files")},
+		Tools:    []llms.ToolDefinition{{Name: "list_files", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("turn 1 Complete: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 || !bytes.Equal(resp.ToolCalls[0].ProviderSignature, sig) {
+		t.Fatalf("thought_signature not surfaced into ToolCall.ProviderSignature: %+v", resp.ToolCalls)
+	}
+
+	// Turn 2: feed the assistant turn back; the outgoing genai functionCall
+	// part must carry the same thoughtSignature.
+	var body string
+	c2 := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, respTextJSON)
+	})
+	_, err = c2.Complete(context.Background(), llms.ChatRequest{
+		Tools: []llms.ToolDefinition{{Name: "list_files", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		Messages: []llms.Message{
+			llms.UserText("list files"),
+			resp.Message, // assistant turn with the tool call + its ProviderSignature
+			llms.ToolResultMessage(llms.ToolResult{ToolCallID: resp.ToolCalls[0].ID, Content: `{"files":[]}`}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("turn 2 Complete: %v", err)
+	}
+	if !strings.Contains(body, `"thoughtSignature":"`+sigB64+`"`) {
+		t.Fatalf("thought_signature not replayed on the resent functionCall part:\n%s", body)
+	}
+}
 
 const respTextJSON = `{
 "candidates":[{"content":{"role":"model","parts":[{"text":"hello world"}]},"finishReason":"STOP"}],

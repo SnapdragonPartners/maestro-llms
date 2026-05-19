@@ -90,6 +90,50 @@ func TestChatToolCallResponse(t *testing.T) {
 	}
 }
 
+// On a max-output truncation the Responses API returns status:"incomplete"
+// with the real reason in incomplete_details.reason. StopReason must reflect
+// that reason (not the envelope status), and tool calls present in the
+// truncated output must still be mapped (tool-call mapping is independent of
+// Status). Lets Maestro drop its Raw.(*responses.Response) workaround.
+func TestChatIncompleteSurfacesTruncationReason(t *testing.T) {
+	body := `{"id":"resp_3","object":"response","status":"incomplete","model":"gpt-test",
+"incomplete_details":{"reason":"max_output_tokens"},
+"output":[{"type":"function_call","id":"fc_9","call_id":"call_trunc","name":"lookup","arguments":"{\"q\":\"x\"}","status":"completed"}],
+"usage":{"input_tokens":3,"output_tokens":7,"total_tokens":10}}`
+	c := newChat(t, jsonHandler(t, 200, body, nil))
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.StopReason != "max_output_tokens" {
+		t.Fatalf("StopReason must be the truncation reason, not the envelope status; got %q", resp.StopReason)
+	}
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].ID != "call_trunc" || resp.ToolCalls[0].Name != "lookup" {
+		t.Fatalf("tool calls must be preserved on a truncated response: %+v", resp.ToolCalls)
+	}
+}
+
+// status:"incomplete" with no incomplete_details.reason falls back to the
+// envelope status (no spurious empty StopReason).
+func TestChatIncompleteWithoutReasonFallsBack(t *testing.T) {
+	body := `{"id":"resp_4","object":"response","status":"incomplete","model":"gpt-test",
+"incomplete_details":{"reason":""},
+"output":[{"type":"message","id":"m1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hi"}]}],
+"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	c := newChat(t, jsonHandler(t, 200, body, nil))
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.StopReason != "incomplete" {
+		t.Fatalf("no incomplete_details.reason should fall back to status; got %q", resp.StopReason)
+	}
+}
+
 func TestChatResponsePreservesInterleavedOrder(t *testing.T) {
 	// Output interleaves text, a tool call, then more text. Message must
 	// keep that exact order; Text mirror is the flattened concatenation.

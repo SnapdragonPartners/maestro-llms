@@ -11,11 +11,12 @@ deterministic fakes for testing. It is intentionally **light**: a thin
 adapter layer, not a framework. It carries no application policy, no agent
 logic, no pricing tables, and the minimum of third-party dependencies.
 
-It is shared by two consumers with deliberately different needs — Maestro
-(desktop/local) and Morris (cloud, multi-instance) — so nothing in the
-package may import product-specific assumptions from either. When a feature
-needs app context, the answer is an interface the app implements, not a
-concrete implementation here.
+It is shared by three consumers with deliberately different needs — Maestro
+(desktop/local), Morris (cloud, multi-instance), and maestro-cms (content
+service, budget-aware chunking) — so nothing in the package may import
+product-specific assumptions from any of them. When a feature needs app
+context, the answer is an interface the app implements, not a concrete
+implementation here.
 
 The binding design is [`docs/specification.md`](docs/specification.md).
 Rationale for non-obvious decisions lives in [`docs/adr/`](docs/adr/).
@@ -57,6 +58,11 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   toolkit does not. Per-provider `LatestInFamily` helpers know each
   provider's family-naming convention; Ollama implements list-only
   (no canonical family). See [ADR-0012](docs/adr/0012-model-lister.md).
+- **Text-level token estimator** (`llms.EstimateTextTokens`): exported
+  `func(string) int` for budget-aware chunking, with documented
+  **neutral** bias (distinct from the high-biased middleware
+  estimator). See
+  [ADR-0013](docs/adr/0013-text-token-estimator.md).
 - **Deterministic fakes** (`llms/testllm`) so downstream code tests without
   network.
 - **Provider packages are leaf imports.** The core `llms` package pulls no
@@ -469,6 +475,26 @@ use. For a multi-instance deployment (e.g. Cloud Run) implement
 `Release`) backed by shared storage and pass *that* to the same middleware —
 nothing else changes. The package intentionally ships only the in-memory
 implementation; the shared backend is the application's to provide.
+
+### Text-level token estimation
+
+For consumers that need to estimate the token count of a standalone string
+— e.g. budget-aware text chunking before embedding calls — the core
+package exposes a free function:
+
+```go
+n := llms.EstimateTextTokens(s) // approx token count, char-based
+```
+
+The bias is intentionally **neutral** (~4 chars/token, rune-counted), which
+is different from the request-shaped middleware estimator's high bias.
+Over-estimating during chunking produces smaller-than-necessary chunks and
+thus more downstream API calls (waste, not safety), so neutral is the
+right default for splitting; consumers add their own safety margin if they
+want. The middleware estimator stays high-biased because over-reservation
+is the safe error at a rate limiter. See
+[ADR-0013](docs/adr/0013-text-token-estimator.md) for why the two
+estimators stay separate.
 
 ### Errors
 

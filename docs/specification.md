@@ -745,6 +745,14 @@ type TokenEstimator interface {
 
 Default estimator can be approximate. Provider-specific estimators may be added. Overestimation is safer for rate limiting than underestimation.
 
+A separate, exported text-level helper is available at the core level for consumers that need to estimate the token count of a standalone string (budget-aware chunking, ad-hoc inspection) without going through the request-shaped interface (ADR-0013):
+
+```go
+func EstimateTextTokens(s string) int
+```
+
+Bias is intentionally **neutral** (~4 chars/token, rune-counted) — distinct from the request-shaped estimator's high bias — because over-estimating during chunking produces smaller-than-necessary chunks and thus more downstream API calls. The two estimators serve different purposes and should not be consolidated.
+
 ## Provider Clients
 
 Initial provider support:

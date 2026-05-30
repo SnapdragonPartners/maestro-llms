@@ -47,3 +47,4 @@ Copy `0001`'s structure as the template.
 | [0010](0010-toolcall-provider-signature.md) | Round-trip opaque provider state via `ToolCall.ProviderSignature` (Gemini 3 thought_signature) | Accepted |
 | [0011](0011-toolloop-helper.md) | Tool loop helper — scope, API, and non-goals | Accepted |
 | [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted |
+| [0013](0013-text-token-estimator.md) | Text-level token estimator (`EstimateTextTokens`) — neutral-biased free function distinct from the high-biased middleware estimator | Accepted |

@@ -12,12 +12,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this package is
 
-`maestro-llms` is an app-neutral Go toolkit wrapping LLM/embedding providers behind stable interfaces, shared by two consumers with deliberately different needs:
+`maestro-llms` is an app-neutral Go toolkit wrapping LLM/embedding providers behind stable interfaces, shared by three consumers with deliberately different needs:
 
 - **Maestro** — desktop/local, in-process rate limiting.
 - **Morris** — cloud (Cloud Run, multi-instance), needs shared/distributed rate limiting, audit, content classification.
+- **maestro-cms** — content service that does budget-aware text chunking for embeddings (requester of ADR-0013's `EstimateTextTokens`).
 
-The core design tension to keep in mind on every change: **nothing in this package may import product-specific assumptions from either app.** Config resolution, secret sourcing, audit taxonomy, distributed limiter storage, and content rules all belong to the applications, not here. When a feature seems to need app context, the answer is almost always an interface the app implements or a callback hook — not a concrete implementation in this package.
+The core design tension to keep in mind on every change: **nothing in this package may import product-specific assumptions from any consumer.** Config resolution, secret sourcing, audit taxonomy, distributed limiter storage, content rules, and chunking policy all belong to the applications, not here. When a feature seems to need app context, the answer is almost always an interface the app implements or a callback hook — not a concrete implementation in this package.
 
 ## Architecture (planned, per spec)
 

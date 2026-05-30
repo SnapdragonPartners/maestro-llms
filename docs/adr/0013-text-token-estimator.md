@@ -105,3 +105,41 @@ overestimate — for chunking, that would compound waste.
   `ContentPart.CacheBreakpoint` — opt-in, advisory, honored-where-
   supported), ADR-0012 (recent neutral-data + per-consumer-policy
   split).
+
+## Amendment 2026-05-30 — future-variant framing clarified
+
+The "Non-goals" section above defers a future opt-in `TextEstimator`
+interface, framed as **"tokenizer-backed where available, char-based
+fallback elsewhere."** That phrasing was implicitly narrow — it read
+as "embedded offline tokenizer or nothing" (e.g. tiktoken-go). In
+practice the design space is wider, and a future ADR-0014 should plan
+for the fuller shape:
+
+| Provider | Accuracy path | Network? | New dep at toolkit level? |
+|---|---|---|---|
+| Anthropic | `messages/count_tokens` (anthropic-sdk-go wrapper) | yes | **none** — already imported |
+| Google (Gemini, mldev + Vertex) | `genai.Models.CountTokens` | yes | **none** — already imported |
+| OpenAI | tiktoken-go (offline, embedded BPE tables) | no | yes — opt-in subpackage |
+| Ollama | char-based fallback (no tokenization API) | n/a | none |
+
+Two of the four exact-tokenizer paths cost the toolkit nothing in
+dependencies — the SDKs are already imported for chat. Wrapping
+`count_tokens` / `CountTokens` into a `TextEstimator` is a ~10-line
+method per provider. Network round-trip per call is comparable to the
+embedding/chat round-trip the consumer is already paying for in the
+chunk-time use case, so the "network is too expensive" objection that
+originally narrowed the framing does not hold for online/incremental
+workloads.
+
+This is a **framing correction, not a decision change**. The original
+v1 decision (ship char-based `EstimateTextTokens` now; defer the
+opt-in variant to a future ADR-0014) stands. The amendment exists so
+ADR-0014, when written, inherits the correct design space and is not
+constrained to "embed a tokenizer or nothing."
+
+Mixed-fidelity reality applies either way: even with the fuller shape,
+OpenAI requires either a new opt-in dep or a network call elsewhere,
+and Ollama has no high-fidelity option. The toolkit-style answer is
+the same as for `ModelLister` — type-assertion over a per-provider
+optional capability, missing implementations are honest rather than
+stubbed.

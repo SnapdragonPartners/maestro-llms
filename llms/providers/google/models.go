@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"google.golang.org/genai"
-
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
@@ -141,7 +139,3 @@ func (c *Client) LatestInFamily(ctx context.Context, currentID string) (llms.Mod
 	newer, ok := LatestInFamily(currentID, models)
 	return newer, ok, nil
 }
-
-// Compile-time assertion; package-level var lives in the test file to
-// avoid gochecknoglobals.
-var _ = (*genai.Model)(nil) // keep the genai import warm for embedding-only refs

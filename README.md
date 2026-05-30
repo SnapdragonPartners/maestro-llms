@@ -51,6 +51,12 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   app-supplied tools, preserves provider signatures, returns a typed
   `Outcome`. Deliberately a tool loop, not an agent loop — see
   [ADR-0011](docs/adr/0011-toolloop-helper.md).
+- **Model listing & upgrade detection** (`llms.ModelLister`): optional
+  capability for surfacing "newer model available in your family"
+  prompts to users — applications decide whether to upgrade, the
+  toolkit does not. Per-provider `LatestInFamily` helpers know each
+  provider's family-naming convention; Ollama implements list-only
+  (no canonical family). See [ADR-0012](docs/adr/0012-model-lister.md).
 - **Deterministic fakes** (`llms/testllm`) so downstream code tests without
   network.
 - **Provider packages are leaf imports.** The core `llms` package pulls no
@@ -227,6 +233,52 @@ persistence, audit taxonomy, authorization, tool registries, or built-in
 tool adapters. See [`docs/toolloop-proposal.md`](docs/toolloop-proposal.md)
 and [ADR-0011](docs/adr/0011-toolloop-helper.md) for the full design and
 binding non-goals.
+
+### Model listing & upgrade detection
+
+Long-running projects pin a model ID at config time; months later a newer
+snapshot in the same family may have shipped. The toolkit exposes an
+optional `ModelLister` capability (v0.6 / [ADR-0012](docs/adr/0012-model-lister.md))
+and a per-provider `LatestInFamily` helper so applications can surface
+"Opus 4.7 is available, upgrade from 4.5?" prompts to users — the toolkit
+does not auto-update.
+
+```go
+// Discover via type assertion (optional capability — see ADR-0012).
+lister, ok := client.(llms.ModelLister)
+if !ok {
+    // Provider doesn't expose a model list (e.g. future vLLM).
+    return
+}
+models, err := lister.ListModels(ctx)
+// ...
+
+// Per-provider helper: returns (newer, true) only if a strictly newer
+// model exists in the same family as currentID.
+newer, found := anthropic.LatestInFamily(currentID, models)
+if found {
+    fmt.Printf("Newer model in family: %s (released %s)\n",
+        newer.ID, newer.Created.Format("2006-01-02"))
+}
+
+// Or one-shot, when you don't want to cache the list:
+newer, found, err = client.LatestInFamily(ctx, currentID)
+```
+
+Per-provider notes:
+
+- **Anthropic** (`anthropic.LatestInFamily`): family = `claude-{opus|sonnet|haiku}`. Crosses generations on purpose — `claude-3-5-sonnet-…` and `claude-sonnet-4-5-…` are both `claude-sonnet`. Ordered by `CreatedAt`.
+- **OpenAI** (`openai.LatestInFamily`): family = ID with trailing `-YYYY-MM-DD` stripped (`gpt-5-2026-03-15` → `gpt-5`; `gpt-5-mini-2025-12-01` → `gpt-5-mini`). Self-filtering by family means embedding/image IDs in the catalog never collide with `gpt-*` queries. Ordered by `Created` (Unix seconds).
+- **Google** (`google.LatestInFamily`): family = `gemini-{pro|flash|nano|ultra}`. The genai list exposes no created date, so ordering uses parsed numeric version from the ID (`gemini-3-pro` > `gemini-2.5-pro` > `gemini-1.5-pro`). `ModelInfo.Created` is zero.
+- **Ollama** (`ListModels` only — **no `LatestInFamily`**): the list is *locally pulled* models via `/api/tags`, not a provider catalog. `ModelInfo.Created` is the local pull time (`modified_at`), not provider release time. `Family` is empty: Ollama tags are community-uploaded under arbitrary names and have no canonical family convention.
+
+Family parsing is intentionally permissive: major-version bumps stay in
+the same family. Callers that want stricter pinning (e.g. "stay within
+the same major version") filter the `ListModels` result themselves.
+
+Non-goals (binding, ADR-0012): not auto-update, not toolkit-side caching,
+not a stable-vs-preview filter, not a cross-provider abstraction over
+model identity. Apps build those on top.
 
 ### Embeddings
 

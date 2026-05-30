@@ -145,6 +145,23 @@ type StreamingChatClient interface {
 
 Callers and middleware should discover streaming with a type assertion. Adding `Stream` to `ChatClient` later would be a breaking change for every provider, fake, and middleware.
 
+Model listing is an additional optional capability (v0.6 / ADR-0012):
+
+```go
+type ModelLister interface {
+    ListModels(ctx context.Context) ([]ModelInfo, error)
+}
+
+type ModelInfo struct {
+    ID      string    // provider's model identifier
+    Family  string    // provider-classified family ("" if N/A or unparseable)
+    Created time.Time // zero if the SDK doesn't expose it
+    Raw     any       // SDK-specific payload, outside the stability contract
+}
+```
+
+Discovery is by type assertion on a `ChatClient`. Providers without a list API simply don't implement it. Per-family upgrade detection (`LatestInFamily`) is a provider-package concern — family naming differs per provider (Anthropic `claude-{opus|sonnet|haiku}`, OpenAI dated-snapshot stripping, Gemini `gemini-{pro|flash|nano|ultra}`) — and is offered as a pure helper plus a one-shot convenience method on the provider's chat client. Ollama implements `ModelLister` only; its list is locally pulled models and "latest in family" has no consistent meaning for community-uploaded tags. See ADR-0012 for binding non-goals.
+
 ### Model Reference
 
 ```go

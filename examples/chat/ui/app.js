@@ -99,7 +99,8 @@
         return;
       }
       history.push({ role: "assistant", text: data.text });
-      const meta = `${data.stopReason} · ${data.inputTokens}/${data.outputTokens} tokens · ${data.latencyMs} ms`;
+      const stop = prettyStopReason(data.stopReason);
+      const meta = `${data.model || "?"} · ${stop} · ${data.inputTokens}/${data.outputTokens} tokens · ${data.latencyMs} ms`;
       appendMessage("assistant", data.text || "(empty response)", meta);
     } catch (err) {
       appendError("network error: " + err.message);
@@ -109,6 +110,39 @@
       sendBtn.textContent = "Send";
       input.focus();
     }
+  }
+
+  // --- stop-reason normalization ------------------------------------
+  // The toolkit DELIBERATELY passes raw provider finish_reason values
+  // through as llms.StopReason — see ADR-OC4 / spec §9. So in one
+  // transcript you'll see "end_turn" (Anthropic), "max_output_tokens"
+  // (OpenAI Responses, lowercase), "MAX_TOKENS" (Gemini, enum-style),
+  // "stop"/"length" (vLLM / OpenAI Chat Completions), etc. The toolkit
+  // ships truth; the consumer formats for users. This function is the
+  // consumer-side normalization the demo does for display only.
+  function prettyStopReason(raw) {
+    if (!raw) return "?";
+    const key = raw.toString().toLowerCase();
+    switch (key) {
+      case "end_turn":
+      case "stop":
+        return "completed";
+      case "max_tokens":
+      case "max_output_tokens":
+      case "length":
+        return "max tokens";
+      case "tool_use":
+      case "tool_calls":
+        return "tool call";
+      case "content_filter":
+      case "safety":
+        return "content filter";
+      case "pause_turn":
+        return "paused";
+    }
+    // Unknown provider value: pass through as-is so the UI still tells
+    // the user something, just unformatted. New providers don't break.
+    return raw;
   }
 
   // --- token estimate (client-side, char-based) ---------------------

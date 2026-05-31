@@ -88,7 +88,8 @@ type apiMessage struct {
 
 type chatResponse struct {
 	Text         string `json:"text"`
-	StopReason   string `json:"stopReason"`
+	Model        string `json:"model"`      // raw model ID from the response; shown in the UI footer
+	StopReason   string `json:"stopReason"` // RAW provider finish reason (cross-provider variance is intentional; UI normalizes for display)
 	InputTokens  int    `json:"inputTokens"`
 	OutputTokens int    `json:"outputTokens"`
 	TotalTokens  int    `json:"totalTokens"`
@@ -172,6 +173,7 @@ func handleChat(w http.ResponseWriter, r *http.Request, options []ModelOption, l
 
 	writeJSON(w, http.StatusOK, chatResponse{
 		Text:         resp.Text,
+		Model:        opt.Model,
 		StopReason:   string(resp.StopReason),
 		InputTokens:  resp.Usage.InputTokens,
 		OutputTokens: resp.Usage.OutputTokens,

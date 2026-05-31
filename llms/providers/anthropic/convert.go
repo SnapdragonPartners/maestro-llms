@@ -349,12 +349,21 @@ func toResponse(msg *anthropic.Message) llms.ChatResponse {
 		ToolCalls:  toolCalls,
 		StopReason: llms.StopReason(msg.StopReason),
 		Usage: llms.Usage{
-			InputTokens:       int(msg.Usage.InputTokens),
-			OutputTokens:      int(msg.Usage.OutputTokens),
-			TotalTokens:       int(msg.Usage.InputTokens + msg.Usage.OutputTokens),
-			CacheReadTokens:   int(msg.Usage.CacheReadInputTokens),
-			CacheWriteTokens:  int(msg.Usage.CacheCreationInputTokens),
-			ProviderRequestID: msg.ID,
+			InputTokens: int(msg.Usage.InputTokens),
+			// Anthropic's wire output_tokens already INCLUDES thinking
+			// tokens when extended thinking is enabled. The SDK exposes
+			// no separate field for the visible/thinking split, so we
+			// cannot derive ReasoningTokens. We carry the wire total in
+			// OutputTokens (documented limitation in ADR-0016) and
+			// mirror it as BillableOutputTokens for accounting.
+			// Consumers wanting the visible/thinking breakdown must
+			// inspect the assistant message's ThinkingBlock content.
+			OutputTokens:         int(msg.Usage.OutputTokens),
+			BillableOutputTokens: int(msg.Usage.OutputTokens),
+			TotalTokens:          int(msg.Usage.InputTokens + msg.Usage.OutputTokens),
+			CacheReadTokens:      int(msg.Usage.CacheReadInputTokens),
+			CacheWriteTokens:     int(msg.Usage.CacheCreationInputTokens),
+			ProviderRequestID:    msg.ID,
 		},
 		Raw: msg,
 	}

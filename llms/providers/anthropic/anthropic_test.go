@@ -79,6 +79,13 @@ func TestCompleteTextResponse(t *testing.T) {
 		u.CacheWriteTokens != 2 || u.CacheReadTokens != 3 || u.ProviderRequestID != "msg_1" {
 		t.Fatalf("usage mapping wrong: %+v", u)
 	}
+	// ADR-0016: Anthropic exposes no separable reasoning field, so
+	// BillableOutputTokens mirrors OutputTokens and ReasoningTokens
+	// stays zero. When extended thinking is enabled the wire
+	// output_tokens already includes thinking and we can't split.
+	if u.BillableOutputTokens != 7 || u.ReasoningTokens != 0 {
+		t.Errorf("billable/reasoning wrong: %+v", u)
+	}
 	if resp.Raw == nil {
 		t.Fatal("Raw should carry the provider message")
 	}

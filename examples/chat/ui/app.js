@@ -100,7 +100,19 @@
       }
       history.push({ role: "assistant", text: data.text });
       const stop = prettyStopReason(data.stopReason);
-      const meta = `${data.model || "?"} · ${stop} · ${data.inputTokens}/${data.outputTokens} tokens · ${data.latencyMs} ms`;
+      // ADR-0016 footer: show the token breakdown so a "max tokens"
+      // stop on a small visible output is self-explanatory. For
+      // non-reasoning models we collapse to just `in / out` since
+      // billable == out and reasoning == 0 — extra fields would be
+      // noise. For reasoning models we show
+      // `in / out / reasoning / billable` so the cap interaction is
+      // visible: the model's MaxTokens cap is on `billable`
+      // (= out + reasoning), not on input or on the provider's
+      // grand TotalTokens.
+      const tokens = data.reasoningTokens > 0
+        ? `${data.inputTokens} in / ${data.outputTokens} out / ${data.reasoningTokens} reasoning · ${data.billableOutputTokens} billable`
+        : `${data.inputTokens} in / ${data.outputTokens} out`;
+      const meta = `${data.model || "?"} · ${stop} · ${tokens} · ${data.latencyMs} ms`;
       appendMessage("assistant", data.text || "(empty response)", meta);
     } catch (err) {
       appendError("network error: " + err.message);

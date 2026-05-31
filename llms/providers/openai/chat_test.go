@@ -353,3 +353,60 @@ func TestNewChatConfigErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestUsageReasoningTokensNormalized pins ADR-0016: the OpenAI wire
+// output_tokens is TOTAL (visible + reasoning), with the reasoning
+// portion exposed as a subset under output_tokens_details. The
+// toolkit normalizes Usage.OutputTokens to VISIBLE-only by subtracting
+// reasoning_tokens; ReasoningTokens carries the subset; the wire total
+// is preserved as BillableOutputTokens for cost math.
+func TestUsageReasoningTokensNormalized(t *testing.T) {
+	// Simulate an o-series response: 250 total output tokens with 200
+	// of them reasoning; visible output is therefore 50.
+	body := `{"id":"resp_o1","object":"response","status":"completed","model":"o1-test",
+"output":[{"type":"message","id":"msg_o","role":"assistant","status":"completed",
+ "content":[{"type":"output_text","text":"short answer","annotations":[]}]}],
+"usage":{"input_tokens":40,"output_tokens":250,"total_tokens":290,
+ "output_tokens_details":{"reasoning_tokens":200}}}`
+	c := newChat(t, jsonHandler(t, 200, body, nil))
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	u := resp.Usage
+	if u.OutputTokens != 50 {
+		t.Errorf("OutputTokens = %d, want 50 (visible: wire 250 - reasoning 200)", u.OutputTokens)
+	}
+	if u.ReasoningTokens != 200 {
+		t.Errorf("ReasoningTokens = %d, want 200", u.ReasoningTokens)
+	}
+	if u.BillableOutputTokens != 250 {
+		t.Errorf("BillableOutputTokens = %d, want 250 (wire output_tokens preserved)", u.BillableOutputTokens)
+	}
+	// Identity: OutputTokens + ReasoningTokens == BillableOutputTokens.
+	if u.OutputTokens+u.ReasoningTokens != u.BillableOutputTokens {
+		t.Errorf("billable identity broken: %d + %d != %d",
+			u.OutputTokens, u.ReasoningTokens, u.BillableOutputTokens)
+	}
+}
+
+// TestUsageNonReasoningUnchanged is a regression guard: pre-ADR-0016
+// callers relied on Usage.OutputTokens being the wire output_tokens.
+// For non-reasoning responses (reasoning_tokens=0) the new semantics
+// produce the same number — back-compat for everyone except o-series
+// consumers.
+func TestUsageNonReasoningUnchanged(t *testing.T) {
+	c := newChat(t, jsonHandler(t, 200, respTextJSON, nil))
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	u := resp.Usage
+	if u.OutputTokens != 7 || u.ReasoningTokens != 0 || u.BillableOutputTokens != 7 {
+		t.Errorf("non-reasoning usage drifted: %+v", u)
+	}
+}

@@ -425,3 +425,33 @@ func TestNoLatestInFamilyMethod(t *testing.T) {
 		t.Fatal("vLLM *Client unexpectedly implements LatestInFamily; ADR-0015 says it should NOT")
 	}
 }
+
+// TestUsageReasoningTokensNormalized pins ADR-0016 for vLLM via Chat
+// Completions: if a served model exposes reasoning_tokens in its
+// usage details, OutputTokens is normalized to visible-only by
+// subtraction and BillableOutputTokens preserves the wire total. Most
+// served models won't populate this; future reasoning-capable models
+// inherit the right shape without an adapter change.
+func TestUsageReasoningTokensNormalized(t *testing.T) {
+	body := `{"id":"chatcmpl-r","object":"chat.completion","created":1730000000,"model":"test-model",
+"choices":[{"index":0,"finish_reason":"length","message":{"role":"assistant","content":"short"}}],
+"usage":{"prompt_tokens":40,"completion_tokens":250,"total_tokens":290,
+ "completion_tokens_details":{"reasoning_tokens":200}}}`
+	c := newClient(t, respondJSON(t, 200, body))
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	u := resp.Usage
+	if u.OutputTokens != 50 {
+		t.Errorf("OutputTokens = %d, want 50 (visible)", u.OutputTokens)
+	}
+	if u.ReasoningTokens != 200 {
+		t.Errorf("ReasoningTokens = %d, want 200", u.ReasoningTokens)
+	}
+	if u.BillableOutputTokens != 250 {
+		t.Errorf("BillableOutputTokens = %d, want 250", u.BillableOutputTokens)
+	}
+}

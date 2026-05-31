@@ -49,3 +49,4 @@ Copy `0001`'s structure as the template.
 | [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted |
 | [0013](0013-text-token-estimator.md) | Text-level token estimator (`EstimateTextTokens`) — neutral-biased free function distinct from the high-biased middleware estimator | Accepted |
 | [0015](0015-vllm-provider.md) | vLLM provider — leaf package, OpenAI Chat Completions wire shape (no auth allowed, no `LatestInFamily`, `Created` is local load time) | Accepted |
+| [0016](0016-usage-reasoning-tokens.md) | `Usage.ReasoningTokens` — surface reasoning-model thinking budget alongside visible output | Accepted |

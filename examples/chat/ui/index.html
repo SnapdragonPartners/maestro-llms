@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>maestro-llms — chat demo</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <h1>maestro-llms</h1>
+    <span class="subtitle">chat demo — pick a model, send messages</span>
+  </header>
+
+  <main>
+    <section class="controls">
+      <label for="model">Model</label>
+      <select id="model" aria-label="model picker"></select>
+      <button id="reset" type="button" title="Clear the conversation">Reset</button>
+    </section>
+
+    <section id="log" class="chat-log" aria-live="polite"></section>
+
+    <section class="composer">
+      <textarea id="input" placeholder="Type a message and press Enter (Shift+Enter for newline)"
+                rows="3" aria-label="message input"></textarea>
+      <div class="composer-bar">
+        <span id="estimate" class="estimate">~0 tokens</span>
+        <button id="send" type="button">Send</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="status"></span>
+    <span class="docs">
+      Wired with <code>middleware.RecommendedChat</code> + per-provider
+      <code>ListModels</code>. See <code>examples/chat/server.go</code>.
+    </span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

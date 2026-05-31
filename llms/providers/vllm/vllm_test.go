@@ -299,6 +299,77 @@ func TestToolChoiceMapping(t *testing.T) {
 	})
 }
 
+// TestRejectsMalformedMessages covers the conversion-time guard rails
+// brought into line with the other adapters: empty content slices, empty
+// text parts, and tool schemas that unmarshal to nil (e.g. literal `null`).
+// These would otherwise either reach the vLLM server as wire-invalid
+// requests or — for the nil schema — panic at write-into-nil-map.
+func TestRejectsMalformedMessages(t *testing.T) {
+	cases := []struct {
+		name    string
+		req     llms.ChatRequest
+		wantSub string
+	}{
+		{
+			name:    "user message with empty content slice",
+			req:     llms.ChatRequest{Messages: []llms.Message{{Role: llms.RoleUser}}},
+			wantSub: "user message has empty content",
+		},
+		{
+			name: "user message with empty text part",
+			req: llms.ChatRequest{Messages: []llms.Message{
+				{Role: llms.RoleUser, Content: []llms.ContentPart{{Type: llms.ContentText, Text: ""}}},
+			}},
+			wantSub: "user message has an empty text part",
+		},
+		{
+			name: "assistant message with empty content slice",
+			req: llms.ChatRequest{Messages: []llms.Message{
+				llms.UserText("hi"),
+				{Role: llms.RoleAssistant},
+			}},
+			wantSub: "assistant message has empty content",
+		},
+		{
+			name: "assistant message with empty text part",
+			req: llms.ChatRequest{Messages: []llms.Message{
+				llms.UserText("hi"),
+				{Role: llms.RoleAssistant, Content: []llms.ContentPart{{Type: llms.ContentText, Text: ""}}},
+			}},
+			wantSub: "assistant message has an empty text part",
+		},
+		{
+			name: "tool schema unmarshalling to nil (json null)",
+			req: llms.ChatRequest{
+				Messages: []llms.Message{llms.UserText("hi")},
+				Tools:    []llms.ToolDefinition{{Name: "broken", InputSchema: json.RawMessage(`null`)}},
+			},
+			wantSub: "must be a JSON object",
+		},
+		{
+			name: "tool schema with non-object type field",
+			req: llms.ChatRequest{
+				Messages: []llms.Message{llms.UserText("hi")},
+				Tools:    []llms.ToolDefinition{{Name: "broken", InputSchema: json.RawMessage(`{"type":"array"}`)}},
+			},
+			wantSub: `type must be "object"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newClient(t, respondJSON(t, 200, textCompletionJSON))
+			_, err := c.Complete(context.Background(), tc.req)
+			var pe *llms.ProviderError
+			if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+				t.Fatalf("want bad_request error, got %v", err)
+			}
+			if !strings.Contains(pe.Message, tc.wantSub) {
+				t.Errorf("error %q does not contain %q", pe.Message, tc.wantSub)
+			}
+		})
+	}
+}
+
 func TestRequiresToolsWithNoTools(t *testing.T) {
 	c := newClient(t, respondJSON(t, 200, textCompletionJSON))
 	_, err := c.Complete(context.Background(), llms.ChatRequest{

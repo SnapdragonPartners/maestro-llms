@@ -84,13 +84,22 @@ func (c *Client) buildMessages(req llms.ChatRequest, system string) ([]openai.Ch
 
 // joinTextParts collects all text parts in a single role-tagged message
 // into one string. Returns a bad-request error if any non-text part shows
-// up on a role that doesn't allow it.
+// up on a role that doesn't allow it, if any text part is empty, or if
+// the part list is empty. Empty user/assistant messages cause confusing
+// server-side errors on Chat Completions and other adapters reject them
+// here too.
 func joinTextParts(model string, parts []llms.ContentPart, role string) (string, *llms.ProviderError) {
+	if len(parts) == 0 {
+		return "", chatBadRequest(model, role+" message has empty content")
+	}
 	var b strings.Builder
 	for i := range parts {
 		p := parts[i]
 		if p.Type != llms.ContentText {
 			return "", chatBadRequest(model, role+" message content must be text-only")
+		}
+		if p.Text == "" {
+			return "", chatBadRequest(model, role+" message has an empty text part")
 		}
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
@@ -103,8 +112,15 @@ func joinTextParts(model string, parts []llms.ContentPart, role string) (string,
 // assistantMessage builds the assistant ChatCompletionMessageParamUnion,
 // combining any text parts with any tool_call parts into a single message.
 // In Chat Completions, an assistant turn can carry both `content` text and
-// `tool_calls` simultaneously.
+// `tool_calls` simultaneously, but must carry at least one of the two —
+// an empty content slice with no tool calls is rejected up front to avoid
+// emitting an empty assistant message on the wire (other adapters do the
+// same).
 func (c *Client) assistantMessage(parts []llms.ContentPart) (openai.ChatCompletionMessageParamUnion, *llms.ProviderError) {
+	if len(parts) == 0 {
+		return openai.ChatCompletionMessageParamUnion{},
+			chatBadRequest(c.model, "assistant message has empty content")
+	}
 	var (
 		text      strings.Builder
 		toolCalls []openai.ChatCompletionMessageToolCallParam
@@ -113,6 +129,10 @@ func (c *Client) assistantMessage(parts []llms.ContentPart) (openai.ChatCompleti
 		p := parts[i]
 		switch p.Type {
 		case llms.ContentText:
+			if p.Text == "" {
+				return openai.ChatCompletionMessageParamUnion{},
+					chatBadRequest(c.model, "assistant message has an empty text part")
+			}
 			if text.Len() > 0 {
 				text.WriteString("\n\n")
 			}
@@ -133,6 +153,12 @@ func (c *Client) assistantMessage(parts []llms.ContentPart) (openai.ChatCompleti
 			return openai.ChatCompletionMessageParamUnion{},
 				chatBadRequest(c.model, "assistant content part type not supported: "+string(p.Type))
 		}
+	}
+	if text.Len() == 0 && len(toolCalls) == 0 {
+		// Possible if every part typed Text was non-empty in shape but
+		// content stripped during build. Belt-and-suspenders.
+		return openai.ChatCompletionMessageParamUnion{},
+			chatBadRequest(c.model, "assistant message has neither text content nor tool calls")
 	}
 	asst := openai.ChatCompletionAssistantMessageParam{}
 	if text.Len() > 0 {
@@ -161,6 +187,12 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]openai.ChatCompletionToolPa
 			var raw map[string]any
 			if err := json.Unmarshal(t.InputSchema, &raw); err != nil {
 				return nil, chatBadRequest(c.model, "tool "+t.Name+": invalid input schema JSON: "+err.Error())
+			}
+			// Valid JSON (e.g. literal `null`, arrays unmarshalled into
+			// the wrong target, etc.) can leave raw nil; writing into a
+			// nil map panics. Reject up front.
+			if raw == nil {
+				return nil, chatBadRequest(c.model, "tool "+t.Name+`: input schema must be a JSON object, got non-object value`)
 			}
 			if tv, ok := raw["type"]; ok {
 				if s, _ := tv.(string); s != "object" {

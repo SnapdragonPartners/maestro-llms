@@ -9,11 +9,11 @@ vLLM is the canonical self-hosted GPU inference server in the
 OpenAI-compatible ecosystem. It serves arbitrary HuggingFace-format
 models behind an `OpenAI-shaped` HTTP API: `/v1/chat/completions`,
 `/v1/models`, optionally `/v1/embeddings` and (in recent versions)
-`/v1/responses`. Adding a vLLM provider was the first non-port feature
-queued after the v0.2 cut-over (per the
-`first-greenfield-feature-vllm` memory). Triggered now by a concrete
-dev instance at `100.102.40.8:8000` running `mistralai/Ministral-3-14B-
-Instruct-2512` on vLLM v0.21.0.
+`/v1/responses`. Adding a vLLM provider has been the queued first
+non-port feature since the v0.2 cut-over completed. Triggered now by
+access to a running vLLM v0.21.0 instance serving a tool-call-capable
+model (Mistral family), enough to verify both the wire shape and the
+end-to-end tool round-trip against a real server.
 
 Two structural choices to make:
 

@@ -29,8 +29,9 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   representation; each provider adapter translates to/from that provider's
   wire shape at the boundary. Tool calls and results are content parts, not
   side-channel fields, so a conversation round-trips unambiguously.
-- **Four chat providers**: Anthropic (Messages), OpenAI (Responses API),
-  Google (Gemini via genai), Ollama (hand-rolled `/api/chat`, no SDK).
+- **Five chat providers**: Anthropic (Messages), OpenAI (Responses API),
+  Google (Gemini via genai), Ollama (hand-rolled `/api/chat`, no SDK),
+  vLLM (OpenAI Chat Completions surface via openai-go; ADR-0015).
 - **Embeddings**: OpenAI and Gemini/Vertex (`gemini-embedding-001`),
   order/ID-preserving, per-request dimension override, task-typed
   (`EmbeddingTask`/`Title`, advisory).
@@ -140,6 +141,7 @@ Every provider is constructed the same way and returns an `llms.ChatClient`:
 | OpenAI (chat) | `openai.NewChat(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithHTTPClient` |
 | Google | `google.New(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries` |
 | Ollama | `ollama.New(...)` | `WithBaseURL`, `WithModel`, `WithHTTPClient` |
+| vLLM | `vllm.New(...)` | `WithBaseURL` (required), `WithModel` (required), `WithAPIKey` (optional — vLLM defaults to no auth), `WithHTTPClient` |
 
 `WithMaxRetries` controls *SDK-level* retries; the toolkit defaults provider
 SDK retries to 0 and expects you to use the retry middleware (below) for one
@@ -285,6 +287,41 @@ the same major version") filter the `ListModels` result themselves.
 Non-goals (binding, ADR-0012): not auto-update, not toolkit-side caching,
 not a stable-vs-preview filter, not a cross-provider abstraction over
 model identity. Apps build those on top.
+
+### vLLM (self-hosted)
+
+For self-hosted GPU inference via [vLLM](https://docs.vllm.ai). vLLM
+speaks the OpenAI-compatible **Chat Completions** surface — not the
+Responses API that the `openai` package uses — so it lives in its own
+leaf package ([ADR-0015](docs/adr/0015-vllm-provider.md)).
+
+```go
+import "github.com/SnapdragonPartners/maestro-llms/llms/providers/vllm"
+
+client, err := vllm.New(
+    vllm.WithBaseURL("http://my-vllm.internal:8000"),
+    vllm.WithModel("mistralai/Ministral-3-14B-Instruct-2512"),
+    // WithAPIKey is OPTIONAL: vLLM's default deployment has no auth.
+    // Set it only if your operator configured VLLM_API_KEY.
+)
+```
+
+Notes:
+
+- **No-auth by default** is the distinguishing feature vs hosted
+  providers — an empty `WithAPIKey` is a valid configuration, not a
+  config error.
+- **`ModelLister` is implemented** (`/v1/models`); **`LatestInFamily` is
+  not** — HuggingFace-style names have no canonical family. Same shape
+  as Ollama.
+- **`ModelInfo.Created` is the load time** on the vLLM instance, not
+  the upstream release date. Don't surface it as "released N days ago."
+- **Tool calling** works through the standard `tools` / `tool_choice`
+  request fields, but actual emission depends on the vLLM server's
+  per-model `--tool-call-parser` configuration (Mistral / Hermes /
+  Llama / Pythonic / etc.). The toolkit forwards; the server decides.
+- **Streaming is deferred** per ADR-0003. vLLM supports SSE; consumers
+  needing it should follow the streaming ADR when it lands.
 
 ### Embeddings
 
@@ -576,9 +613,11 @@ credentials/host are present (so any subset works).
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-4o-mini`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`) |
 | Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`) |
 | Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`) |
+| vLLM | `MAESTRO_VLLM` (full base URL, e.g. `http://my-vllm:8000`) | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
 
 ```sh
 MAESTRO_ANTHROPIC_API_KEY=sk-ant-… OPENAI_API_KEY=sk-… GEMINI_API_KEY=… make test-integration
+MAESTRO_VLLM=http://100.x.x.x:8000 make test-integration   # vLLM live test against your own instance
 ```
 
 The `MAESTRO_ANTHROPIC_API_KEY` fallback lets you keep `ANTHROPIC_API_KEY`

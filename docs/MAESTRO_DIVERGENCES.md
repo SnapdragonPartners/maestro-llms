@@ -65,6 +65,18 @@ cut-over validation) vs **Internal** (no observable change — informational).
 | OL3 | Behavioral | `done_reason` canonicalized to `end_turn`/`max_tokens`; usage dropped | Raw `done_reason` as `StopReason`; usage populated (`prompt_eval_count`/`eval_count`) | Accurate stop/accounting, consistent with other providers | Maestro consumers reading the old canonical strings must map raw Ollama reasons |
 | OL4 | Internal | Error classified by string-matching ("connection refused"/"not found") | Real HTTP status via shared `apierr` (typed `httpStatusErr`); transport failures → unknown(retryable) | Consistent typed classification | None observable (connection-refused stays retryable, as before) |
 
+## vLLM chat — greenfield (ADR-0015)
+
+vLLM is a greenfield addition with no Maestro reference implementation, so these rows are **informational** (notes a cut-over / new consumer should know about), not acceptance-gating.
+
+| # | Kind | Maestro | maestro-llms | Why | Cut-over action |
+|---|---|---|---|---|---|
+| V1 | Informational | (n/a — Maestro had no vLLM client) | OpenAI-compatible Chat Completions surface via openai-go SDK; **API key is optional** (vLLM's default deployment has no auth, unlike OpenAI/Anthropic/Google) | vLLM is the only supported provider whose normal mode is no-auth; the toolkit's general "missing key → config error at construction" stance is loosened just for this provider | Confirm acceptable; if a consumer wants strict-auth, they pass `WithAPIKey` and treat empty as their own config error |
+| V2 | Informational | (n/a) | `ListModels` implemented but no `LatestInFamily` helper — HuggingFace-style names (`mistralai/Ministral-3-14B-Instruct-2512`) have no canonical family convention | Mirrors Ollama (OL-pattern); honest missing-capability via type assertion | Consumers reading `LatestInFamily` from other providers must type-assert per-provider, not assume universal availability |
+| V3 | Informational | (n/a) | `ModelInfo.Created` carries the model **load time on the vLLM instance**, NOT the upstream HuggingFace release date | Same shape as Ollama's `modified_at` caveat; the vLLM `/v1/models` `created` field is unix-seconds at server registration | Do not surface this as "released N days ago" to end users |
+| V4 | Informational | (n/a) | Tool calling is forwarded through standard `tools`/`tool_choice`; whether the **model** actually emits tool calls depends on vLLM's per-model `--tool-call-parser` server config | Toolkit can't gate on this at construction time; it's a server-side capability | Live integration test (`MAESTRO_VLLM`) `t.Skip`s on tool-use if the model declines to emit; mirrors Ollama's model-dependent skip |
+| V5 | Informational | (n/a) | Live integration test gated behind `MAESTRO_VLLM` env (full base URL); optional `MAESTRO_VLLM_MODEL` overrides the model ID, defaulting to the first one `/v1/models` reports | Mirrors Mac-Ollama local-only pattern; CI runs hermetic httptest unit tests only | If CI needs to reach a vLLM box on a private network, add `tailscale-action` (or equivalent) to the workflow — separate decision per ADR-0015 |
+
 ## Middleware (v0.3)
 
 Decisions recorded by ADR-0003 / ADR-0004 / ADR-0005; rows added here when introduced (PR 0 records the design; PRs 1/3/4/5 realize them).

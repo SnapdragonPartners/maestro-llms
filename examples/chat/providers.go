@@ -2,14 +2,18 @@ package main
 
 // providers.go is the per-provider env detection + model picking glue.
 // One entry per provider in the dropdown — we pick a sensible default
-// family per hosted provider and surface its latest, and for Ollama /
-// vLLM we just take the first model the server reports.
+// family per hosted provider and surface its latest. For Ollama we pick
+// the most-recently-pulled local model (what the developer is most
+// likely actively iterating on); for vLLM we take the first model the
+// server reports (vLLM usually serves exactly one).
 //
 // Every provider follows the same template:
 //
 //   1. Check env for the right credentials/endpoint; bail if missing.
 //   2. Construct the chat client.
-//   3. Call ListModels and pick one model worth surfacing.
+//   3. Call ListModels (under its own per-provider deadline so one slow
+//      provider can't starve the others) and pick one model worth
+//      surfacing.
 //
 // This file is intentionally short on abstraction so a developer can
 // read it top-to-bottom and see exactly how each provider wires up.
@@ -100,7 +104,9 @@ func anthropicOption(ctx context.Context, logf func(string, ...any)) (ModelOptio
 		logf("anthropic: construct failed: %v", err)
 		return ModelOption{}, false
 	}
-	models, err := c.ListModels(ctx)
+	lctx, cancel := withListTimeout(ctx)
+	defer cancel()
+	models, err := c.ListModels(lctx)
 	if err != nil {
 		logf("anthropic: ListModels failed: %v", err)
 		return ModelOption{}, false
@@ -133,7 +139,9 @@ func openAIOption(ctx context.Context, logf func(string, ...any)) (ModelOption, 
 		logf("openai: construct failed: %v", err)
 		return ModelOption{}, false
 	}
-	models, err := c.ListModels(ctx)
+	lctx, cancel := withListTimeout(ctx)
+	defer cancel()
+	models, err := c.ListModels(lctx)
 	if err != nil {
 		logf("openai: ListModels failed: %v", err)
 		return ModelOption{}, false
@@ -163,7 +171,9 @@ func googleOption(ctx context.Context, logf func(string, ...any)) (ModelOption, 
 		logf("google: construct failed: %v", err)
 		return ModelOption{}, false
 	}
-	models, err := c.ListModels(ctx)
+	lctx, cancel := withListTimeout(ctx)
+	defer cancel()
+	models, err := c.ListModels(lctx)
 	if err != nil {
 		logf("google: ListModels failed: %v", err)
 		return ModelOption{}, false
@@ -194,7 +204,9 @@ func ollamaOption(ctx context.Context, logf func(string, ...any)) (ModelOption, 
 		logf("ollama: construct failed: %v", err)
 		return ModelOption{}, false
 	}
-	models, err := c.ListModels(ctx)
+	lctx, cancel := withListTimeout(ctx)
+	defer cancel()
+	models, err := c.ListModels(lctx)
 	if err != nil {
 		// Likely just "ollama not running" — common dev case, log quietly.
 		logf("ollama: ListModels failed (server probably not running): %v", err)
@@ -204,10 +216,13 @@ func ollamaOption(ctx context.Context, logf func(string, ...any)) (ModelOption, 
 		return ModelOption{}, false
 	}
 	// Pick whichever model has been most recently pulled — that's the
-	// one the developer is most likely actively iterating on.
+	// one the developer is most likely actively iterating on. Tie-break
+	// by lexical ID descending so the choice is deterministic when two
+	// models share a Created time (mirrors the toolkit LatestInFamily
+	// helpers' tie-break).
 	newest := models[0]
 	for _, m := range models {
-		if m.Created.After(newest.Created) {
+		if m.Created.After(newest.Created) || (m.Created.Equal(newest.Created) && m.ID > newest.ID) {
 			newest = m
 		}
 	}
@@ -229,7 +244,9 @@ func vllmOption(ctx context.Context, logf func(string, ...any)) (ModelOption, bo
 		logf("vllm: construct failed: %v", err)
 		return ModelOption{}, false
 	}
-	models, err := c.ListModels(ctx)
+	lctx, cancel := withListTimeout(ctx)
+	defer cancel()
+	models, err := c.ListModels(lctx)
 	if err != nil {
 		logf("vllm: ListModels failed: %v", err)
 		return ModelOption{}, false
@@ -254,8 +271,11 @@ func modelOption(providerName, vendorLabel, modelID string) ModelOption {
 }
 
 // newestByCreated returns the newest ModelInfo whose Family matches fam,
-// ordered by Created descending. Used for providers whose `created` is a
-// real release timestamp (Anthropic, OpenAI).
+// ordered by Created descending with a lexical-ID tie-break. The
+// tie-break mirrors what the toolkit's LatestInFamily helpers do (e.g.
+// anthropic.LatestInFamily), so a catalog returning equal or zero
+// creation times produces a deterministic, stable selection rather than
+// leaking API ordering into the dropdown.
 func newestByCreated(models []llms.ModelInfo, fam string) (llms.ModelInfo, bool) {
 	var (
 		newest llms.ModelInfo
@@ -265,9 +285,14 @@ func newestByCreated(models []llms.ModelInfo, fam string) (llms.ModelInfo, bool)
 		if m.Family != fam {
 			continue
 		}
-		if !found || m.Created.After(newest.Created) {
+		switch {
+		case !found:
 			newest = m
 			found = true
+		case m.Created.After(newest.Created):
+			newest = m
+		case m.Created.Equal(newest.Created) && m.ID > newest.ID:
+			newest = m
 		}
 	}
 	return newest, found

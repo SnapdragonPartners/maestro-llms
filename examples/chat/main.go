@@ -43,9 +43,14 @@ func main() {
 	// this once at startup so the dropdown is ready when the user loads
 	// the page; live re-detection on every refresh would be wasted work
 	// for a single-user demo.
-	ctx, cancel := withListTimeout(context.Background())
-	defer cancel()
-	options := detectAvailable(ctx, logger.Printf)
+	//
+	// We deliberately pass an UNBOUNDED context here. Each provider
+	// detector applies its own per-call deadline inside providers.go,
+	// so a slow or dead provider can't eat the budget for the others.
+	// Total startup is bounded by sum-of-per-provider-timeouts in the
+	// worst case (every provider configured but unreachable); typically
+	// well under a second.
+	options := detectAvailable(context.Background(), logger.Printf)
 	if len(options) == 0 {
 		logger.Println("no providers detected. Set at least one of:")
 		logger.Println("  ANTHROPIC_API_KEY  (or MAESTRO_ANTHROPIC_API_KEY)")

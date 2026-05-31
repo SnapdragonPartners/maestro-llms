@@ -5,8 +5,8 @@ through one UI. It:
 
 - Reads provider credentials from the environment.
 - Picks one model per reachable provider — latest in each provider's
-  preferred family for the hosted ones; the locally-pulled / served model
-  for Ollama and vLLM.
+  preferred family for the hosted ones; the most-recently-pulled local
+  model for Ollama; the first served model for vLLM.
 - Serves a single-page chat UI on `http://localhost:8765` with a dropdown
   populated from those models.
 - Wires each completion through `middleware.RecommendedChat` so the demo
@@ -41,9 +41,12 @@ listing the env vars it looks for and exits 1.
 
 - `providers.go` — env detection + model picking. One function per
   provider, all following the same shape: env check → construct client →
-  `ListModels` → pick a model. The hosted providers iterate a small
-  preferred-family list; Ollama and vLLM just take the first available
-  model.
+  `ListModels` (under a per-provider deadline) → pick a model. The
+  hosted providers iterate a small preferred-family list and surface
+  the newest in the first family that has any models. Ollama picks the
+  most-recently-pulled local model (the developer's likely working
+  set); vLLM takes the first model the server reports (vLLM usually
+  serves exactly one).
 - `server.go` — HTTP handlers and the per-request `Complete` wiring. The
   important block is the `middleware.RecommendedChat(...)` call: that is
   exactly what a real service would do.

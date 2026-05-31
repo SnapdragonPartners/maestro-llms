@@ -369,7 +369,10 @@ func toChatResponse(resp *wireResponse) llms.ChatResponse {
 		Usage: llms.Usage{
 			InputTokens:  resp.PromptEvalCount,
 			OutputTokens: resp.EvalCount,
-			TotalTokens:  resp.PromptEvalCount + resp.EvalCount,
+			// Ollama exposes no reasoning/thinking split, so
+			// BillableOutputTokens mirrors OutputTokens. ADR-0016.
+			BillableOutputTokens: resp.EvalCount,
+			TotalTokens:          resp.PromptEvalCount + resp.EvalCount,
 		},
 		Raw: resp,
 	}

@@ -286,21 +286,43 @@ func (c *Client) toParams(req llms.ChatRequest) (openai.ChatCompletionNewParams,
 	return params, nil
 }
 
+// buildUsage maps a ChatCompletion's wire usage to llms.Usage with the
+// ADR-0016 normalization: OpenAI Chat Completions' wire CompletionTokens
+// is total (visible + reasoning) and CompletionTokensDetails.ReasoningTokens
+// is the subset. We surface OutputTokens as visible-only by subtracting
+// reasoning, and the wire total as BillableOutputTokens. Most vLLM-served
+// models will have ReasoningTokens=0 because they aren't reasoning models;
+// a future reasoning-capable model served via vLLM benefits from this
+// without a code change.
+func buildUsage(resp *openai.ChatCompletion) llms.Usage {
+	billable := int(resp.Usage.CompletionTokens)
+	reasoning := int(resp.Usage.CompletionTokensDetails.ReasoningTokens)
+	visible := billable - reasoning
+	if visible < 0 {
+		// Defensive: should never happen per the documented schema.
+		visible = 0
+	}
+	return llms.Usage{
+		InputTokens:          int(resp.Usage.PromptTokens),
+		OutputTokens:         visible,
+		ReasoningTokens:      reasoning,
+		BillableOutputTokens: billable,
+		TotalTokens:          int(resp.Usage.TotalTokens),
+		ProviderRequestID:    resp.ID,
+	}
+}
+
 // toResponse maps a Chat Completion result to the app-neutral ChatResponse.
 // Message is the source of truth; Text and ToolCalls mirror it.
 // FinishReason passes through verbatim (vLLM uses OpenAI's set:
 // "stop"/"length"/"tool_calls"/"content_filter").
 func (c *Client) toResponse(resp *openai.ChatCompletion) llms.ChatResponse {
+	usage := buildUsage(resp)
 	if len(resp.Choices) == 0 {
 		return llms.ChatResponse{
 			Message: llms.Message{Role: llms.RoleAssistant},
-			Usage: llms.Usage{
-				InputTokens:       int(resp.Usage.PromptTokens),
-				OutputTokens:      int(resp.Usage.CompletionTokens),
-				TotalTokens:       int(resp.Usage.TotalTokens),
-				ProviderRequestID: resp.ID,
-			},
-			Raw: resp,
+			Usage:   usage,
+			Raw:     resp,
 		}
 	}
 	choice := resp.Choices[0]
@@ -328,12 +350,7 @@ func (c *Client) toResponse(resp *openai.ChatCompletion) llms.ChatResponse {
 		Text:       choice.Message.Content,
 		ToolCalls:  toolCalls,
 		StopReason: llms.StopReason(choice.FinishReason),
-		Usage: llms.Usage{
-			InputTokens:       int(resp.Usage.PromptTokens),
-			OutputTokens:      int(resp.Usage.CompletionTokens),
-			TotalTokens:       int(resp.Usage.TotalTokens),
-			ProviderRequestID: resp.ID,
-		},
-		Raw: resp,
+		Usage:      usage,
+		Raw:        resp,
 	}
 }

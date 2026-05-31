@@ -383,10 +383,20 @@ func toChatResponse(result *genai.GenerateContentResponse) llms.ChatResponse {
 
 	usage := llms.Usage{}
 	if u := result.UsageMetadata; u != nil {
+		// ThoughtsTokenCount is Gemini 3-class reasoning models'
+		// "thinking" budget — it counts against MaxOutputTokens
+		// alongside CandidatesTokenCount, so length-truncations on
+		// small visible outputs are explained by surfacing it as
+		// ReasoningTokens (ADR-0016). genai documents
+		// TotalTokenCount = prompt + candidates + tool_use + thoughts.
+		visible := int(u.CandidatesTokenCount)
+		reasoning := int(u.ThoughtsTokenCount)
 		usage = llms.Usage{
-			InputTokens:  int(u.PromptTokenCount),
-			OutputTokens: int(u.CandidatesTokenCount),
-			TotalTokens:  int(u.TotalTokenCount),
+			InputTokens:          int(u.PromptTokenCount),
+			OutputTokens:         visible,
+			ReasoningTokens:      reasoning,
+			BillableOutputTokens: visible + reasoning,
+			TotalTokens:          int(u.TotalTokenCount),
 		}
 	}
 

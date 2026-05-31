@@ -346,3 +346,75 @@ func TestNewConfigErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestUsageReasoningTokens pins ADR-0016: ThoughtsTokenCount surfaces
+// as Usage.ReasoningTokens. This is the path that explains why a
+// Gemini reasoning model can hit MAX_TOKENS with a small visible
+// OutputTokens — the bulk of the budget went to thinking. Prior to
+// ADR-0016 this number was silently dropped.
+func TestUsageReasoningTokens(t *testing.T) {
+	// Simulate a Gemini 3-class reasoning response: small visible
+	// output (36), large thoughts (988), MAX_TOKENS finish reason.
+	body := `{"candidates":[{"content":{"role":"model","parts":[
+{"text":"short visible answer"}]},"finishReason":"MAX_TOKENS"}],
+"usageMetadata":{"promptTokenCount":285,"candidatesTokenCount":36,
+"thoughtsTokenCount":988,"totalTokenCount":1309},
+"responseId":"resp_reasoning"}`
+	c := newClient(t, jsonHandler(t, 200, body))
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("explain something")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	u := resp.Usage
+	if u.InputTokens != 285 {
+		t.Errorf("InputTokens = %d, want 285", u.InputTokens)
+	}
+	if u.OutputTokens != 36 {
+		t.Errorf("OutputTokens = %d, want 36 (visible only)", u.OutputTokens)
+	}
+	if u.ReasoningTokens != 988 {
+		t.Errorf("ReasoningTokens = %d, want 988 (thoughtsTokenCount)", u.ReasoningTokens)
+	}
+	if u.BillableOutputTokens != 36+988 {
+		t.Errorf("BillableOutputTokens = %d, want %d (candidates+thoughts)",
+			u.BillableOutputTokens, 36+988)
+	}
+	if u.TotalTokens != 1309 {
+		t.Errorf("TotalTokens = %d, want 1309 (provider sum)", u.TotalTokens)
+	}
+	// Budget math: input + output + reasoning should reconcile to total.
+	if u.InputTokens+u.OutputTokens+u.ReasoningTokens != u.TotalTokens {
+		t.Errorf("budget math broken: %d + %d + %d != %d",
+			u.InputTokens, u.OutputTokens, u.ReasoningTokens, u.TotalTokens)
+	}
+	// Billable identity: OutputTokens + ReasoningTokens == BillableOutputTokens.
+	if u.OutputTokens+u.ReasoningTokens != u.BillableOutputTokens {
+		t.Errorf("billable identity broken: %d + %d != %d",
+			u.OutputTokens, u.ReasoningTokens, u.BillableOutputTokens)
+	}
+	// The MAX_TOKENS stop now has a story (988 reasoning tokens) rather
+	// than looking like a confusing "36 max_tokens".
+	if resp.StopReason != "MAX_TOKENS" {
+		t.Errorf("StopReason = %q, want MAX_TOKENS", resp.StopReason)
+	}
+}
+
+// TestUsageReasoningTokensZeroForNonReasoning verifies the field
+// stays zero for the common non-reasoning case (no thoughtsTokenCount
+// in the response). Existing callers that don't read ReasoningTokens
+// are unaffected.
+func TestUsageReasoningTokensZeroForNonReasoning(t *testing.T) {
+	c := newClient(t, jsonHandler(t, 200, respTextJSON))
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Usage.ReasoningTokens != 0 {
+		t.Errorf("ReasoningTokens = %d, want 0 (no thoughts in response)",
+			resp.Usage.ReasoningTokens)
+	}
+}

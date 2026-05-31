@@ -247,16 +247,33 @@ func toChatResponse(resp *responses.Response) llms.ChatResponse {
 	}
 	text := textMirror.String()
 
+	// ADR-0016 cross-provider normalization: OpenAI's wire output_tokens
+	// is the TOTAL (visible + reasoning) and reasoning_tokens is the
+	// subset. We surface OutputTokens as visible-only by subtracting
+	// reasoning, and expose the wire total as BillableOutputTokens for
+	// cost math.
+	billable := int(resp.Usage.OutputTokens)
+	reasoning := int(resp.Usage.OutputTokensDetails.ReasoningTokens)
+	visible := billable - reasoning
+	if visible < 0 {
+		// Defensive: should never happen per the documented OpenAI
+		// schema, but a future API change that broke the relationship
+		// shouldn't yield a negative visible count.
+		visible = 0
+	}
+
 	return llms.ChatResponse{
 		Message:    llms.Message{Role: llms.RoleAssistant, Content: parts},
 		Text:       text,
 		ToolCalls:  toolCalls,
 		StopReason: openaiStopReason(resp),
 		Usage: llms.Usage{
-			InputTokens:       int(resp.Usage.InputTokens),
-			OutputTokens:      int(resp.Usage.OutputTokens),
-			TotalTokens:       int(resp.Usage.TotalTokens),
-			ProviderRequestID: resp.ID,
+			InputTokens:          int(resp.Usage.InputTokens),
+			OutputTokens:         visible,
+			ReasoningTokens:      reasoning,
+			BillableOutputTokens: billable,
+			TotalTokens:          int(resp.Usage.TotalTokens),
+			ProviderRequestID:    resp.ID,
 		},
 		Raw: resp,
 	}

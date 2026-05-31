@@ -87,14 +87,16 @@ type apiMessage struct {
 }
 
 type chatResponse struct {
-	Text         string `json:"text"`
-	Model        string `json:"model"`      // raw model ID from the response; shown in the UI footer
-	StopReason   string `json:"stopReason"` // RAW provider finish reason (cross-provider variance is intentional; UI normalizes for display)
-	InputTokens  int    `json:"inputTokens"`
-	OutputTokens int    `json:"outputTokens"`
-	TotalTokens  int    `json:"totalTokens"`
-	LatencyMS    int64  `json:"latencyMs"`
-	Error        string `json:"error,omitempty"`
+	Text                 string `json:"text"`
+	Model                string `json:"model"`                // raw model ID from the response; shown in the UI footer
+	StopReason           string `json:"stopReason"`           // RAW provider finish reason (cross-provider variance is intentional; UI normalizes for display)
+	InputTokens          int    `json:"inputTokens"`
+	OutputTokens         int    `json:"outputTokens"`         // visible only (ADR-0016 normalization)
+	ReasoningTokens      int    `json:"reasoningTokens"`      // ADR-0016 — non-visible thinking budget, zero for non-reasoning models
+	BillableOutputTokens int    `json:"billableOutputTokens"` // ADR-0016 — what the provider bills as "output"; surfaced for DevTools / cost math
+	TotalTokens          int    `json:"totalTokens"`
+	LatencyMS            int64  `json:"latencyMs"`
+	Error                string `json:"error,omitempty"`
 }
 
 func handleChat(w http.ResponseWriter, r *http.Request, options []ModelOption, logger *log.Logger) {
@@ -172,13 +174,15 @@ func handleChat(w http.ResponseWriter, r *http.Request, options []ModelOption, l
 	}
 
 	writeJSON(w, http.StatusOK, chatResponse{
-		Text:         resp.Text,
-		Model:        opt.Model,
-		StopReason:   string(resp.StopReason),
-		InputTokens:  resp.Usage.InputTokens,
-		OutputTokens: resp.Usage.OutputTokens,
-		TotalTokens:  resp.Usage.TotalTokens,
-		LatencyMS:    latency.Milliseconds(),
+		Text:                 resp.Text,
+		Model:                opt.Model,
+		StopReason:           string(resp.StopReason),
+		InputTokens:          resp.Usage.InputTokens,
+		OutputTokens:         resp.Usage.OutputTokens,
+		ReasoningTokens:      resp.Usage.ReasoningTokens,
+		BillableOutputTokens: resp.Usage.BillableOutputTokens,
+		TotalTokens:          resp.Usage.TotalTokens,
+		LatencyMS:            latency.Milliseconds(),
 	})
 }
 

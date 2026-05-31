@@ -100,7 +100,15 @@
       }
       history.push({ role: "assistant", text: data.text });
       const stop = prettyStopReason(data.stopReason);
-      const meta = `${data.model || "?"} · ${stop} · ${data.inputTokens}/${data.outputTokens} tokens · ${data.latencyMs} ms`;
+      // ADR-0016: reasoning-class models meter "thinking" tokens
+      // separately from visible output. Show them in the footer only
+      // when present so the meta stays terse for non-reasoning models
+      // — and so a "max tokens" stop on a small visible output makes
+      // sense (the thinking budget is where the cap actually went).
+      const reasoning = data.reasoningTokens > 0
+        ? ` · ${data.reasoningTokens} reasoning`
+        : "";
+      const meta = `${data.model || "?"} · ${stop} · ${data.inputTokens}/${data.outputTokens} tokens${reasoning} · ${data.latencyMs} ms`;
       appendMessage("assistant", data.text || "(empty response)", meta);
     } catch (err) {
       appendError("network error: " + err.message);

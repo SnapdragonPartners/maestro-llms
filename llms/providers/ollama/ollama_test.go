@@ -55,6 +55,11 @@ func TestChatTextResponse(t *testing.T) {
 	if resp.Usage.InputTokens != 11 || resp.Usage.OutputTokens != 7 || resp.Usage.TotalTokens != 18 {
 		t.Fatalf("usage mapping wrong: %+v", resp.Usage)
 	}
+	// ADR-0016: Ollama has no reasoning/thinking split, so
+	// BillableOutputTokens mirrors OutputTokens.
+	if resp.Usage.BillableOutputTokens != 7 || resp.Usage.ReasoningTokens != 0 {
+		t.Errorf("billable/reasoning wrong: %+v", resp.Usage)
+	}
 	if resp.Raw == nil || c.Model().Provider != "ollama" || c.Model().Name != "m" {
 		t.Fatalf("raw/model wrong")
 	}

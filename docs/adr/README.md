@@ -48,3 +48,4 @@ Copy `0001`'s structure as the template.
 | [0011](0011-toolloop-helper.md) | Tool loop helper — scope, API, and non-goals | Accepted |
 | [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted |
 | [0013](0013-text-token-estimator.md) | Text-level token estimator (`EstimateTextTokens`) — neutral-biased free function distinct from the high-biased middleware estimator | Accepted |
+| [0015](0015-vllm-provider.md) | vLLM provider — leaf package, OpenAI Chat Completions wire shape (no auth allowed, no `LatestInFamily`, `Created` is local load time) | Accepted |

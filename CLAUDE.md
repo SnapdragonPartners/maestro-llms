@@ -28,14 +28,14 @@ Planned module `github.com/SnapdragonPartners/maestro-llms`, core import name `l
 llms/                core interfaces and shared types (ChatClient, EmbeddingClient, Message, errors)
 llms/middleware/     provider-neutral middleware (timeout, retry, circuit, ratelimit, metrics, validation)
 llms/ratelimit/      Limiter/Reservation interfaces + optional in-memory limiter
-llms/providers/{anthropic,openai,google,ollama}/   one package per provider, imported only if used
+llms/providers/{anthropic,openai,google,ollama,vllm}/   one package per provider, imported only if used
 llms/testllm/        deterministic FakeChatClient / FakeEmbeddingClient
 ```
 
 Load-bearing structural decisions:
 
 - **Provider packages are leaf imports.** The core `llms` package must not pull provider SDKs. Apps import only the provider packages they use.
-- **One app-neutral conversation model.** `Message`/`ContentPart` is the single representation; each provider adapter translates it to/from that provider's wire shape at the provider boundary (e.g. Anthropic encodes `RoleTool` results as user-role content blocks; OpenAI uses tool-role messages). The Maestro implementation is the tested reference for this mapping across all four providers — adapt it, don't reinvent provider behavior.
+- **One app-neutral conversation model.** `Message`/`ContentPart` is the single representation; each provider adapter translates it to/from that provider's wire shape at the provider boundary (e.g. Anthropic encodes `RoleTool` results as user-role content blocks; OpenAI uses tool-role messages). The Maestro implementation is the tested reference for the four ported providers (Anthropic, OpenAI Responses, Google, Ollama) — adapt it, don't reinvent provider behavior. vLLM (ADR-0015) is greenfield: no Maestro reference, designed fresh against the OpenAI Chat Completions wire shape via openai-go with a configurable base URL.
 - **Middleware is `func(Client) Client`, composed via `ChainChat`/`ChainEmbeddings`; first argument is outermost.** Composition order is semantically significant (see the spec's recommended order and the retry-vs-reservation tradeoff). Changing order changes correctness, not just performance.
 - **Rate limiting is a reservation protocol** (`Reserve` → `Commit` actuals → always `Release`), not a concrete limiter. The in-memory limiter ships here; the distributed (Postgres) one is implemented in Morris first and only promoted here if it stays app-neutral. `Release` must run on a context that survives request cancellation (`context.WithoutCancel`).
 - **Capability growth via optional interfaces + type assertion**, never by widening core interfaces. This applies to `StreamingChatClient` and `LimiterStats`. Adding a method to `ChatClient` or `Limiter` is a breaking change for every provider, fake, and middleware — treat it as such.

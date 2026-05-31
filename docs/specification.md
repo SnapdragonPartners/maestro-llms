@@ -810,6 +810,18 @@ Chat client for local development, required for the Maestro cut-over
 (v0.2). Extracted from Maestro's tested `github.com/ollama/ollama/api`
 implementation. Not needed by Morris.
 
+### vLLM
+
+Chat client for self-hosted GPU inference (v0.7 / ADR-0015). Speaks the
+OpenAI-compatible Chat Completions endpoint (`/v1/chat/completions`),
+NOT the Responses API used by the sibling `openai` package. Uses the
+openai-go SDK pointed at a configurable base URL; no new dependency.
+API key is optional (vLLM's default deployment has no auth). Implements
+`ModelLister` but not `LatestInFamily` — HuggingFace-style model
+identifiers have no canonical family convention (same shape as Ollama).
+`ModelInfo.Created` is the model load time on the vLLM instance, not
+the upstream release date.
+
 ## Configuration Boundary
 
 The package should accept already-resolved provider configs.

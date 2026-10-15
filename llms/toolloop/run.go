@@ -30,7 +30,8 @@ type ConfigError struct {
 func (e *ConfigError) Error() string { return "toolloop: " + e.Reason }
 
 // Run performs the synchronous tool loop described in
-// docs/toolloop-proposal.md / ADR-0011. It always returns an Outcome, even
+// docs/toolloop-proposal.md / ADR-0011, with terminal tools and the
+// executed limit turn from ADR-0017. It always returns an Outcome, even
 // on validation or provider failure, so callers can inspect the partial
 // transcript without unwrapping a second error.
 func Run(ctx context.Context, cfg Config) Outcome {
@@ -125,17 +126,40 @@ func Run(ctx context.Context, cfg Config) Outcome {
 			}
 		}
 
-		// Step 10: this response counts as a tool-calling iteration. We
-		// increment BEFORE the limit check so Iterations on a
-		// MaxIterations outcome reflects "this many tool-calling responses
-		// observed", including the unresolved one we just appended.
+		// Step 10: this response counts as a tool-calling iteration.
 		iterIdx++
 
-		// Step 11: pre-execute limit stop. The limit-hitting assistant
-		// message is already in transcript (step 7); its tool calls are
-		// deliberately NOT executed. The returned transcript ends with an
-		// unresolved tool-call message and is diagnostic state, not a
-		// transcript callers can feed directly back into Complete.
+		// Steps 11-13: execute this assistant turn's tool calls in order.
+		// Results are appended in the same order as resp.ToolCalls to keep
+		// the pairing deterministic for validation middleware. A Stop
+		// result ends the turn like a return statement (ADR-0017); any
+		// later calls get synthesized not-executed results.
+		results, terminal, execOutcome := executeCalls(ctx, &cfg, resp, iterIdx, toolByName, transcript, usage)
+		if execOutcome != nil {
+			return *execOutcome
+		}
+
+		// Step 14: append exactly one tool-result message containing one
+		// result per tool call in the assistant response.
+		transcript = append(transcript, llms.ToolResultMessage(results...))
+
+		// Step 15: terminal stop. Checked before the limit so a terminal
+		// call on the limit-hitting turn is honored (ADR-0017).
+		if terminal != nil {
+			return Outcome{
+				Kind:           OutcomeTerminalTool,
+				Response:       resp,
+				Messages:       transcript,
+				TotalUsage:     usage,
+				Iterations:     iterIdx,
+				TerminalCall:   terminal.call,
+				TerminalResult: terminal.result,
+			}
+		}
+
+		// Step 16: limit stop. The limit-hitting turn's tools have run and
+		// their results are appended, so the transcript is well-formed;
+		// we just make no further provider call.
 		if iterIdx >= maxIter {
 			return Outcome{
 				Kind:       OutcomeMaxIterations,
@@ -146,28 +170,23 @@ func Run(ctx context.Context, cfg Config) Outcome {
 			}
 		}
 
-		// Steps 12-14: execute every tool call in this assistant turn,
-		// in order. Results are appended in the same order as resp.ToolCalls
-		// to keep the pairing deterministic for validation middleware.
-		results, execOutcome := executeCalls(ctx, &cfg, resp, iterIdx, toolByName, transcript, usage)
-		if execOutcome != nil {
-			return *execOutcome
-		}
-
-		// Step 15: append exactly one tool-result message containing one
-		// result per tool call in the assistant response.
-		transcript = append(transcript, llms.ToolResultMessage(results...))
-
-		// Step 16: loop.
+		// Step 17: loop.
 	}
 }
 
+// terminalStop records the call whose executor set ToolResult.Stop.
+type terminalStop struct {
+	call   llms.ToolCall
+	result ToolResult
+}
+
 // executeCalls runs the inner for-loop over a single assistant turn's tool
-// calls. It returns (results, nil) on success — caller appends the
-// ToolResultMessage and continues — or (_, &outcome) to short-circuit the
-// loop with Canceled or ToolError. iterIdx is the post-increment iteration
-// index (1-based after step 10), so iterIdx-1 is the IterationEvent.Index
-// of the assistant turn whose calls we are executing.
+// calls. It returns (results, terminal, nil) on success — caller appends
+// the ToolResultMessage, then stops if terminal is non-nil or continues
+// otherwise — or (_, _, &outcome) to short-circuit the loop with Canceled
+// or ToolError. iterIdx is the post-increment iteration index (1-based
+// after step 10), so iterIdx-1 is the IterationEvent.Index of the
+// assistant turn whose calls we are executing.
 func executeCalls(
 	ctx context.Context,
 	cfg *Config,
@@ -176,7 +195,7 @@ func executeCalls(
 	toolByName map[string]Tool,
 	transcript []llms.Message,
 	usage llms.Usage,
-) ([]llms.ToolResult, *Outcome) {
+) ([]llms.ToolResult, *terminalStop, *Outcome) {
 	results := make([]llms.ToolResult, len(resp.ToolCalls))
 	for i := range resp.ToolCalls {
 		// Defensive copy: resp.ToolCalls[i] is a shallow value, but
@@ -203,6 +222,9 @@ func executeCalls(
 			})
 		}
 
+		if execErr == nil && result.Stop && result.IsError {
+			execErr = fmt.Errorf("toolloop: tool %q (call %q) returned ToolResult with both Stop and IsError set", call.Name, call.ID)
+		}
 		if execErr != nil {
 			out := Outcome{
 				Response:   resp,
@@ -216,7 +238,7 @@ func executeCalls(
 			} else {
 				out.Kind = OutcomeToolError
 			}
-			return nil, &out
+			return nil, nil, &out
 		}
 
 		results[i] = llms.ToolResult{
@@ -224,8 +246,25 @@ func executeCalls(
 			Content:    result.Content,
 			IsError:    result.IsError,
 		}
+
+		if result.Stop {
+			// Return-statement semantics: the remaining calls in this
+			// turn are not executed. Each still needs a matching result
+			// for the transcript to be well-formed, so synthesize a
+			// model-visible not-executed error. No OnToolCall event is
+			// emitted for these — they were never attempted.
+			for j := i + 1; j < len(resp.ToolCalls); j++ {
+				skipped := &resp.ToolCalls[j]
+				results[j] = llms.ToolResult{
+					ToolCallID: skipped.ID,
+					Content:    fmt.Sprintf("not executed: tool loop ended by %q", call.Name),
+					IsError:    true,
+				}
+			}
+			return results, &terminalStop{call: call, result: result}, nil
+		}
 	}
-	return results, nil
+	return results, nil, nil
 }
 
 // dispatch routes a single call to its registered tool, or synthesizes an

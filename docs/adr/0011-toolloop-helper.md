@@ -1,6 +1,6 @@
 # 0011. Tool loop helper — scope, API, and non-goals
 
-- **Status:** Accepted
+- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed)
 - **Date:** 2026-05-19
 
 ## Context
@@ -130,3 +130,15 @@ deliberately different needs.
   round-trip the loop preserves verbatim).
 - `docs/specification.md` — provider-neutral contracts the helper builds
   on.
+
+## Amendment 2026-10-15 — partially superseded by ADR-0017
+
+Two decisions above are superseded by
+[ADR-0017](0017-toolloop-terminal-tools.md). The text above is unchanged
+(append-only).
+
+- The "no terminal/state-transition tools" non-goal no longer covers a
+  result-level stop flag. `ToolResult.Stop` ends the loop with
+  `OutcomeTerminalTool`. Agent state transitions remain out of scope.
+- The pre-execute `MaxIterations` stop is replaced: the limit-hitting
+  turn's tool calls are executed and their results appended.

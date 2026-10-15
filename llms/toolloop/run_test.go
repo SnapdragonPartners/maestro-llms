@@ -185,10 +185,11 @@ func TestRun_MultipleToolsInOneTurn_ResultsPreserveOrder(t *testing.T) {
 
 // MaxIterations ----------------------------------------------------------
 
-func TestRun_MaxIterations_PreExecuteStop(t *testing.T) {
-	// Two tool-call responses in a row; with MaxIterations=2 we should
-	// observe both, execute the first one's tools, and append the second
-	// as unresolved diagnostic state without executing its tools.
+func TestRun_MaxIterations_LimitTurnExecuted(t *testing.T) {
+	// Two tool-call responses in a row; with MaxIterations=2 both turns'
+	// tools execute (ADR-0017: the limit-hitting turn is no longer
+	// dropped), no third provider call is made, and the transcript ends
+	// with the second turn's tool results so it is well-formed.
 	var executions int32
 	tool := toolloop.Tool{
 		Definition: llms.ToolDefinition{Name: "echo"},
@@ -215,30 +216,19 @@ func TestRun_MaxIterations_PreExecuteStop(t *testing.T) {
 	if out.Iterations != 2 {
 		t.Fatalf("Iterations = %d, want 2 (both tool-call responses observed)", out.Iterations)
 	}
-	if got := atomic.LoadInt32(&executions); got != 1 {
-		t.Fatalf("tool executed %d times, want 1 (second turn's tools must NOT execute)", got)
+	if got := atomic.LoadInt32(&executions); got != 2 {
+		t.Fatalf("tool executed %d times, want 2 (limit turn's tools must execute)", got)
 	}
 	if got := len(client.Calls()); got != 2 {
 		t.Fatalf("provider called %d times, want 2 (no extra Complete after limit)", got)
 	}
-	// Transcript should end with an unresolved assistant tool-call message
-	// (no matching tool result for the second turn).
-	if len(out.Messages) == 0 {
-		t.Fatal("empty transcript")
+	// user, asst(a), tool(a), asst(b), tool(b)
+	if len(out.Messages) != 5 {
+		t.Fatalf("Messages len = %d, want 5", len(out.Messages))
 	}
 	last := out.Messages[len(out.Messages)-1]
-	if last.Role != llms.RoleAssistant {
-		t.Fatalf("last message role = %q, want assistant (unresolved tool-call turn)", last.Role)
-	}
-	hasUnresolvedCall := false
-	for _, p := range last.Content {
-		if p.Type == llms.ContentToolCall {
-			hasUnresolvedCall = true
-			break
-		}
-	}
-	if !hasUnresolvedCall {
-		t.Fatal("last message has no tool_call part; expected unresolved diagnostic state")
+	if last.Role != llms.RoleTool || last.Content[0].ToolResult.ToolCallID != "b" {
+		t.Fatalf("last message = %+v, want tool result for call b (well-formed transcript)", last)
 	}
 	if out.Err != nil {
 		t.Fatalf("Err = %v, want nil for MaxIterations", out.Err)

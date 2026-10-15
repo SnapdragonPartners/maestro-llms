@@ -1,6 +1,8 @@
 # Tool Loop Proposal
 
-Status: Accepted (ADR-0011)  
+Status: Accepted (ADR-0011); terminal tools and the executed limit turn are
+superseded by [ADR-0017](adr/0017-toolloop-terminal-tools.md), which takes
+precedence where this document conflicts with it.  
 Date: 2026-05-19
 
 ## Purpose

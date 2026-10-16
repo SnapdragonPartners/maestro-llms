@@ -456,6 +456,24 @@ func TestUsageReasoningTokensNormalized(t *testing.T) {
 	}
 }
 
+// Some servers report reasoning_tokens > completion_tokens on truncated
+// responses (seen live on LunaRoute). Reasoning is clamped to the billed
+// total so Output + Reasoning == Billable still holds.
+func TestUsageReasoningExceedsCompletionClamped(t *testing.T) {
+	body := `{"id":"chatcmpl-c","object":"chat.completion","created":1730000000,"model":"test-model",
+"choices":[{"index":0,"finish_reason":"length","message":{"role":"assistant","content":""}}],
+"usage":{"prompt_tokens":23,"completion_tokens":80,"total_tokens":103,
+ "completion_tokens_details":{"reasoning_tokens":82}}}`
+	c := newClient(t, respondJSON(t, 200, body))
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if u := resp.Usage; u.OutputTokens != 0 || u.ReasoningTokens != 80 || u.BillableOutputTokens != 80 {
+		t.Fatalf("usage = %+v, want output=0 reasoning=80 billable=80", u)
+	}
+}
+
 // A keyless client must not pick up an ambient OPENAI_API_KEY and send it to
 // the vLLM server, nor follow an ambient OPENAI_BASE_URL (divergence X6).
 func TestEnvironmentDefaultsIgnored(t *testing.T) {
@@ -463,6 +481,8 @@ func TestEnvironmentDefaultsIgnored(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "ambient-key")
 	t.Setenv("OPENAI_ORG_ID", "ambient-org")
 	t.Setenv("OPENAI_PROJECT_ID", "ambient-project")
+	t.Setenv("OPENAI_ADMIN_KEY", "ambient-admin-key")
+	t.Setenv("OPENAI_CUSTOM_HEADERS", "X-Ambient: 1")
 	var got http.Header
 	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Clone()
@@ -475,7 +495,7 @@ func TestEnvironmentDefaultsIgnored(t *testing.T) {
 	if got == nil {
 		t.Fatal("request did not reach the configured base URL")
 	}
-	for _, h := range []string{"Authorization", "OpenAI-Organization", "OpenAI-Project"} {
+	for _, h := range []string{"Authorization", "OpenAI-Organization", "OpenAI-Project", "X-Ambient"} {
 		if v := got.Get(h); v != "" {
 			t.Fatalf("%s = %q, want none (ambient env must not apply)", h, v)
 		}

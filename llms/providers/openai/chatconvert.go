@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/responses"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
@@ -74,8 +75,9 @@ func (c *ChatClient) buildInput(req llms.ChatRequest) ([]responses.ResponseInput
 				if p.ToolResult == nil {
 					return nil, chatBadRequest(c.model, "tool_result content part with nil ToolResult")
 				}
-				items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(
-					p.ToolResult.ToolCallID, p.ToolResult.Content))
+				out := responses.ResponseInputItemParamOfFunctionCallOutput(p.ToolResult.Content)
+				out.OfFunctionCallOutput.CallID = param.NewOpt(p.ToolResult.ToolCallID)
+				items = append(items, out)
 			default:
 				return nil, chatBadRequest(c.model, "unknown content part type: "+string(p.Type))
 			}

@@ -1,6 +1,6 @@
 # 0016. `Usage.ReasoningTokens` + `BillableOutputTokens` — normalize the reasoning split
 
-- **Status:** Accepted
+- **Status:** Accepted; partially superseded by 0018 (Anthropic mapping)
 - **Date:** 2026-05-31
 
 ## Context

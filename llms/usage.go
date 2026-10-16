@@ -11,17 +11,14 @@ package llms
 //   - ReasoningTokens is the count of "thinking" tokens consumed by
 //     reasoning models — separately metered output that does NOT
 //     appear in the visible response (Gemini 3 thoughts, OpenAI
-//     o-series reasoning content). Where the provider exposes this
-//     split, the toolkit reports it; where it doesn't, ReasoningTokens
-//     is zero.
+//     o-series reasoning content, Anthropic thinking). Where the
+//     provider exposes this split, the toolkit reports it; where it
+//     doesn't, ReasoningTokens is zero.
 //   - BillableOutputTokens is what the provider charges you as "output
-//     tokens." For most providers and models this equals
-//     OutputTokens + ReasoningTokens. The exception is Anthropic with
-//     extended thinking enabled, where the wire reports a single
-//     output_tokens that already includes thinking and is not
-//     separable; there OutputTokens carries that combined number,
-//     ReasoningTokens is zero, and BillableOutputTokens equals
-//     OutputTokens.
+//     tokens." It equals OutputTokens + ReasoningTokens for every
+//     adapter (ADR-0018 retired the Anthropic exception). An Anthropic
+//     response that omits output_tokens_details reports the combined
+//     count in OutputTokens with ReasoningTokens zero.
 //
 // Budget math: a length-truncation fires when
 // InputTokens + OutputTokens + ReasoningTokens approaches the cap, not

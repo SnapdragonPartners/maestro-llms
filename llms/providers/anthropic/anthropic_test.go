@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -80,10 +81,8 @@ func TestCompleteTextResponse(t *testing.T) {
 		u.CacheWriteTokens != 2 || u.CacheReadTokens != 3 || u.ProviderRequestID != "msg_1" {
 		t.Fatalf("usage mapping wrong: %+v", u)
 	}
-	// ADR-0016: Anthropic exposes no separable reasoning field, so
-	// BillableOutputTokens mirrors OutputTokens and ReasoningTokens
-	// stays zero. When extended thinking is enabled the wire
-	// output_tokens already includes thinking and we can't split.
+	// No output_tokens_details on the wire: the ADR-0018 fallback keeps the
+	// combined count in OutputTokens and ReasoningTokens stays zero.
 	if u.BillableOutputTokens != 7 || u.ReasoningTokens != 0 {
 		t.Errorf("billable/reasoning wrong: %+v", u)
 	}
@@ -532,5 +531,37 @@ func TestEnvironmentDefaultsIgnored(t *testing.T) {
 	}
 	if a := got.Header.Get("Authorization"); a != "" {
 		t.Fatalf("Authorization = %q, want none (ambient ANTHROPIC_AUTH_TOKEN must not apply)", a)
+	}
+}
+
+// ADR-0018: output_tokens_details.thinking_tokens is the thinking subset of
+// output_tokens. OutputTokens becomes the visible remainder; Billable keeps
+// the wire total. Absent details fall back to the combined count.
+func TestUsageThinkingTokens(t *testing.T) {
+	cases := []struct {
+		name                        string
+		usage                       string
+		output, reasoning, billable int
+	}{
+		{"thinking on", `{"input_tokens":20,"output_tokens":587,"output_tokens_details":{"thinking_tokens":200}}`, 387, 200, 587},
+		{"thinking off", `{"input_tokens":20,"output_tokens":17,"output_tokens_details":{"thinking_tokens":0}}`, 17, 0, 17},
+		{"details absent", `{"input_tokens":20,"output_tokens":17}`, 17, 0, 17},
+		{"thinking exceeds output (clamped)", `{"input_tokens":20,"output_tokens":10,"output_tokens_details":{"thinking_tokens":12}}`, 0, 10, 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var msg anthropic.Message
+			raw := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":` + tc.usage + `}`
+			if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			u := toResponse(&msg).Usage
+			if u.OutputTokens != tc.output || u.ReasoningTokens != tc.reasoning || u.BillableOutputTokens != tc.billable {
+				t.Fatalf("usage = %+v, want output=%d reasoning=%d billable=%d", u, tc.output, tc.reasoning, tc.billable)
+			}
+			if u.TotalTokens != 20+tc.billable {
+				t.Fatalf("TotalTokens = %d, want input + billable = %d", u.TotalTokens, 20+tc.billable)
+			}
+		})
 	}
 }

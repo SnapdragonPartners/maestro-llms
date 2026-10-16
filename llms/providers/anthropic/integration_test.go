@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go/option"
+
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic"
 )
@@ -157,4 +159,40 @@ func TestIntegrationAnthropicToolUse(t *testing.T) {
 		t.Logf("note: final answer doesn't mention Paris (model wording): %q", final.Text)
 	}
 	t.Logf("OK tool-use: call=%s(%s) -> final=%q", tc.Name, tc.Parameters, final.Text)
+}
+
+// ADR-0018: with thinking on, ReasoningTokens comes from
+// output_tokens_details.thinking_tokens and OutputTokens is the visible
+// remainder. The toolkit has no thinking option, so the test enables it via
+// WithRequestOptions. ANTHROPIC_THINKING_MODEL must accept
+// thinking.type "enabled" with a budget (Opus 5.5 does not; it takes
+// "adaptive").
+func TestIntegrationAnthropicThinkingUsage(t *testing.T) {
+	model := os.Getenv("ANTHROPIC_THINKING_MODEL")
+	if model == "" {
+		model = "claude-haiku-4-5-20251001"
+	}
+	c, err := anthropic.New(
+		anthropic.WithAPIKey(anthropicAPIKey(t)),
+		anthropic.WithModel(model),
+		anthropic.WithRequestOptions(option.WithJSONSet("thinking", map[string]any{"type": "enabled", "budget_tokens": 1024})),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resp := complete(t, c, llms.ChatRequest{
+		Messages:  []llms.Message{llms.UserText("Is 1009 prime? Check carefully, then answer yes or no.")},
+		MaxTokens: 4000,
+	})
+	u := resp.Usage
+	t.Logf("model %s usage: %+v", model, u)
+	if !strings.Contains(strings.ToLower(resp.Text), "yes") {
+		t.Errorf("Text = %q, want an answer containing yes", resp.Text)
+	}
+	if u.ReasoningTokens <= 0 || u.OutputTokens <= 0 {
+		t.Fatalf("want positive ReasoningTokens and OutputTokens with thinking on, got %+v", u)
+	}
+	if u.BillableOutputTokens != u.OutputTokens+u.ReasoningTokens {
+		t.Fatalf("BillableOutputTokens = %d, want OutputTokens+ReasoningTokens = %d", u.BillableOutputTokens, u.OutputTokens+u.ReasoningTokens)
+	}
 }

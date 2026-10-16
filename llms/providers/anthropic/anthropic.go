@@ -103,7 +103,12 @@ func New(opts ...Option) (*Client, error) {
 		return nil, &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: "max retries must be >= 0"}
 	}
 
-	var reqOpts []option.RequestOption
+	// WithoutEnvironmentDefaults: the SDK otherwise reads ANTHROPIC_BASE_URL,
+	// ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, workload-federation env vars
+	// and a profile config file, and (since v1.8x) refuses requests when that
+	// chain finds nothing. Credentials and endpoints are the app's to supply,
+	// never sourced implicitly (divergence A6).
+	reqOpts := []option.RequestOption{option.WithoutEnvironmentDefaults()}
 	if s.apiKey != "" {
 		reqOpts = append(reqOpts, option.WithAPIKey(s.apiKey))
 	}

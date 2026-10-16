@@ -34,7 +34,11 @@ func lunaRouteBaseURL() string {
 	return lunaRouteDefaultBaseURL
 }
 
-func lunaRouteModels() []string {
+// lunaRouteModels returns the models under test. A LUNAROUTE_MODELS value
+// that names no model (only commas or whitespace) is a configuration error,
+// not a silent no-op.
+func lunaRouteModels(t *testing.T) []string {
+	t.Helper()
 	v := os.Getenv("LUNAROUTE_MODELS")
 	if v == "" {
 		v = lunaRouteDefaultModels
@@ -45,7 +49,22 @@ func lunaRouteModels() []string {
 			out = append(out, m)
 		}
 	}
+	if len(out) == 0 {
+		t.Fatalf("LUNAROUTE_MODELS=%q names no model", v)
+	}
 	return out
+}
+
+// lunaRouteIsReasoningModel reports whether model is one of the defaults,
+// which are known reasoning models. Overrides via LUNAROUTE_MODELS may not
+// be, so a positive reasoning-token count is only required for these.
+func lunaRouteIsReasoningModel(model string) bool {
+	for _, m := range strings.Split(lunaRouteDefaultModels, ",") {
+		if m == model {
+			return true
+		}
+	}
+	return false
 }
 
 func newLunaRoute(t *testing.T, key, model string) *vllm.Client {
@@ -76,12 +95,12 @@ func lunaRouteKeyOrSkip(t *testing.T) string {
 // shared toolloop convergence scenario.
 func TestIntegrationLunaRoute(t *testing.T) {
 	key := lunaRouteKeyOrSkip(t)
-	for _, model := range lunaRouteModels() {
+	for _, model := range lunaRouteModels(t) {
 		t.Run(model, func(t *testing.T) {
 			c := newLunaRoute(t, key, model)
 			t.Run("ToolRoundTrip", func(t *testing.T) { lunaRouteToolRoundTrip(t, c) })
 			t.Run("ToolChoiceRequired", func(t *testing.T) { lunaRouteToolChoiceRequired(t, c) })
-			t.Run("Reasoning", func(t *testing.T) { lunaRouteReasoning(t, c) })
+			t.Run("Reasoning", func(t *testing.T) { lunaRouteReasoning(t, c, lunaRouteIsReasoningModel(model)) })
 			t.Run("ToolLoopConvergence", func(t *testing.T) { livetest.ToolLoopConvergence(t, c) })
 		})
 	}
@@ -154,8 +173,11 @@ func lunaRouteToolChoiceRequired(t *testing.T, c *vllm.Client) {
 
 // Reasoning models on LunaRoute return their reasoning in a separate
 // reasoning_content field. resp.Text must be the answer only, and the
-// reasoning must be counted in Usage (ADR-0016).
-func lunaRouteReasoning(t *testing.T, c *vllm.Client) {
+// reasoning must be counted in Usage (ADR-0016). For known reasoning models,
+// ReasoningTokens must be positive: OutputTokens is derived by subtracting
+// reasoning from the billable total, so the Billable identity alone would
+// stay green if reasoning-token details were dropped.
+func lunaRouteReasoning(t *testing.T, c *vllm.Client, reasoningModel bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	resp, err := c.Complete(ctx, llms.ChatRequest{
@@ -173,6 +195,12 @@ func lunaRouteReasoning(t *testing.T, c *vllm.Client) {
 	}
 	u := resp.Usage
 	t.Logf("usage: %+v", u)
+	if u.OutputTokens <= 0 || u.BillableOutputTokens <= 0 {
+		t.Errorf("expected positive output usage, got %+v", u)
+	}
+	if reasoningModel && u.ReasoningTokens <= 0 {
+		t.Errorf("ReasoningTokens = %d, want > 0 for a reasoning model", u.ReasoningTokens)
+	}
 	if u.BillableOutputTokens != u.OutputTokens+u.ReasoningTokens {
 		t.Errorf("BillableOutputTokens = %d, want OutputTokens+ReasoningTokens = %d", u.BillableOutputTokens, u.OutputTokens+u.ReasoningTokens)
 	}
@@ -183,7 +211,7 @@ func TestIntegrationLunaRouteErrors(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req := llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}, MaxTokens: 8}
-	models := lunaRouteModels()
+	models := lunaRouteModels(t)
 
 	cases := []struct {
 		name string

@@ -21,10 +21,10 @@ jobs:
     steps:
       # actions/* are first-party, pinned by major tag (same posture as ci.yml).
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -42,7 +42,7 @@ jobs:
         run: curl -fsSL https://ollama.com/install.sh | sh
 
       - name: Cache Ollama models
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.ollama/models
           # llama3.2:1b is a non-reasoning instruct model: deterministic and

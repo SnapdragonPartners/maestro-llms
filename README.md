@@ -258,7 +258,9 @@ out := toolloop.Run(ctx, toolloop.Config{
 	Request: req,
 	Tools:   []toolloop.Tool{readFile, grep, submit},
 	// Optional: llms.ToolChoice{Type: llms.ToolChoiceRequired} keeps the model
-	// from ending with plain text instead of submitting.
+	// from ending with plain text instead of submitting. Not every model
+	// accepts forced choice (Claude Opus 5.5 rejects "tool"/"any" with
+	// bad_request); for those, rely on the system prompt instead.
 })
 if out.Kind == toolloop.OutcomeTerminalTool {
 	var f Findings

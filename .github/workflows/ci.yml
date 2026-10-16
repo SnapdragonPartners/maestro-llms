@@ -78,7 +78,8 @@ jobs:
           for mod in examples/*/go.mod; do
             dir="$(dirname "$mod")"
             echo "==> $dir"
-            (cd "$dir" && go mod tidy -diff && go build ./... && govulncheck ./...)
+            (cd "$dir" && go mod tidy -diff) || { echo "::error::$dir is out of sync with the root module; run 'make tidy' and commit"; exit 1; }
+            (cd "$dir" && go build ./... && govulncheck ./...)
           done
 
       - name: Test

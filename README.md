@@ -225,14 +225,37 @@ switch out.Kind {
 case toolloop.OutcomeFinalAnswer:
 	fmt.Println(out.Response.Text)
 case toolloop.OutcomeTerminalTool, toolloop.OutcomeMaxIterations,
-	toolloop.OutcomeLLMError, toolloop.OutcomeToolError, toolloop.OutcomeCanceled:
+	toolloop.OutcomeLLMError, toolloop.OutcomeToolError,
+	toolloop.OutcomeCanceled, toolloop.OutcomeDeadline:
 	// inspect out.Err, out.Messages, out.TotalUsage
 }
 ```
 
-`MaxIterations` bounds the number of tool-calling turns. The limit-hitting
-turn's tools are executed and their results appended, then the loop stops
-with `OutcomeMaxIterations` without another provider call.
+`MaxIterations` bounds the number of tool-calling turns. Zero means the
+default of 8. The limit-hitting turn's tools are executed and their results
+appended, then the loop stops with `OutcomeMaxIterations` without another
+provider call. `toolloop.NoIterationLimit` (any negative value) removes the
+ceiling ([ADR-0019](docs/adr/0019-toolloop-deadline-and-no-iteration-limit.md)).
+
+When the loop's own context reaches its deadline during a model call or a
+tool, the outcome is `OutcomeDeadline` ("ran out of time"), not an LLM or
+tool error; `errors.Is(out.Err, context.DeadlineExceeded)` holds. A
+per-attempt deadline from the `Timeout` middleware leaves the loop's context
+live, so it is still `OutcomeLLMError`. An explicit cancel is
+`OutcomeCanceled`.
+
+#### Unbounded runs
+
+`NoIterationLimit` needs no context deadline. Two patterns suit a
+long-running agent:
+
+- **One endless `Run`.** A tool blocks until the next event arrives and
+  returns it as the tool result. Each turn is appended to the transcript,
+  so it grows until it reaches the model's context limit; plan for that
+  (context-length detection is tracked in [#79](https://github.com/SnapdragonPartners/maestro-llms/issues/79), a compaction hook in [#80](https://github.com/SnapdragonPartners/maestro-llms/issues/80)).
+- **One `Run` per event.** The app owns memory between events and builds
+  each `Request` from it. Every run is bounded by its own work, and the
+  transcript never outgrows what the app chooses to carry.
 
 #### Structured output via a terminal tool
 

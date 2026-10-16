@@ -1,6 +1,6 @@
 # 0017. Tool loop terminal tools and executed limit turn
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (negative `MaxIterations` is unlimited)
 - **Date:** 2026-10-15
 
 ## Context
@@ -95,3 +95,10 @@ executed" rather than "N-1 executed, the Nth dropped".
   satisfies.
 - `docs/toolloop-proposal.md`: original design; see its ADR-0017 note.
 - Issue #53.
+
+## Amendment 2026-10-16 — amended by ADR-0019
+
+[ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) makes a
+negative `MaxIterations` mean no iteration limit. "At most N tool-calling
+turns are executed" applies to positive N; with `NoIterationLimit` the loop
+stops only on a final answer, a terminal tool, an error, or its context.

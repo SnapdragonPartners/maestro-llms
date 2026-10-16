@@ -11,12 +11,20 @@ import (
 )
 
 // defaultMaxIterations is the runaway bound applied when
-// Config.MaxIterations is unset (<= 0). It is not a tuning recommendation
+// Config.MaxIterations is zero (unset). It is not a tuning recommendation
 // — applications with known workflows should set their own bound from
-// their domain. Negative values are treated identically to zero (use the
-// default) rather than rejected, since negatives are functionally a
-// "leave at default" mistake, not an attack surface.
+// their domain. Negative values mean no limit (NoIterationLimit, ADR-0019).
 const defaultMaxIterations = 8
+
+// NoIterationLimit is the Config.MaxIterations value that runs the loop with no
+// iteration ceiling (ADR-0019). Any negative value has the same effect;
+// the named constant makes the choice visibly deliberate. The loop then
+// stops only on a final answer, a terminal tool, an error, or the
+// context (OutcomeCanceled / OutcomeDeadline). No context deadline is
+// required: a daemon agent whose tool blocks waiting for events is a
+// legitimate unbounded run. Its transcript grows with every turn, so an
+// endless Run eventually reaches the model's context limit.
+const NoIterationLimit = -1
 
 // preallocIterations caps how many iterations' worth of transcript (one
 // assistant message plus one tool-result message each) Run preallocates.
@@ -47,18 +55,23 @@ func Run(ctx context.Context, cfg Config) Outcome {
 	}
 	toolByName := indexTools(cfg.Tools)
 	maxIter := cfg.MaxIterations
-	if maxIter <= 0 {
+	if maxIter == 0 {
 		maxIter = defaultMaxIterations
 	}
+	limited := maxIter > 0
 
 	// Step 2: copy the initial transcript so we never mutate caller state.
 	// Allocate with zero length + capacity headroom so the first appends
 	// don't immediately re-grow. Headroom is capped independently of
 	// maxIter: callers bounding a run by context deadline pass a very large
 	// MaxIterations, and sizing by it allocated billions of messages (#73).
-	// append grows the slice past the cap; that cost is negligible next to
-	// a model call.
-	transcript := make([]llms.Message, 0, len(cfg.Request.Messages)+2*min(maxIter, preallocIterations))
+	// An unlimited run uses the cap. append grows the slice past the cap;
+	// that cost is negligible next to a model call.
+	prealloc := preallocIterations
+	if limited {
+		prealloc = min(maxIter, preallocIterations)
+	}
+	transcript := make([]llms.Message, 0, len(cfg.Request.Messages)+2*prealloc)
 	transcript = append(transcript, cfg.Request.Messages...)
 
 	var (
@@ -84,23 +97,14 @@ func Run(ctx context.Context, cfg Config) Outcome {
 
 		// Step 5: handle provider error before touching the transcript.
 		if callErr != nil {
-			if isCanceled(ctx, callErr) {
-				return Outcome{
-					Kind:       OutcomeCanceled,
-					Response:   lastResponse,
-					Messages:   transcript,
-					TotalUsage: usage,
-					Iterations: iterIdx,
-					Err:        callErr,
-				}
-			}
+			kind, err := classifyStop(ctx, callErr, OutcomeLLMError)
 			return Outcome{
-				Kind:       OutcomeLLMError,
+				Kind:       kind,
 				Response:   lastResponse,
 				Messages:   transcript,
 				TotalUsage: usage,
 				Iterations: iterIdx,
-				Err:        callErr,
+				Err:        err,
 			}
 		}
 
@@ -168,7 +172,7 @@ func Run(ctx context.Context, cfg Config) Outcome {
 		// Step 16: limit stop. The limit-hitting turn's tools have run and
 		// their results are appended, so the transcript is well-formed;
 		// we just make no further provider call.
-		if iterIdx >= maxIter {
+		if limited && iterIdx >= maxIter {
 			return Outcome{
 				Kind:       OutcomeMaxIterations,
 				Response:   resp,
@@ -234,19 +238,15 @@ func executeCalls(
 			execErr = fmt.Errorf("toolloop: tool %q (call %q) returned ToolResult with both Stop and IsError set", call.Name, call.ID)
 		}
 		if execErr != nil {
-			out := Outcome{
+			kind, err := classifyStop(ctx, execErr, OutcomeToolError)
+			return nil, nil, &Outcome{
+				Kind:       kind,
 				Response:   resp,
 				Messages:   transcript,
 				TotalUsage: usage,
 				Iterations: iterIdx,
-				Err:        execErr,
+				Err:        err,
 			}
-			if isCanceled(ctx, execErr) {
-				out.Kind = OutcomeCanceled
-			} else {
-				out.Kind = OutcomeToolError
-			}
-			return nil, nil, &out
 		}
 
 		results[i] = llms.ToolResult{
@@ -309,23 +309,39 @@ func cloneToolCall(c llms.ToolCall) llms.ToolCall {
 	}
 }
 
-// isCanceled reports whether the loop should treat err as
-// caller-cancellation. We accept either errors.Is(err, context.Canceled) —
-// matching the toolkit's X5 contract that caller cancel is not converted
-// into a *llms.ProviderError — or a non-nil ctx.Err() of context.Canceled,
-// which catches the case where a provider returned a non-cancellation
-// error while the caller's context was simultaneously canceled.
+// classifyStop maps a provider or executor error to the Outcome kind and
+// Err the loop returns. It is the single choke point for context-driven
+// stops (ADR-0019), applied identically to provider and executor errors.
 //
-// context.DeadlineExceeded is deliberately NOT classified as canceled:
-// providers wrap timeouts as a retryable *ProviderError, and executors that
-// return DeadlineExceeded are returning a loop-visible error of their own
-// choosing — both should surface as OutcomeLLMError / OutcomeToolError so
-// the cause is not silently relabeled as "canceled".
-func isCanceled(ctx context.Context, err error) bool {
-	if errors.Is(err, context.Canceled) {
-		return true
+// The loop's own context is authoritative: when ctx is done, the outcome
+// follows ctx.Err() regardless of what the call returned —
+// context.Canceled gives OutcomeCanceled and context.DeadlineExceeded gives
+// OutcomeDeadline. Err is then guaranteed to match ctx.Err() under
+// errors.Is: the call's error is returned as-is when it already does, and
+// otherwise wrapped together with ctx.Err() so neither cause is lost.
+//
+// When ctx is still live, an error matching context.Canceled is still
+// OutcomeCanceled (cross-cutting X5: caller cancel is not converted into
+// a *llms.ProviderError, and may come from a context the call derived).
+// A context.DeadlineExceeded with a live loop context is NOT the loop's
+// deadline — typically the per-attempt Timeout middleware, which providers
+// classify as a retryable timeout *llms.ProviderError, or an executor's own
+// sub-deadline — so it stays fallback (OutcomeLLMError / OutcomeToolError).
+func classifyStop(ctx context.Context, err error, fallback OutcomeKind) (OutcomeKind, error) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		kind := OutcomeCanceled
+		if errors.Is(ctxErr, context.DeadlineExceeded) {
+			kind = OutcomeDeadline
+		}
+		if !errors.Is(err, ctxErr) {
+			err = fmt.Errorf("toolloop: %w: %w", ctxErr, err)
+		}
+		return kind, err
 	}
-	return errors.Is(ctx.Err(), context.Canceled)
+	if errors.Is(err, context.Canceled) {
+		return OutcomeCanceled, err
+	}
+	return fallback, err
 }
 
 // addUsage sums every numeric token field (TestRun_TotalUsageSumsEveryIntField

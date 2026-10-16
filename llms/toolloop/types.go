@@ -26,8 +26,9 @@ type Tool struct {
 //
 // IsError is a model-visible signal: the loop appends the result and the
 // model can recover. An Execute error (the second return) is a loop-visible
-// abort: the loop stops and returns OutcomeToolError unless the context was
-// canceled, in which case it returns OutcomeCanceled.
+// abort: the loop stops and returns OutcomeToolError unless the loop's
+// context was canceled or reached its deadline, in which case it returns
+// OutcomeCanceled or OutcomeDeadline.
 //
 // Stop marks this call as terminal (ADR-0017): the loop appends the result
 // and returns OutcomeTerminalTool instead of making another provider call.
@@ -49,7 +50,11 @@ type ToolResult struct {
 // requires at least one tool — an empty Tools slice with the default
 // ToolChoiceAuto is allowed and is equivalent to a single Complete call.
 //
-// Defaults: MaxIterations <= 0 uses defaultMaxIterations; a zero ToolChoice
+// MaxIterations bounds the number of tool-calling turns executed. Zero
+// uses the default of 8; a negative value (NoIterationLimit) means no
+// limit (ADR-0019).
+//
+// Defaults: a zero ToolChoice
 // (in both Request and Config) defaults to llms.ToolChoice{Type:
 // llms.ToolChoiceAuto}.
 //
@@ -100,7 +105,8 @@ type ToolCallEvent struct {
 }
 
 // OutcomeKind discriminates Outcome. The set is closed; new kinds require
-// a superseding ADR (OutcomeTerminalTool was added by ADR-0017).
+// a superseding ADR (OutcomeTerminalTool was added by ADR-0017,
+// OutcomeDeadline by ADR-0019).
 type OutcomeKind string
 
 const (
@@ -137,6 +143,14 @@ const (
 	// type — caller cancel is not converted into a *llms.ProviderError
 	// (cross-cutting X5).
 	OutcomeCanceled OutcomeKind = "canceled"
+	// OutcomeDeadline is returned when the loop's own context reached its
+	// deadline (ctx.Err() is context.DeadlineExceeded) during the provider
+	// call or during tool execution (ADR-0019). It means "ran out of
+	// time", not "something broke". errors.Is(err,
+	// context.DeadlineExceeded) holds. A per-attempt deadline that leaves
+	// the loop's context live, such as the Timeout middleware, is not the
+	// loop's deadline and stays OutcomeLLMError.
+	OutcomeDeadline OutcomeKind = "deadline"
 )
 
 // Outcome is the result of a single Run. It is always returned (no
@@ -167,6 +181,7 @@ const (
 //   - OutcomeLLMError:      the error returned by ChatClient.Complete
 //   - OutcomeToolError:     the configuration validation error or Execute error
 //   - OutcomeCanceled:      a cancellation error; use errors.Is(err, context.Canceled)
+//   - OutcomeDeadline:      the error that surfaced; errors.Is(err, context.DeadlineExceeded) holds
 type Outcome struct {
 	Response       llms.ChatResponse
 	Err            error

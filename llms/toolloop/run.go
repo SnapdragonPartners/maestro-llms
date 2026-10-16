@@ -320,7 +320,9 @@ func isCanceled(ctx context.Context, err error) bool {
 	return errors.Is(ctx.Err(), context.Canceled)
 }
 
-// addUsage sums numeric token fields and tracks the single-contributor
+// addUsage sums every numeric token field (TestRun_TotalUsageSumsEveryIntField
+// fails if a new llms.Usage int field is added here without being summed) and
+// tracks the single-contributor
 // ProviderRequestID. Once more than one provider response has contributed,
 // the aggregate ProviderRequestID is cleared, since it cannot meaningfully
 // represent multiple requests.
@@ -328,6 +330,8 @@ func addUsage(total *llms.Usage, contribs *int, lastID *string, add llms.Usage) 
 	total.InputTokens += add.InputTokens
 	total.OutputTokens += add.OutputTokens
 	total.TotalTokens += add.TotalTokens
+	total.ReasoningTokens += add.ReasoningTokens
+	total.BillableOutputTokens += add.BillableOutputTokens
 	total.EmbeddingTokens += add.EmbeddingTokens
 	total.CacheReadTokens += add.CacheReadTokens
 	total.CacheWriteTokens += add.CacheWriteTokens

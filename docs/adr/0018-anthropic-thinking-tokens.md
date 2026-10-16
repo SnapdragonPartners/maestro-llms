@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-16
-- **Partially supersedes:** ADR-0016 (the Anthropic row of the per-adapter mapping and its "identity does not hold" exception)
+- **Partially supersedes:** ADR-0016 (the Anthropic row of the per-adapter mapping and its "not separable" exception)
 
 ## Context
 
@@ -11,9 +11,13 @@ ADR-0016 normalized `Usage` so that `OutputTokens` is visible output,
 `BillableOutputTokens` is what the provider bills. Anthropic was the one
 documented exception. The wire `output_tokens` includes thinking when it is
 on, and nothing separated the two, so the adapter reported the combined count
-in `OutputTokens` with `ReasoningTokens = 0`. The
-`Output + Reasoning == Billable` identity did not hold for Anthropic with
-thinking (#66).
+in `OutputTokens` with `ReasoningTokens = 0`. That kept
+`Output + Reasoning == Billable` arithmetically true, but `OutputTokens`
+was not visible-only, which is the one meaning ADR-0016 gives it
+everywhere else. (ADR-0016 describes this as the identity "not holding";
+precisely, the identity held while the visible/thinking split was
+missing.) For Anthropic with thinking on, a consumer could not tell how
+much of the output was thinking (#66).
 
 The Messages API now returns `usage.output_tokens_details.thinking_tokens`,
 and anthropic-sdk-go v1.82 (#61) exposes it as
@@ -58,7 +62,9 @@ The Anthropic mapping becomes the OpenAI shape:
   negative `OutputTokens`.
 - `TotalTokens` stays `input_tokens + output_tokens` (the wire total).
 
-With this, `Output + Reasoning == Billable` holds for every adapter.
+With this, `OutputTokens` means visible output for every adapter, and
+`ReasoningTokens` reports the thinking split wherever the provider exposes
+it.
 
 ## Consequences
 

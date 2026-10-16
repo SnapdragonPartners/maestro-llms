@@ -16,9 +16,10 @@ package llms
 //     doesn't, ReasoningTokens is zero.
 //   - BillableOutputTokens is what the provider charges you as "output
 //     tokens." It equals OutputTokens + ReasoningTokens for every
-//     adapter (ADR-0018 retired the Anthropic exception). An Anthropic
-//     response that omits output_tokens_details reports the combined
-//     count in OutputTokens with ReasoningTokens zero.
+//     adapter. Since ADR-0018, Anthropic's OutputTokens is visible-only
+//     too; an Anthropic response that omits output_tokens_details
+//     reports the combined count in OutputTokens with ReasoningTokens
+//     zero.
 //
 // Budget math: a length-truncation fires when
 // InputTokens + OutputTokens + ReasoningTokens approaches the cap, not

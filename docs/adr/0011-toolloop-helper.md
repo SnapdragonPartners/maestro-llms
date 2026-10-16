@@ -1,6 +1,6 @@
 # 0011. Tool loop helper — scope, API, and non-goals
 
-- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed); amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (`OutcomeDeadline`; negative `MaxIterations` is unlimited)
+- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed); amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (`OutcomeDeadline`; negative `MaxIterations` is unlimited) and [ADR-0020](0020-toolloop-empty-response.md) (`OutcomeEmptyResponse`)
 - **Date:** 2026-05-19
 
 ## Context
@@ -155,3 +155,9 @@ above is unchanged (append-only).
   is still an LLM error.
 - Negative `MaxIterations` means no iteration limit
   (`toolloop.NoIterationLimit`); only zero means the default of 8.
+
+## Amendment 2026-10-16 — amended by ADR-0020
+
+[ADR-0020](0020-toolloop-empty-response.md) adds `OutcomeEmptyResponse`. A
+response with no tool calls and no text is not appended to the transcript,
+and is reported with that kind instead of `OutcomeFinalAnswer`.

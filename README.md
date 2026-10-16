@@ -224,9 +224,9 @@ out := toolloop.Run(ctx, toolloop.Config{
 switch out.Kind {
 case toolloop.OutcomeFinalAnswer:
 	fmt.Println(out.Response.Text)
-case toolloop.OutcomeTerminalTool, toolloop.OutcomeMaxIterations,
-	toolloop.OutcomeLLMError, toolloop.OutcomeToolError,
-	toolloop.OutcomeCanceled, toolloop.OutcomeDeadline:
+case toolloop.OutcomeTerminalTool, toolloop.OutcomeEmptyResponse,
+	toolloop.OutcomeMaxIterations, toolloop.OutcomeLLMError,
+	toolloop.OutcomeToolError, toolloop.OutcomeCanceled, toolloop.OutcomeDeadline:
 	// inspect out.Err, out.Messages, out.TotalUsage
 }
 ```
@@ -243,6 +243,14 @@ tool error; `errors.Is(out.Err, context.DeadlineExceeded)` holds. A
 per-attempt deadline from the `Timeout` middleware leaves the loop's context
 live, so it is still `OutcomeLLMError`. An explicit cancel is
 `OutcomeCanceled`.
+
+If the model returns no text and no tool calls, typically a reasoning
+model that spent its whole output budget on reasoning, the outcome is
+`OutcomeEmptyResponse` ([ADR-0020](docs/adr/0020-toolloop-empty-response.md)).
+`out.Response.StopReason` and `out.TotalUsage.ReasoningTokens` show why. The
+empty message is not appended, so `out.Messages` can be continued directly,
+for example by appending a user message asking the model to finish, or
+retried with a larger `MaxTokens`.
 
 #### Unbounded runs
 

@@ -1,8 +1,8 @@
 // Package toolloop is a small, app-neutral helper that wraps the
 // provider-protocol tool round-trip over an llms.ChatClient: send a request,
 // execute every tool call the model emits, append the matching tool results,
-// and repeat until the model returns a response with no tool calls (final
-// answer), an executor marks its result terminal (ToolResult.Stop), the
+// and repeat until the model returns a response with no tool calls (a final
+// answer, or an empty response with no text either), an executor marks its result terminal (ToolResult.Stop), the
 // configured iteration limit is reached (if any; see NoIterationLimit), the
 // provider or an executor errors, or the loop's context is canceled or
 // reaches its deadline.

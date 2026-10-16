@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) and other coding agents (Codex reads it as AGENTS.md) when working with code in this repository. AGENTS.md is a symlink to this file.
 
 ## Current state
 
@@ -48,3 +48,77 @@ Load-bearing structural decisions:
 ## Versioning
 
 Pre-1.0; v0.x minor versions may break. Shipped lines: see README "Versioning & license" (v0.1.0 through v0.9.0). Each PR that intentionally differs from Maestro appends a `docs/MAESTRO_DIVERGENCES.md` row; significant structural decisions land an ADR (`docs/adr/`) in the same PR. Don't expand a release's scope mid-stream — scope is decided up front and tracked in the session plan.
+
+## Branch and review workflow
+
+Several consumers (Maestro, Morris, maestro-cms, buggrit) depend on this package, so substantive work follows a **review-before-push** loop (the same process as Morris): the heavy review happens on the local branch *before* the push. Post-push checks (CI, CodeQL, the automatic Copilot review) are a lighter final proofread.
+
+**Roles:**
+
+- **Claude** authors: code, tests, ADRs, docs, and fixes.
+- **Codex** is the primary reviewer. It reviews the committed local branch **before push** through the **Counterpoint** tool (`mcp__counterpoint__review`). If the tool is not available in the session, write the branch notes and ask Dan to relay them to Codex; do not ask Dan to relay when the tool is available.
+- **Dan** orchestrates, resolves disagreements, authorizes pushes, and merges. **Claude never merges.**
+- A PR is **accepted** only after both Codex and Dan approve.
+
+**Steps:**
+
+1. Branch off an up-to-date `main` (`feat/<slug>`, `fix/<slug>`, `docs/<slug>`, `chore/<slug>`, `test/<slug>`). Never work directly on `main`.
+2. Make the scoped change. Verify in proportion to risk: `make build` (lint + build) and `make test` always; `govulncheck ./...` and `make tidy` when dependencies change; the live tests for every provider the change touches (`scripts/integration-local.sh -test.run '<regex>'` on macOS; keys and gating per README). Do not punt live tests to CI: the integration workflow is manual-only.
+3. Commit **locally**. The pre-push hook (`hooks/pre-push`: lint + unit tests) must pass; never bypass it with `--no-verify`.
+4. Write branch notes (below) and submit the exact local commit through Counterpoint (below).
+5. Address every blocking finding with a fix or a reasoned response. Commit each review round locally and resubmit with updated notes.
+6. Continue until Codex has no blocking findings, Dan explicitly overrides one, or a disputed finding has been escalated to Dan.
+7. **Stop at the push gate.** Quote Codex's approval (or remaining findings) to Dan. **Do not push or open a PR until Codex and Dan have both approved**; push is a human gate, not a routine step. Approval covers that push only.
+8. After approval, push and open the PR per *PR body conventions*. Treat post-push findings substantively (below).
+9. Dan gives final approval and merges. After a merge, close any issues the PR resolves and update the session status memory.
+
+**One branch at a time.** Keep at most **one feature/development branch open** (pushed or not) at a time. Land it (review → push → merge) before starting the next. No stacked or dependent PRs. Exceptions: urgent bug fixes, Dependabot PRs, or parallel work Dan explicitly authorizes. When a release spans several issues, they still land one PR at a time, in sequence. A docs-only companion may ride along with its code.
+
+### Responding to findings
+
+Codex is a reviewer, not an authority. Only **blocking** findings must be resolved before the push gate:
+
+- **P0**: wrong results or corruption, a security exposure (for example credentials sent to the wrong endpoint), or an unusable API.
+- **P1**: a concrete correctness, robustness, compatibility, or maintainability defect, including an undocumented breaking change for consumers or a missing ADR / `MAESTRO_DIVERGENCES.md` row this file requires.
+
+Suggestions and style points (P2 and below) are at Claude's discretion; record their disposition in the next round's notes. A finding Claude judges wrong, out of scope, or disproportionate gets a reasoned response rather than a change: cite the spec, an ADR, an existing test, or the deliberate design choice. When pushback is correct on the merits, add a regression test alongside it. If Codex reaffirms a disputed finding, **stop**, state both positions, and bring the decision to Dan before another round. Do not implement a change Claude believes is wrong in order to end the loop.
+
+**A repeated finding is a class.** When two or three findings, from any reviewer, share one shape (the same boundary, the same missing check), stop patching instances: name the class, fix it at one choke point with a test per case, say so in the branch notes, and ask Codex to enumerate every input at that boundary rather than reviewing only the delta.
+
+### Submitting for review
+
+- Call `mcp__counterpoint__review` with the absolute repository path (from `git rev-parse --show-toplevel`; never hard-coded), the branch, the exact local commit, and the branch notes. The commit must be the branch tip and the checked-out HEAD of a **clean** worktree, so commit first. The call blocks for the whole Codex turn (several minutes, up to ~21).
+- In a **read-only** review (default) the reviewer reads the worktree, so **do not touch the worktree while it runs**. In a **build-capable** review (`build: true`) the reviewer gets a disposable, **offline** checkout; just don't rewrite the branch meanwhile.
+- Ask for a build-capable review when a test run is material evidence: code changes, especially to provider wire conversion, error classification, middleware ordering/concurrency, the limiter, or `toolloop`. Keep docs-only rounds and small follow-ups read-only. The offline checkout cannot run live provider tests (they need keys and network), so their commands and outcomes are the author's evidence and must be in the notes.
+- The reviewer starts each round fresh; its memory is the last three rounds' verdicts. Write later rounds' notes as a delta but **keep the disposition of every prior finding**, since older rounds are evicted. A new or renamed branch starts a new review thread.
+- If the tool reports the thread is unavailable, stop and tell Dan; the error says what to do.
+
+### Branch notes
+
+The handoff artifact, not a generic summary. Codex verifies claims against the commit and repository, so verification claims must be backed by commands and outcomes. Every round's notes **lead with the exact commit hash and the push state** (`not pushed`), then include:
+
+- review round number, and whether the change is code, docs, or both;
+- verification commands and outcomes (`make build`, `make test`, `govulncheck`, live tests with the env/model used);
+- material changes and why; for multi-issue releases, which issue this branch closes and what it deliberately does NOT do;
+- design references (spec sections, ADRs) with the controlling sentence for any non-obvious decision; the ADR and `MAESTRO_DIVERGENCES.md` rows this change adds, or why none is needed;
+- consumer impact: anything a downstream app must change, for the release notes;
+- resolution of each prior finding (fixed in commit X / reasoned pushback / deferred with reason);
+- design choices and rejected alternatives; known limitations and open questions.
+
+The same notes seed the PR body once push is approved.
+
+### PR body conventions
+
+AI reviewers (Copilot) see only the diff and the PR body, so the body must carry the design context:
+
+1. **Summary**: what changed and why, in plain language.
+2. **Design references**: links to the relevant ADRs / spec sections, quoting the controlling sentence for any amendment or non-obvious decision.
+3. **Context**: the issue it closes, related PRs, and what this PR does NOT yet do, so intentional gaps aren't flagged as bugs.
+4. **Consumer impact**: breaking or behavioral changes, for the release notes.
+5. **Test plan**: `make build`, `make test`, live-test commands and outcomes.
+
+End the body with the Claude Code attribution line; end commits with the `Co-Authored-By` trailer.
+
+### Post-push reviewer feedback
+
+Apply the same standard as *Responding to findings*. Fix real bugs in a dedicated commit ("Address PR #N review feedback"). Pushing a fix is another push: a small fix for a post-push finding needs no fresh Codex round unless it changes design or behavior, but a substantive change goes back through Counterpoint and the push gate. **Then reply on each thread citing the fixing commit and resolve the thread** (GraphQL `resolveReviewThread`); a summary comment is not enough. Check again for new feedback after each push.

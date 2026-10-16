@@ -231,7 +231,17 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]anthropic.ToolUnionParam, *
 	return tools, nil
 }
 
-func (c *Client) toolChoice(tc llms.ToolChoice) (param anthropic.ToolChoiceUnionParam, set bool, perr *llms.ProviderError) {
+func (c *Client) toolChoice(req llms.ChatRequest) (param anthropic.ToolChoiceUnionParam, set bool, perr *llms.ProviderError) {
+	tc := req.ToolChoice
+	if len(req.Tools) == 0 {
+		if tc.RequiresTools() {
+			return anthropic.ToolChoiceUnionParam{}, false,
+				badRequest(c.model, "tool choice "+string(tc.Type)+" requires at least one tool")
+		}
+		// With no tools offered, auto/none are equivalent to omitting the
+		// tool choice, and strict servers reject one sent without tools (#88).
+		return anthropic.ToolChoiceUnionParam{}, false, nil
+	}
 	switch tc.Type {
 	case llms.ToolChoiceAuto:
 		return anthropic.ToolChoiceUnionParam{OfAuto: &anthropic.ToolChoiceAutoParam{}}, true, nil
@@ -303,11 +313,7 @@ func (c *Client) toParams(req llms.ChatRequest) (anthropic.MessageNewParams, err
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
-	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
-		return anthropic.MessageNewParams{},
-			badRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
-	}
-	ch, ok, perr := c.toolChoice(req.ToolChoice)
+	ch, ok, perr := c.toolChoice(req)
 	if perr != nil {
 		return anthropic.MessageNewParams{}, perr
 	}

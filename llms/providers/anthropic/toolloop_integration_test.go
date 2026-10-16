@@ -28,3 +28,7 @@ func TestIntegrationAnthropicToolLoopConvergence(t *testing.T) {
 func TestIntegrationAnthropicLongToolConversation(t *testing.T) {
 	livetest.LongToolConversation(t, newAnthropicToolLoopClient(t))
 }
+
+func TestIntegrationAnthropicToolLoopNoTools(t *testing.T) {
+	livetest.ToolLoopNoTools(t, newAnthropicToolLoopClient(t))
+}

@@ -267,7 +267,16 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]*genai.Tool, *llms.Provider
 	return []*genai.Tool{{FunctionDeclarations: decls}}, nil
 }
 
-func (c *Client) toolConfig(tc llms.ToolChoice) (*genai.ToolConfig, *llms.ProviderError) {
+func (c *Client) toolConfig(req llms.ChatRequest) (*genai.ToolConfig, *llms.ProviderError) {
+	tc := req.ToolChoice
+	if len(req.Tools) == 0 {
+		if tc.RequiresTools() {
+			return nil, badRequest(c.model, "tool choice "+string(tc.Type)+" requires at least one tool")
+		}
+		// With no tools offered, auto/none are equivalent to omitting the
+		// tool choice, and strict servers reject one sent without tools (#88).
+		return nil, nil
+	}
 	mk := func(mode genai.FunctionCallingConfigMode, names []string) *genai.ToolConfig {
 		return &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{
 			Mode: mode, AllowedFunctionNames: names,
@@ -305,10 +314,7 @@ func (c *Client) toParams(req llms.ChatRequest) ([]*genai.Content, *genai.Genera
 	if perr != nil {
 		return nil, nil, perr
 	}
-	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
-		return nil, nil, badRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
-	}
-	tcfg, perr := c.toolConfig(req.ToolChoice)
+	tcfg, perr := c.toolConfig(req)
 	if perr != nil {
 		return nil, nil, perr
 	}

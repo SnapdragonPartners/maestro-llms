@@ -265,3 +265,29 @@ func LongToolConversation(t *testing.T, c llms.ChatClient) {
 	t.Logf("OK %d-hop session, %d tool iteration(s), usage in=%d out=%d",
 		hops, out.Iterations, out.TotalUsage.InputTokens, out.TotalUsage.OutputTokens)
 }
+
+// ToolLoopNoTools runs toolloop with no tools and the default (auto) tool
+// choice, which toolloop documents as equivalent to a single Complete call
+// (issue #88). Strict servers reject a tool choice sent without tools, so
+// this proves the adapter omits it and the run ends in a final answer.
+func ToolLoopNoTools(t *testing.T, c llms.ChatClient) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), scenarioTimeout)
+	defer cancel()
+	out := toolloop.Run(ctx, toolloop.Config{
+		Client: withRetry(c),
+		Request: llms.ChatRequest{
+			Messages:  []llms.Message{llms.UserText("What is the capital of France? Answer in one word.")},
+			MaxTokens: maxTokens,
+		},
+	})
+	if out.Kind != toolloop.OutcomeFinalAnswer {
+		t.Fatalf("kind = %q, want final_answer; err=%v", out.Kind, out.Err)
+	}
+	if out.Iterations != 0 {
+		t.Errorf("iterations = %d, want 0 (no tool calls)", out.Iterations)
+	}
+	if !strings.Contains(strings.ToLower(out.Response.Text), "paris") {
+		t.Errorf("answer = %q, want it to mention Paris", out.Response.Text)
+	}
+}

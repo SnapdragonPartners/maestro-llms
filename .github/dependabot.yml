@@ -1,0 +1,36 @@
+# Dependabot version updates (#38). SDK version ownership lives in this repo:
+# downstream consumers (Maestro, Morris) inherit provider SDKs transitively
+# and ignore them in their own dependabot config.
+#
+# Only the root module is watched. examples/* modules `replace` onto the root
+# and are re-synced with `make tidy`; CI's "Build examples" step fails on any
+# dependabot PR until that is run and committed to the PR branch.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      # Provider SDKs are deliberately NOT grouped: each bump can change
+      # adapter behavior (e.g. anthropic-sdk-go v1.8x credential chain) and
+      # gets its own PR, unit tests, and a live `make test-integration` run.
+      # Everything else is batched into one weekly PR.
+      go-deps:
+        patterns: ["*"]
+        exclude-patterns:
+          - "github.com/anthropics/anthropic-sdk-go"
+          - "github.com/openai/openai-go*"
+          - "google.golang.org/genai"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]

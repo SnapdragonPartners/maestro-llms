@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -489,5 +490,47 @@ func TestSystemMustBeTextOnly(t *testing.T) {
 	var pe *llms.ProviderError
 	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
 		t.Fatalf("want bad_request ProviderError for non-text system, got %v", err)
+	}
+}
+
+// roundTripFunc lets a test observe the outgoing request without a server.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// The SDK's environment defaults must never apply: an ambient base URL must
+// not redirect traffic, and an ambient auth token must not add a second
+// credential alongside the app's key (divergence A6). ANTHROPIC_API_KEY is
+// left empty because the SDK's chain stops at a non-empty key and would
+// never reach the auth token.
+func TestEnvironmentDefaultsIgnored(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "ambient-token")
+	t.Setenv("ANTHROPIC_BASE_URL", "http://ambient.invalid")
+	var got *http.Request
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(textMsgJSON)),
+			Request:    r,
+		}, nil
+	})
+	c, err := New(WithAPIKey("app-key"), WithModel("claude-test"), WithHTTPClient(&http.Client{Transport: rt}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got.URL.Host != "api.anthropic.com" {
+		t.Fatalf("request host = %q, want api.anthropic.com (ambient ANTHROPIC_BASE_URL must not redirect)", got.URL.Host)
+	}
+	if k := got.Header.Get("X-Api-Key"); k != "app-key" {
+		t.Fatalf("x-api-key = %q, want the app-supplied key", k)
+	}
+	if a := got.Header.Get("Authorization"); a != "" {
+		t.Fatalf("Authorization = %q, want none (ambient ANTHROPIC_AUTH_TOKEN must not apply)", a)
 	}
 }

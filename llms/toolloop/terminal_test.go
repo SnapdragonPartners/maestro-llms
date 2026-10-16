@@ -245,3 +245,47 @@ func TestRun_Terminal_TranscriptIsRefeedable(t *testing.T) {
 func validatedClient(c llms.ChatClient) llms.ChatClient {
 	return middleware.ChainChat(c, middleware.ValidationChat())
 }
+
+func TestRun_Terminal_CallbackMutationDoesNotCorruptTerminalCall(t *testing.T) {
+	// Both the executor and the observer scribble over the bytes they are
+	// handed; Outcome.TerminalCall must still carry the model's original
+	// submission, identical to the transcript.
+	const params = `{"v":"ok"}`
+	scribble := func(b []byte) {
+		for i := range b {
+			b[i] = 'X'
+		}
+	}
+	tool := toolloop.Tool{
+		Definition: llms.ToolDefinition{Name: submitToolName},
+		Execute: func(_ context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
+			scribble(call.Parameters)
+			scribble(call.ProviderSignature)
+			return toolloop.ToolResult{Content: "accepted", Stop: true}, nil
+		},
+	}
+	resp := toolCallResp("s1", submitToolName, params, llms.Usage{})
+	resp.ToolCalls[0].ProviderSignature = []byte("sig")
+	resp.Message.Content[0].ToolCall.ProviderSignature = []byte("sig")
+	out := toolloop.Run(context.Background(), toolloop.Config{
+		Client:  scriptedResponses(resp),
+		Request: userReq("go"),
+		Tools:   []toolloop.Tool{tool},
+		OnToolCall: func(e toolloop.ToolCallEvent) {
+			scribble(e.Call.Parameters)
+			scribble(e.Call.ProviderSignature)
+		},
+	})
+	if out.Kind != toolloop.OutcomeTerminalTool {
+		t.Fatalf("kind = %q, want terminal_tool; err=%v", out.Kind, out.Err)
+	}
+	if got := string(out.TerminalCall.Parameters); got != params {
+		t.Fatalf("TerminalCall.Parameters = %q, want %q", got, params)
+	}
+	if got := string(out.TerminalCall.ProviderSignature); got != "sig" {
+		t.Fatalf("TerminalCall.ProviderSignature = %q, want %q", got, "sig")
+	}
+	if got := string(out.Messages[1].Content[0].ToolCall.Parameters); got != params {
+		t.Fatalf("transcript Parameters = %q, want %q", got, params)
+	}
+}

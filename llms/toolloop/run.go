@@ -261,7 +261,11 @@ func executeCalls(
 					IsError:    true,
 				}
 			}
-			return results, &terminalStop{call: call, result: result}, nil
+			// Fresh clone for the Outcome: call's buffers were handed to
+			// Execute and OnToolCall, which may have mutated them, and
+			// TerminalCall.Parameters is the structured output callers
+			// decode. It must match the transcript's original submission.
+			return results, &terminalStop{call: cloneToolCall(resp.ToolCalls[i]), result: result}, nil
 		}
 	}
 	return results, nil, nil

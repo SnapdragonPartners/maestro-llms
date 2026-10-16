@@ -1,8 +1,10 @@
 # Tool Loop Proposal
 
 Status: Accepted (ADR-0011); terminal tools and the executed limit turn are
-superseded by [ADR-0017](adr/0017-toolloop-terminal-tools.md), which takes
-precedence where this document conflicts with it.  
+superseded by [ADR-0017](adr/0017-toolloop-terminal-tools.md), and
+`OutcomeDeadline` / `NoIterationLimit` are added by
+[ADR-0019](adr/0019-toolloop-deadline-and-no-iteration-limit.md); both take
+precedence where this document conflicts with them.  
 Date: 2026-05-19
 
 ## Purpose

@@ -1,6 +1,6 @@
 # 0011. Tool loop helper — scope, API, and non-goals
 
-- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed)
+- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed); amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (`OutcomeDeadline`; negative `MaxIterations` is unlimited)
 - **Date:** 2026-05-19
 
 ## Context
@@ -142,3 +142,16 @@ Two decisions above are superseded by
   `OutcomeTerminalTool`. Agent state transitions remain out of scope.
 - The pre-execute `MaxIterations` stop is replaced: the limit-hitting
   turn's tool calls are executed and their results appended.
+
+## Amendment 2026-10-16 — amended by ADR-0019
+
+Two decisions above are amended by
+[ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md). The text
+above is unchanged (append-only).
+
+- The outcome set gains `OutcomeDeadline`: a stop while the loop's own
+  context has reached its deadline is no longer reported as `LLMError` or
+  `ToolError`. A per-attempt `DeadlineExceeded` (the `Timeout` middleware)
+  is still an LLM error.
+- Negative `MaxIterations` means no iteration limit
+  (`toolloop.NoIterationLimit`); only zero means the default of 8.

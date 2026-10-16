@@ -2,8 +2,10 @@
 // provider-protocol tool round-trip over an llms.ChatClient: send a request,
 // execute every tool call the model emits, append the matching tool results,
 // and repeat until the model returns a response with no tool calls (final
-// answer), the configured iteration limit is reached, the provider or an
-// executor errors, or the caller cancels the context.
+// answer), an executor marks its result terminal (ToolResult.Stop), the
+// configured iteration limit is reached (if any; see NoIterationLimit), the
+// provider or an executor errors, or the loop's context is canceled or
+// reaches its deadline.
 //
 // The full design and binding non-goals are in docs/toolloop-proposal.md
 // (accepted as ADR-0011). This is deliberately a tool loop, not an agent

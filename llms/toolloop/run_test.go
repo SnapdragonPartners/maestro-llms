@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -232,6 +233,25 @@ func TestRun_MaxIterations_LimitTurnExecuted(t *testing.T) {
 	}
 	if out.Err != nil {
 		t.Fatalf("Err = %v, want nil for MaxIterations", out.Err)
+	}
+}
+
+// A huge MaxIterations (callers bounding the run by context deadline) must
+// not size the transcript allocation (#73). math.MaxInt32 previously
+// allocated ~4 billion messages; the cap check makes the guard
+// deterministic rather than timing-based.
+func TestRun_HugeMaxIterations_BoundedPrealloc(t *testing.T) {
+	client := scriptedResponses(finalTextResp("done", llms.Usage{}))
+	out := toolloop.Run(context.Background(), toolloop.Config{
+		Client:        client,
+		Request:       userReq("hi"),
+		MaxIterations: math.MaxInt32,
+	})
+	if out.Kind != toolloop.OutcomeFinalAnswer {
+		t.Fatalf("kind = %q, want final_answer; err=%v", out.Kind, out.Err)
+	}
+	if c := cap(out.Messages); c > 1+2*16 {
+		t.Fatalf("cap(Messages) = %d, want <= %d (prealloc must not scale with MaxIterations)", c, 1+2*16)
 	}
 }
 

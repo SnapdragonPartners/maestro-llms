@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -191,12 +192,18 @@ func LongToolConversation(t *testing.T, c llms.ChatClient) {
 	if testing.Short() {
 		t.Skip("long live tool conversation skipped under -short")
 	}
-	const hops = 6
+	// Opaque, unguessable IDs: each is learned only from the previous
+	// note, and an ID not yet revealed is rejected, so a pass proves the
+	// model followed the chain one hop per turn.
+	chain := []string{"n1", "q7rk", "x2mb", "f9tw", "c4hz", "w8pd"}
+	hops := len(chain)
 	notes := make(map[string]string, hops)
-	for i := 1; i < hops; i++ {
-		notes[fmt.Sprintf("n%d", i)] = fmt.Sprintf("Not here yet. Continue with note n%d.", i+1)
+	for i := 0; i < hops-1; i++ {
+		notes[chain[i]] = fmt.Sprintf("Not here yet. Continue with note %s.", chain[i+1])
 	}
-	notes[fmt.Sprintf("n%d", hops)] = "End of chain. The vault code is " + codename + "."
+	notes[chain[hops-1]] = "End of chain. The vault code is " + codename + "."
+	revealed := map[string]bool{chain[0]: true}
+	var visited []string
 
 	readNote := toolloop.Tool{
 		Definition: toolDef("read_note", "Read a note by id.",
@@ -207,8 +214,14 @@ func LongToolConversation(t *testing.T, c llms.ChatClient) {
 			}
 			_ = json.Unmarshal(call.Parameters, &a)
 			body, ok := notes[a.ID]
-			if !ok {
-				return toolloop.ToolResult{Content: fmt.Sprintf("no note %q", a.ID), IsError: true}, nil
+			if !ok || !revealed[a.ID] {
+				return toolloop.ToolResult{Content: fmt.Sprintf("no note %q; only read ids you were given", a.ID), IsError: true}, nil
+			}
+			if !slices.Contains(visited, a.ID) { // first read only; re-reads are harmless
+				visited = append(visited, a.ID)
+			}
+			if i := slices.Index(chain, a.ID); i+1 < hops {
+				revealed[chain[i+1]] = true
 			}
 			return toolloop.ToolResult{Content: body}, nil
 		},
@@ -239,6 +252,9 @@ func LongToolConversation(t *testing.T, c llms.ChatClient) {
 	}
 	if out.Kind != toolloop.OutcomeFinalAnswer {
 		t.Fatalf("kind=%q iterations=%d err=%v, want final_answer", out.Kind, out.Iterations, out.Err)
+	}
+	if !slices.Equal(visited, chain) {
+		t.Fatalf("notes visited = %v, want the full chain in order %v", visited, chain)
 	}
 	if out.Iterations < hops {
 		t.Fatalf("iterations=%d, want >= %d (one per hop)", out.Iterations, hops)

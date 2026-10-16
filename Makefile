@@ -76,8 +76,15 @@ fix: fix-imports
 	@echo "Automatic fixes applied"
 
 # Tidy module dependencies.
+# Tidy the root module and every examples/* module. Examples `replace` onto
+# the root, so any root dependency change must be followed by this (CI's
+# "Build examples" step fails on drift).
 tidy:
 	go mod tidy
+	@for mod in examples/*/go.mod; do \
+		dir=$$(dirname "$$mod"); echo "==> $$dir"; \
+		(cd "$$dir" && go mod tidy) || exit 1; \
+	done
 
 # Install git hooks (non-fatal on read-only checkouts / CI).
 install-hooks:

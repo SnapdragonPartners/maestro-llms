@@ -18,6 +18,10 @@ import (
 // "leave at default" mistake, not an attack surface.
 const defaultMaxIterations = 8
 
+// preallocIterations caps how many iterations' worth of transcript (one
+// assistant message plus one tool-result message each) Run preallocates.
+const preallocIterations = 16
+
 // ConfigError is the error type Run puts in Outcome.Err when it rejects a
 // Config. It is a distinct type so callers can errors.As to distinguish
 // "your loop config is wrong" from "an executor failed". Like
@@ -49,8 +53,12 @@ func Run(ctx context.Context, cfg Config) Outcome {
 
 	// Step 2: copy the initial transcript so we never mutate caller state.
 	// Allocate with zero length + capacity headroom so the first appends
-	// don't immediately re-grow.
-	transcript := make([]llms.Message, 0, len(cfg.Request.Messages)+2*maxIter)
+	// don't immediately re-grow. Headroom is capped independently of
+	// maxIter: callers bounding a run by context deadline pass a very large
+	// MaxIterations, and sizing by it allocated billions of messages (#73).
+	// append grows the slice past the cap; that cost is negligible next to
+	// a model call.
+	transcript := make([]llms.Message, 0, len(cfg.Request.Messages)+2*min(maxIter, preallocIterations))
 	transcript = append(transcript, cfg.Request.Messages...)
 
 	var (

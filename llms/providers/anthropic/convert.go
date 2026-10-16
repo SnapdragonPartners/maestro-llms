@@ -348,23 +348,34 @@ func toResponse(msg *anthropic.Message) llms.ChatResponse {
 		Text:       text.String(),
 		ToolCalls:  toolCalls,
 		StopReason: llms.StopReason(msg.StopReason),
-		Usage: llms.Usage{
-			InputTokens: int(msg.Usage.InputTokens),
-			// Anthropic's wire output_tokens already INCLUDES thinking
-			// tokens when extended thinking is enabled. The SDK exposes
-			// no separate field for the visible/thinking split, so we
-			// cannot derive ReasoningTokens. We carry the wire total in
-			// OutputTokens (documented limitation in ADR-0016) and
-			// mirror it as BillableOutputTokens for accounting.
-			// Consumers wanting the visible/thinking breakdown must
-			// inspect the assistant message's ThinkingBlock content.
-			OutputTokens:         int(msg.Usage.OutputTokens),
-			BillableOutputTokens: int(msg.Usage.OutputTokens),
-			TotalTokens:          int(msg.Usage.InputTokens + msg.Usage.OutputTokens),
-			CacheReadTokens:      int(msg.Usage.CacheReadInputTokens),
-			CacheWriteTokens:     int(msg.Usage.CacheCreationInputTokens),
-			ProviderRequestID:    msg.ID,
-		},
-		Raw: msg,
+		Usage:      buildUsage(msg),
+		Raw:        msg,
+	}
+}
+
+// buildUsage normalizes Anthropic usage per ADR-0016 as amended by ADR-0018.
+// The wire output_tokens includes thinking; output_tokens_details.
+// thinking_tokens is the thinking subset (the SDK documents it as always
+// <= output_tokens). When the details field is present, OutputTokens is the
+// visible remainder and ReasoningTokens the thinking count. When it is
+// absent (older API versions or deployments), the combined wire count stays
+// in OutputTokens and ReasoningTokens is zero rather than reported as a
+// measured 0.
+func buildUsage(msg *anthropic.Message) llms.Usage {
+	wireOut := int(msg.Usage.OutputTokens)
+	visible, reasoning := wireOut, 0
+	if msg.Usage.OutputTokensDetails.JSON.ThinkingTokens.Valid() {
+		reasoning = min(max(int(msg.Usage.OutputTokensDetails.ThinkingTokens), 0), wireOut)
+		visible = wireOut - reasoning
+	}
+	return llms.Usage{
+		InputTokens:          int(msg.Usage.InputTokens),
+		OutputTokens:         visible,
+		ReasoningTokens:      reasoning,
+		BillableOutputTokens: wireOut,
+		TotalTokens:          int(msg.Usage.InputTokens) + wireOut,
+		CacheReadTokens:      int(msg.Usage.CacheReadInputTokens),
+		CacheWriteTokens:     int(msg.Usage.CacheCreationInputTokens),
+		ProviderRequestID:    msg.ID,
 	}
 }

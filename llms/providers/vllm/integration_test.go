@@ -80,8 +80,10 @@ func TestIntegrationVLLMChat(t *testing.T) {
 	defer cancel()
 	temp := float32(0.0)
 	resp, err := c.Complete(ctx, llms.ChatRequest{
-		Messages:    []llms.Message{llms.UserText("In one sentence, what is the capital of France?")},
-		MaxTokens:   80,
+		Messages: []llms.Message{llms.UserText("In one sentence, what is the capital of France?")},
+		// Room for reasoning models (e.g. GLM via an OpenAI-compatible
+		// gateway), which can spend 80+ tokens thinking before answering.
+		MaxTokens:   1024,
 		Temperature: &temp,
 	})
 	if err != nil {

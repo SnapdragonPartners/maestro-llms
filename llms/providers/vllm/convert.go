@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/packages/param"
-	"github.com/openai/openai-go/shared"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
@@ -123,7 +123,7 @@ func (c *Client) assistantMessage(parts []llms.ContentPart) (openai.ChatCompleti
 	}
 	var (
 		text      strings.Builder
-		toolCalls []openai.ChatCompletionMessageToolCallParam
+		toolCalls []openai.ChatCompletionMessageToolCallUnionParam
 	)
 	for i := range parts {
 		p := parts[i]
@@ -142,11 +142,13 @@ func (c *Client) assistantMessage(parts []llms.ContentPart) (openai.ChatCompleti
 				return openai.ChatCompletionMessageParamUnion{},
 					chatBadRequest(c.model, "tool_call content part with nil ToolCall")
 			}
-			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallParam{
-				ID: p.ToolCall.ID,
-				Function: openai.ChatCompletionMessageToolCallFunctionParam{
-					Name:      p.ToolCall.Name,
-					Arguments: string(p.ToolCall.Parameters),
+			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
+				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+					ID: p.ToolCall.ID,
+					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+						Name:      p.ToolCall.Name,
+						Arguments: string(p.ToolCall.Parameters),
+					},
 				},
 			})
 		default:
@@ -175,11 +177,11 @@ func (c *Client) assistantMessage(parts []llms.ContentPart) (openai.ChatCompleti
 // buildTools maps llms.ToolDefinitions to Chat Completions tool params.
 // Empty schema is coerced to {"type":"object"}; missing "required" becomes
 // an empty array (some servers reject null).
-func (c *Client) buildTools(req llms.ChatRequest) ([]openai.ChatCompletionToolParam, *llms.ProviderError) {
+func (c *Client) buildTools(req llms.ChatRequest) ([]openai.ChatCompletionToolUnionParam, *llms.ProviderError) {
 	if len(req.Tools) == 0 {
 		return nil, nil
 	}
-	tools := make([]openai.ChatCompletionToolParam, 0, len(req.Tools))
+	tools := make([]openai.ChatCompletionToolUnionParam, 0, len(req.Tools))
 	for i := range req.Tools {
 		t := req.Tools[i]
 		params := map[string]any{"type": "object"}
@@ -212,7 +214,7 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]openai.ChatCompletionToolPa
 		if t.Description != "" {
 			fn.Description = param.NewOpt(t.Description)
 		}
-		tools = append(tools, openai.ChatCompletionToolParam{Function: fn})
+		tools = append(tools, openai.ChatCompletionFunctionTool(fn))
 	}
 	return tools, nil
 }
@@ -234,7 +236,7 @@ func (c *Client) toolChoice(tc llms.ToolChoice) (openai.ChatCompletionToolChoice
 				chatBadRequest(c.model, `tool choice type "tool" requires a tool name`)
 		}
 		return openai.ChatCompletionToolChoiceOptionUnionParam{
-			OfChatCompletionNamedToolChoice: &openai.ChatCompletionNamedToolChoiceParam{
+			OfFunctionToolChoice: &openai.ChatCompletionNamedToolChoiceParam{
 				Function: openai.ChatCompletionNamedToolChoiceFunctionParam{Name: tc.Name},
 			},
 		}, true, nil
@@ -296,12 +298,12 @@ func (c *Client) toParams(req llms.ChatRequest) (openai.ChatCompletionNewParams,
 // without a code change.
 func buildUsage(resp *openai.ChatCompletion) llms.Usage {
 	billable := int(resp.Usage.CompletionTokens)
-	reasoning := int(resp.Usage.CompletionTokensDetails.ReasoningTokens)
+	// Clamp reasoning to the billed total: some OpenAI-compatible servers
+	// report reasoning_tokens > completion_tokens on length-truncated
+	// responses (LunaRoute glm-5.3: 82 > 80). Clamping keeps
+	// Output + Reasoning == Billable, as the Anthropic adapter does.
+	reasoning := min(max(int(resp.Usage.CompletionTokensDetails.ReasoningTokens), 0), billable)
 	visible := billable - reasoning
-	if visible < 0 {
-		// Defensive: should never happen per the documented schema.
-		visible = 0
-	}
 	return llms.Usage{
 		InputTokens:          int(resp.Usage.PromptTokens),
 		OutputTokens:         visible,

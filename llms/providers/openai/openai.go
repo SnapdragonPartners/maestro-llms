@@ -4,9 +4,9 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/responses"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
@@ -95,11 +95,13 @@ func (s *settings) validate(checkDimensions bool) error {
 
 // newAPI builds the SDK client from app-supplied options only.
 // openai.NewClient prepends DefaultClientOptions, which read OPENAI_BASE_URL,
-// OPENAI_API_KEY, OPENAI_ORG_ID and OPENAI_PROJECT_ID from the environment,
-// so an ambient OPENAI_BASE_URL would redirect traffic (with the app's key)
-// and ambient org/project headers would be attached. openai-go v1 has no
-// opt-out, so the services this package uses are constructed directly
-// (divergence X6).
+// OPENAI_API_KEY, OPENAI_ADMIN_KEY, OPENAI_ORG_ID, OPENAI_PROJECT_ID and
+// OPENAI_CUSTOM_HEADERS from the environment, so an ambient OPENAI_BASE_URL
+// would redirect traffic (with the app's key) and ambient headers would be
+// attached. openai-go v3's opt-out (requestconfig.WithEnvironmentDefaultsDisabled)
+// is internal API, so the services this package uses are constructed
+// directly (divergence X6). Without an app HTTP client the SDK falls back
+// to http.DefaultClient, as in v1; timeouts belong to the Timeout middleware.
 func newAPI(opts []option.RequestOption) openai.Client {
 	return openai.Client{
 		Options:    opts,

@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
@@ -107,11 +107,12 @@ func New(opts ...Option) (*Client, error) {
 	reqOpts = append(reqOpts, option.WithMaxRetries(retries))
 
 	// Not openai.NewClient: it prepends DefaultClientOptions, which read
-	// OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_ORG_ID and OPENAI_PROJECT_ID
-	// from the environment. With no WithAPIKey, an ambient OPENAI_API_KEY
-	// would be sent as a bearer token to whatever server baseURL names.
-	// openai-go v1 has no opt-out, so only the services this package uses
-	// are constructed (divergence X6).
+	// OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_ADMIN_KEY, OPENAI_ORG_ID,
+	// OPENAI_PROJECT_ID and OPENAI_CUSTOM_HEADERS from the environment. With
+	// no WithAPIKey, an ambient OPENAI_API_KEY would be sent as a bearer
+	// token to whatever server baseURL names. openai-go v3's opt-out is
+	// internal API, so only the services this package uses are constructed
+	// (divergence X6).
 	api := openai.Client{
 		Options: reqOpts,
 		Chat:    openai.NewChatService(reqOpts...),

@@ -423,6 +423,8 @@ func TestEnvironmentDefaultsIgnored(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "ambient-key")
 	t.Setenv("OPENAI_ORG_ID", "ambient-org")
 	t.Setenv("OPENAI_PROJECT_ID", "ambient-project")
+	t.Setenv("OPENAI_ADMIN_KEY", "ambient-admin-key")
+	t.Setenv("OPENAI_CUSTOM_HEADERS", "X-Ambient: 1")
 	var got *http.Request
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		got = r
@@ -446,7 +448,7 @@ func TestEnvironmentDefaultsIgnored(t *testing.T) {
 	if a := got.Header.Get("Authorization"); a != "Bearer app-key" {
 		t.Fatalf("Authorization = %q, want the app-supplied key", a)
 	}
-	for _, h := range []string{"OpenAI-Organization", "OpenAI-Project"} {
+	for _, h := range []string{"OpenAI-Organization", "OpenAI-Project", "X-Ambient"} {
 		if v := got.Header.Get(h); v != "" {
 			t.Fatalf("%s = %q, want none (ambient env must not apply)", h, v)
 		}

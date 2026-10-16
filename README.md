@@ -757,9 +757,14 @@ v1.82 / genai v1.75 with the Anthropic client no longer reading SDK
 environment defaults; live toolloop and Vertex integration tests),
 **v0.8.1** (`openai`/`vllm` ignore `OPENAI_*` environment variables;
 `vllm` verified against the LunaRoute gateway; `WithBaseURL` includes
-`/v1`), and **v0.9.0** (openai-go v3; Anthropic thinking tokens reported
+`/v1`), **v0.9.0** (openai-go v3; Anthropic thinking tokens reported
 as `ReasoningTokens` — see
 [ADR-0018](docs/adr/0018-anthropic-thinking-tokens.md); toolloop
-preallocation no longer scales with `MaxIterations`).
+preallocation no longer scales with `MaxIterations`), and **v0.10.0**
+(toolloop `OutcomeDeadline` and `NoIterationLimit` — see
+[ADR-0019](docs/adr/0019-toolloop-deadline-and-no-iteration-limit.md);
+`OutcomeEmptyResponse` — see
+[ADR-0020](docs/adr/0020-toolloop-empty-response.md); adapters omit
+`tool_choice` when no tools are offered).
 
 MIT — see [`LICENSE`](LICENSE).

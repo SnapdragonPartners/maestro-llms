@@ -105,7 +105,18 @@ func New(opts ...Option) (*Client, error) {
 	}
 	reqOpts = append(reqOpts, option.WithMaxRetries(retries))
 
-	return &Client{api: openai.NewClient(reqOpts...), model: s.model}, nil
+	// Not openai.NewClient: it prepends DefaultClientOptions, which read
+	// OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_ORG_ID and OPENAI_PROJECT_ID
+	// from the environment. With no WithAPIKey, an ambient OPENAI_API_KEY
+	// would be sent as a bearer token to whatever server baseURL names.
+	// openai-go v1 has no opt-out, so only the services this package uses
+	// are constructed (divergence X6).
+	api := openai.Client{
+		Options: reqOpts,
+		Chat:    openai.NewChatService(reqOpts...),
+		Models:  openai.NewModelService(reqOpts...),
+	}
+	return &Client{api: api, model: s.model}, nil
 }
 
 // Model returns the model this client targets.

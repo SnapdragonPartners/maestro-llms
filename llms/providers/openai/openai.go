@@ -6,6 +6,7 @@ import (
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/responses"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
@@ -92,9 +93,27 @@ func (s *settings) validate(checkDimensions bool) error {
 	}
 }
 
+// newAPI builds the SDK client from app-supplied options only.
+// openai.NewClient prepends DefaultClientOptions, which read OPENAI_BASE_URL,
+// OPENAI_API_KEY, OPENAI_ORG_ID and OPENAI_PROJECT_ID from the environment,
+// so an ambient OPENAI_BASE_URL would redirect traffic (with the app's key)
+// and ambient org/project headers would be attached. openai-go v1 has no
+// opt-out, so the services this package uses are constructed directly
+// (divergence X6).
+func newAPI(opts []option.RequestOption) openai.Client {
+	return openai.Client{
+		Options:    opts,
+		Embeddings: openai.NewEmbeddingService(opts...),
+		Models:     openai.NewModelService(opts...),
+		Responses:  responses.NewResponseService(opts...),
+	}
+}
+
 // requestOptions builds the SDK request options shared by all clients.
+// WithEnvironmentProduction supplies the api.openai.com default base URL that
+// DefaultClientOptions would otherwise have provided (see newAPI).
 func (s *settings) requestOptions() []option.RequestOption {
-	reqOpts := []option.RequestOption{option.WithAPIKey(s.apiKey)}
+	reqOpts := []option.RequestOption{option.WithEnvironmentProduction(), option.WithAPIKey(s.apiKey)}
 	if s.baseURL != "" {
 		reqOpts = append(reqOpts, option.WithBaseURL(s.baseURL))
 	}
@@ -119,7 +138,7 @@ func New(opts ...Option) (*Client, error) {
 		return nil, err
 	}
 	return &Client{
-		api:        openai.NewClient(s.requestOptions()...),
+		api:        newAPI(s.requestOptions()),
 		model:      s.model,
 		dimensions: s.dimensions,
 	}, nil

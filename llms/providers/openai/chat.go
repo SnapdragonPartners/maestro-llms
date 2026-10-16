@@ -32,7 +32,7 @@ func NewChat(opts ...Option) (*ChatClient, error) {
 	if err := s.validate(false); err != nil {
 		return nil, err
 	}
-	return &ChatClient{api: openai.NewClient(s.requestOptions()...), model: s.model}, nil
+	return &ChatClient{api: newAPI(s.requestOptions()), model: s.model}, nil
 }
 
 // Model returns the model this client targets.

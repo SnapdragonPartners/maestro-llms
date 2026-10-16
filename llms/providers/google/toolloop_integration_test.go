@@ -28,3 +28,7 @@ func TestIntegrationGoogleToolLoopConvergence(t *testing.T) {
 func TestIntegrationGoogleLongToolConversation(t *testing.T) {
 	livetest.LongToolConversation(t, newGoogleToolLoopClient(t))
 }
+
+func TestIntegrationGoogleToolLoopNoTools(t *testing.T) {
+	livetest.ToolLoopNoTools(t, newGoogleToolLoopClient(t))
+}

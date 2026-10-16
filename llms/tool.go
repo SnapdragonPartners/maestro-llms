@@ -29,6 +29,9 @@ const (
 )
 
 // ToolChoice expresses the caller's tool-use constraint for a request.
+// With no tools offered, Auto and None are equivalent to no constraint, and
+// provider adapters send no tool choice at all, since strict servers reject
+// one without tools.
 type ToolChoice struct {
 	Type ToolChoiceType
 	Name string // set when Type == ToolChoiceTool

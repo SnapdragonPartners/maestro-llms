@@ -24,3 +24,7 @@ func TestIntegrationVLLMToolLoopConvergence(t *testing.T) {
 func TestIntegrationVLLMLongToolConversation(t *testing.T) {
 	livetest.LongToolConversation(t, newVLLMToolLoopClient(t))
 }
+
+func TestIntegrationVLLMToolLoopNoTools(t *testing.T) {
+	livetest.ToolLoopNoTools(t, newVLLMToolLoopClient(t))
+}

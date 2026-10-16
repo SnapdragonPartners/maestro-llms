@@ -206,6 +206,37 @@ func TestToolChoiceRequiredWithoutToolsRejected(t *testing.T) {
 	}
 }
 
+// #88: with no tools offered, auto/none (and the zero choice) must not send
+// tool_choice; strict servers reject a tool choice without tools.
+func TestToolChoiceOmittedWithoutTools(t *testing.T) {
+	for _, tc := range []llms.ToolChoice{
+		{},
+		{Type: llms.ToolChoiceAuto},
+		{Type: llms.ToolChoiceNone},
+	} {
+		var captured map[string]any
+		c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &captured)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, respTextJSON)
+		})
+		_, err := c.Complete(context.Background(), llms.ChatRequest{
+			Messages:   []llms.Message{llms.UserText("hi")},
+			ToolChoice: tc, // no Tools offered
+		})
+		if err != nil {
+			t.Fatalf("%q: Complete: %v", tc.Type, err)
+		}
+		if v, ok := captured["tool_choice"]; ok {
+			t.Fatalf("%q with no tools must omit tool_choice, got %v", tc.Type, v)
+		}
+		if v, ok := captured["tools"]; ok {
+			t.Fatalf("%q with no tools must omit tools, got %v", tc.Type, v)
+		}
+	}
+}
+
 func TestCacheBreakpointIgnoredGracefully(t *testing.T) {
 	c := newClient(t, jsonHandler(t, 200, respTextJSON))
 	_, err := c.Complete(context.Background(), llms.ChatRequest{

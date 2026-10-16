@@ -33,3 +33,7 @@ func TestIntegrationOpenAIToolLoopConvergence(t *testing.T) {
 func TestIntegrationOpenAILongToolConversation(t *testing.T) {
 	livetest.LongToolConversation(t, newOpenAIToolLoopClient(t))
 }
+
+func TestIntegrationOpenAIToolLoopNoTools(t *testing.T) {
+	livetest.ToolLoopNoTools(t, newOpenAIToolLoopClient(t))
+}

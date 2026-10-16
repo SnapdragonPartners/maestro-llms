@@ -94,7 +94,7 @@ func lunaRouteKeyOrSkip(t *testing.T) string {
 
 // TestIntegrationLunaRoute runs, per model: a forced-tool round trip, a
 // ToolChoiceRequired call, an answer-only/reasoning-usage check, and the
-// shared toolloop convergence scenario.
+// shared toolloop convergence and no-tools scenarios.
 func TestIntegrationLunaRoute(t *testing.T) {
 	key := lunaRouteKeyOrSkip(t)
 	for _, model := range lunaRouteModels(t) {
@@ -104,6 +104,7 @@ func TestIntegrationLunaRoute(t *testing.T) {
 			t.Run("ToolChoiceRequired", func(t *testing.T) { lunaRouteToolChoiceRequired(t, c) })
 			t.Run("Reasoning", func(t *testing.T) { lunaRouteReasoning(t, c, lunaRouteIsReasoningModel(model)) })
 			t.Run("ToolLoopConvergence", func(t *testing.T) { livetest.ToolLoopConvergence(t, c) })
+			t.Run("ToolLoopNoTools", func(t *testing.T) { livetest.ToolLoopNoTools(t, c) })
 			if lunaRouteIsReasoningModel(model) {
 				t.Run("EmptyResponseOnBudget", func(t *testing.T) { lunaRouteEmptyResponse(t, c) })
 			}
@@ -247,21 +248,12 @@ func TestIntegrationLunaRouteErrors(t *testing.T) {
 func lunaRouteEmptyResponse(t *testing.T, c *vllm.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	// One unused tool: with no tools, the adapter still sends
-	// tool_choice:"auto", which strict servers reject (#88).
-	unused := toolloop.Tool{
-		Definition: lunaRouteWeather,
-		Execute: func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
-			return toolloop.ToolResult{Content: "sunny"}, nil
-		},
-	}
 	out := toolloop.Run(ctx, toolloop.Config{
 		Client: c,
 		Request: llms.ChatRequest{
 			Messages:  []llms.Message{llms.UserText("Think carefully step by step: how many primes are there below 200? Answer with the number.")},
 			MaxTokens: 16,
 		},
-		Tools: []toolloop.Tool{unused},
 	})
 	if out.Kind == toolloop.OutcomeFinalAnswer {
 		t.Skipf("model emitted visible text within a 16-token budget (stop=%q text=%q); cannot reproduce", out.Response.StopReason, out.Response.Text)

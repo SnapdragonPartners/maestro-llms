@@ -29,3 +29,7 @@ func TestIntegrationOllamaToolLoopConvergence(t *testing.T) {
 func TestIntegrationOllamaLongToolConversation(t *testing.T) {
 	livetest.LongToolConversation(t, newOllamaToolLoopClient(t))
 }
+
+func TestIntegrationOllamaToolLoopNoTools(t *testing.T) {
+	livetest.ToolLoopNoTools(t, newOllamaToolLoopClient(t))
+}

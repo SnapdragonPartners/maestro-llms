@@ -221,8 +221,19 @@ func (c *Client) buildTools(req llms.ChatRequest) ([]openai.ChatCompletionToolUn
 
 // toolChoice maps llms.ToolChoice to the Chat Completions tool_choice union.
 // "auto"/"none"/"required" are the string-mode variants; ToolChoiceTool
-// becomes a named-function choice.
-func (c *Client) toolChoice(tc llms.ToolChoice) (openai.ChatCompletionToolChoiceOptionUnionParam, bool, *llms.ProviderError) {
+// becomes a named-function choice. With no tools offered it rejects a
+// choice that requires tools and otherwise sends none (#88).
+func (c *Client) toolChoice(req llms.ChatRequest) (openai.ChatCompletionToolChoiceOptionUnionParam, bool, *llms.ProviderError) {
+	tc := req.ToolChoice
+	if len(req.Tools) == 0 {
+		if tc.RequiresTools() {
+			return openai.ChatCompletionToolChoiceOptionUnionParam{}, false,
+				chatBadRequest(c.model, "tool choice "+string(tc.Type)+" requires at least one tool")
+		}
+		// With no tools offered, auto/none are equivalent to omitting the
+		// tool choice, and strict servers reject one sent without tools (#88).
+		return openai.ChatCompletionToolChoiceOptionUnionParam{}, false, nil
+	}
 	switch tc.Type {
 	case llms.ToolChoiceAuto:
 		return openai.ChatCompletionToolChoiceOptionUnionParam{OfAuto: param.NewOpt("auto")}, true, nil
@@ -260,10 +271,6 @@ func (c *Client) toParams(req llms.ChatRequest) (openai.ChatCompletionNewParams,
 	if perr != nil {
 		return openai.ChatCompletionNewParams{}, perr
 	}
-	if req.ToolChoice.RequiresTools() && len(req.Tools) == 0 {
-		return openai.ChatCompletionNewParams{},
-			chatBadRequest(c.model, "tool choice "+string(req.ToolChoice.Type)+" requires at least one tool")
-	}
 
 	params := openai.ChatCompletionNewParams{
 		Model:    c.model,
@@ -278,7 +285,7 @@ func (c *Client) toParams(req llms.ChatRequest) (openai.ChatCompletionNewParams,
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
-	ch, ok, perr := c.toolChoice(req.ToolChoice)
+	ch, ok, perr := c.toolChoice(req)
 	if perr != nil {
 		return openai.ChatCompletionNewParams{}, perr
 	}

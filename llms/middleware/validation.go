@@ -63,6 +63,12 @@ func validateChatRequest(req llms.ChatRequest) error {
 	for mi := range req.Messages {
 		m := &req.Messages[mi]
 		if len(m.Content) == 0 {
+			if m.Role == llms.RoleAssistant {
+				// The usual source is a caller appending a ChatResponse
+				// with no text and no tool calls (a reasoning model that
+				// spent its output budget on reasoning); say so.
+				return &ValidationError{fmt.Sprintf("message %d (%s): empty content; drop assistant responses with no text or tool calls (e.g. output budget spent on reasoning) before resending", mi, m.Role)}
+			}
 			return &ValidationError{fmt.Sprintf("message %d (%s): empty content", mi, m.Role)}
 		}
 		if err := validateParts(mi, m); err != nil {

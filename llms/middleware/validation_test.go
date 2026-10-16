@@ -96,6 +96,10 @@ func TestValidationRejections(t *testing.T) {
 	tc("empty content", "empty content", llms.ChatRequest{
 		Messages: []llms.Message{{Role: llms.RoleUser}},
 	})
+	// An empty assistant message (#85) gets a hint naming the usual cause.
+	tc("empty assistant content", "drop assistant responses with no text or tool calls", llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("q"), {Role: llms.RoleAssistant}, llms.UserText("finish")},
+	})
 	tc("tool_call missing ID", "tool_call missing", llms.ChatRequest{
 		Messages: []llms.Message{{Role: llms.RoleAssistant, Content: []llms.ContentPart{
 			{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{ID: ""}},

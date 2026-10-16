@@ -80,7 +80,8 @@ type Config struct {
 }
 
 // IterationEvent is emitted after each provider response is received and
-// appended to the transcript. Index is 0-based across the whole Run. Fields
+// appended to the transcript (an empty response, which is not appended,
+// still emits one before the loop returns OutcomeEmptyResponse). Index is 0-based across the whole Run. Fields
 // are provider-neutral observations only: this struct must not grow story
 // IDs, tenant IDs, agent state, request IDs, audit labels, or other
 // application concepts (see ADR-0011's binding non-goals).
@@ -106,13 +107,23 @@ type ToolCallEvent struct {
 
 // OutcomeKind discriminates Outcome. The set is closed; new kinds require
 // a superseding ADR (OutcomeTerminalTool was added by ADR-0017,
-// OutcomeDeadline by ADR-0019).
+// OutcomeDeadline by ADR-0019, OutcomeEmptyResponse by ADR-0020).
 type OutcomeKind string
 
 const (
 	// OutcomeFinalAnswer is returned when the model emits a response with
-	// no tool calls. Response is that response; Err is nil.
+	// no tool calls and some text. Response is that response; Err is nil.
 	OutcomeFinalAnswer OutcomeKind = "final_answer"
+	// OutcomeEmptyResponse is returned when the model's response has no
+	// tool calls and no text (ADR-0020), typically a reasoning model that
+	// spent its whole output budget on reasoning. Response is that
+	// response, so StopReason (provider-specific, e.g. "length" or
+	// "max_tokens") and Usage say why; its Usage is included in
+	// TotalUsage. The empty assistant message is NOT appended, so Messages
+	// ends at the last well-formed point and can be continued (for
+	// example, by appending a user message asking the model to finish).
+	// Err is nil.
+	OutcomeEmptyResponse OutcomeKind = "empty_response"
 	// OutcomeTerminalTool is returned when an executor set
 	// ToolResult.Stop. TerminalCall and TerminalResult carry the
 	// terminating call and its result; Response is the assistant response
@@ -158,8 +169,8 @@ const (
 // transcript on non-success outcomes.
 //
 // Messages is the full transcript at the moment the loop stopped,
-// including the initial Request.Messages, every assistant response
-// received, and every tool result message the loop appended.
+// including the initial Request.Messages, every non-empty assistant
+// response received, and every tool result message the loop appended.
 //
 // TotalUsage is the best-effort sum of every Usage observed during the
 // run, including the final response when present. Numeric token fields
@@ -176,6 +187,7 @@ const (
 //
 // Err is set by Kind:
 //   - OutcomeFinalAnswer:   nil
+//   - OutcomeEmptyResponse: nil
 //   - OutcomeTerminalTool:  nil
 //   - OutcomeMaxIterations: nil
 //   - OutcomeLLMError:      the error returned by ChatClient.Complete

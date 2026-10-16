@@ -13,7 +13,9 @@ import (
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/internal/livetest"
+	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/vllm"
+	"github.com/SnapdragonPartners/maestro-llms/llms/toolloop"
 )
 
 // LunaRoute is a hosted OpenAI-compatible router (issue #54). These tests
@@ -102,6 +104,9 @@ func TestIntegrationLunaRoute(t *testing.T) {
 			t.Run("ToolChoiceRequired", func(t *testing.T) { lunaRouteToolChoiceRequired(t, c) })
 			t.Run("Reasoning", func(t *testing.T) { lunaRouteReasoning(t, c, lunaRouteIsReasoningModel(model)) })
 			t.Run("ToolLoopConvergence", func(t *testing.T) { livetest.ToolLoopConvergence(t, c) })
+			if lunaRouteIsReasoningModel(model) {
+				t.Run("EmptyResponseOnBudget", func(t *testing.T) { lunaRouteEmptyResponse(t, c) })
+			}
 		})
 	}
 }
@@ -233,4 +238,48 @@ func TestIntegrationLunaRouteErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// lunaRouteEmptyResponse reproduces #85: a reasoning model given a tiny
+// output budget spends it all on reasoning and returns no text and no tool
+// calls. toolloop must return OutcomeEmptyResponse with a transcript that
+// the Validation middleware accepts once a nudge is appended.
+func lunaRouteEmptyResponse(t *testing.T, c *vllm.Client) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	// One unused tool: with no tools, the adapter still sends
+	// tool_choice:"auto", which strict servers reject (#88).
+	unused := toolloop.Tool{
+		Definition: lunaRouteWeather,
+		Execute: func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
+			return toolloop.ToolResult{Content: "sunny"}, nil
+		},
+	}
+	out := toolloop.Run(ctx, toolloop.Config{
+		Client: c,
+		Request: llms.ChatRequest{
+			Messages:  []llms.Message{llms.UserText("Think carefully step by step: how many primes are there below 200? Answer with the number.")},
+			MaxTokens: 16,
+		},
+		Tools: []toolloop.Tool{unused},
+	})
+	if out.Kind == toolloop.OutcomeFinalAnswer {
+		t.Skipf("model emitted visible text within a 16-token budget (stop=%q text=%q); cannot reproduce", out.Response.StopReason, out.Response.Text)
+	}
+	if out.Kind != toolloop.OutcomeEmptyResponse {
+		t.Fatalf("kind = %q, want empty_response; err=%v", out.Kind, out.Err)
+	}
+	t.Logf("empty response: stop=%q usage=%+v", out.Response.StopReason, out.TotalUsage)
+	if out.Response.StopReason != "length" {
+		t.Errorf("StopReason = %q, want length", out.Response.StopReason)
+	}
+	if len(out.Messages) != 1 {
+		t.Fatalf("Messages len = %d, want only the user message (empty response not appended)", len(out.Messages))
+	}
+	next := append(out.Messages, llms.UserText("Now just give the number."))
+	resp, err := middleware.ValidationChat()(c).Complete(ctx, llms.ChatRequest{Messages: next, MaxTokens: 4096})
+	if err != nil {
+		t.Fatalf("continuing from Outcome.Messages: %v", err)
+	}
+	t.Logf("continuation: stop=%q text=%q", resp.StopReason, resp.Text)
 }

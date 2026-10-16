@@ -114,8 +114,13 @@ func Run(ctx context.Context, cfg Config) Outcome {
 
 		// Step 7: append the response message verbatim so any
 		// provider-owned metadata (e.g. ToolCall.ProviderSignature for
-		// Gemini 3) survives into the next request.
-		transcript = append(transcript, resp.Message)
+		// Gemini 3) survives into the next request. An empty response
+		// (ADR-0020) is not appended: an assistant message with no
+		// content cannot be sent back, and Messages must stay sendable.
+		empty := isEmptyResponse(&resp)
+		if !empty {
+			transcript = append(transcript, resp.Message)
+		}
 		lastResponse = resp
 
 		// Step 8: emit OnIteration after the transcript is appended.
@@ -125,6 +130,19 @@ func Run(ctx context.Context, cfg Config) Outcome {
 				Response:     resp,
 				NumToolCalls: len(resp.ToolCalls),
 			})
+		}
+
+		// Step 8a: empty response -> OutcomeEmptyResponse. Typically a
+		// reasoning model that spent its whole output budget on
+		// reasoning; Response.StopReason says why.
+		if empty {
+			return Outcome{
+				Kind:       OutcomeEmptyResponse,
+				Response:   resp,
+				Messages:   transcript,
+				TotalUsage: usage,
+				Iterations: iterIdx,
+			}
 		}
 
 		// Step 9: no tool calls -> final answer.
@@ -184,6 +202,24 @@ func Run(ctx context.Context, cfg Config) Outcome {
 
 		// Step 17: loop.
 	}
+}
+
+// isEmptyResponse reports whether resp carries nothing the model said: no
+// tool calls and no non-empty text. Every adapter drops reasoning content,
+// so a response that spent its whole output budget on reasoning looks like
+// this on every provider. An empty text part counts as empty because
+// providers reject empty text blocks too.
+func isEmptyResponse(resp *llms.ChatResponse) bool {
+	if len(resp.ToolCalls) > 0 {
+		return false
+	}
+	for i := range resp.Message.Content {
+		p := &resp.Message.Content[i]
+		if p.Type != llms.ContentText || p.Text != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // terminalStop records the call whose executor set ToolResult.Stop.

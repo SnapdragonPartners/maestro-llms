@@ -62,7 +62,12 @@ type StopReason string
 
 // ChatResponse is a provider-neutral completion response.
 type ChatResponse struct {
-	// Message is the source of truth for the assistant turn.
+	// Message is the source of truth for the assistant turn. It can be
+	// empty (no text, no tool calls) when a reasoning model spends its
+	// whole output budget on reasoning, since adapters drop reasoning
+	// content; StopReason then reports the provider's length/max-tokens
+	// reason. An empty Message cannot be sent back to a provider, so do
+	// not append it to a transcript you will resend.
 	Message Message
 	// Text and ToolCalls are convenience mirrors derived from Message.
 	// Providers must populate Message; tests should assert mirrors match it.

@@ -27,9 +27,10 @@ type settings struct {
 	hasRetries bool
 }
 
-// WithBaseURL sets the vLLM server's base URL (e.g. "http://localhost:8000").
-// Required — vLLM has no canonical default endpoint the way Ollama does.
-// The /v1 path suffix is appended by the SDK; pass only the host:port root.
+// WithBaseURL sets the server's base URL, including the API version path
+// (e.g. "http://localhost:8000/v1" for vLLM, "https://gw.lunaroute.com/v1"
+// for LunaRoute). Required — there is no canonical default endpoint. The SDK
+// appends only the route ("chat/completions", "models"), not "/v1".
 func WithBaseURL(u string) Option { return func(s *settings) { s.baseURL = u } }
 
 // WithModel sets the model identifier. This must match an ID that the

@@ -338,7 +338,7 @@ leaf package ([ADR-0015](docs/adr/0015-vllm-provider.md)).
 import "github.com/SnapdragonPartners/maestro-llms/llms/providers/vllm"
 
 client, err := vllm.New(
-    vllm.WithBaseURL("http://my-vllm.internal:8000"),
+    vllm.WithBaseURL("http://my-vllm.internal:8000/v1"), // include /v1
     vllm.WithModel("mistralai/Ministral-3-14B-Instruct-2512"),
     // WithAPIKey is OPTIONAL: vLLM's default deployment has no auth.
     // Set it only if your operator configured VLLM_API_KEY.
@@ -361,6 +361,32 @@ Notes:
   Llama / Pythonic / etc.). The toolkit forwards; the server decides.
 - **Streaming is deferred** per ADR-0003. vLLM supports SSE; consumers
   needing it should follow the streaming ADR when it lands.
+
+#### Other OpenAI-compatible gateways (LunaRoute)
+
+The `vllm` package is a generic OpenAI Chat Completions client, so hosted
+routers that speak that wire shape work through it unchanged. Verified
+live against LunaRoute with `glm-5.3` and
+`deepseek-4.1-flash`, covering forced and required tool choice, parallel
+tool calls, multi-turn `toolloop` runs, and reasoning usage (#54):
+
+```go
+client, err := vllm.New(
+    vllm.WithBaseURL("https://gw.lunaroute.com/v1"),
+    vllm.WithAPIKey(lunaRouteKey), // sent as Authorization: Bearer
+    vllm.WithModel("glm-5.3"),     // IDs as listed by ListModels
+)
+```
+
+- Pass the key with `WithAPIKey`. The client ignores `OPENAI_API_KEY` /
+  `OPENAI_BASE_URL` from the environment (divergence X6), so the
+  `export OPENAI_*` setup from LunaRoute's docs does not configure it.
+- Reasoning models return reasoning in a separate `reasoning_content`
+  field. `Text` is the answer only, and the reasoning is counted in
+  `Usage.ReasoningTokens` / `BillableOutputTokens`.
+- LunaRoute limits concurrent requests per key. Set the limiter's
+  `MaxConcurrency` (`RateLimit` middleware) to match, so excess calls
+  queue locally instead of being rejected upstream.
 
 ### Embeddings
 
@@ -652,11 +678,12 @@ credentials/host are present (so any subset works).
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-4o-mini`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`) |
 | Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`) |
 | Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`) |
-| vLLM | `MAESTRO_VLLM` (full base URL, e.g. `http://my-vllm:8000`) | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
+| vLLM | `MAESTRO_VLLM` (full base URL incl. `/v1`, e.g. `http://my-vllm:8000/v1`); optional `MAESTRO_VLLM_API_KEY` | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
+| LunaRoute (via `vllm`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`glm-5.3,deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`) |
 
 ```sh
 MAESTRO_ANTHROPIC_API_KEY=sk-ant-… OPENAI_API_KEY=sk-… GEMINI_API_KEY=… make test-integration
-MAESTRO_VLLM=http://100.x.x.x:8000 make test-integration   # vLLM live test against your own instance
+MAESTRO_VLLM=http://100.x.x.x:8000/v1 make test-integration   # vLLM live test against your own instance
 ```
 
 The `MAESTRO_ANTHROPIC_API_KEY` fallback lets you keep `ANTHROPIC_API_KEY`

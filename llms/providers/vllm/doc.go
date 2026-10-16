@@ -19,6 +19,14 @@
 // Hermes, Llama, Pythonic and other parsers). The toolkit does not gate on
 // this; we forward the request and let the server decide.
 //
+// The package is not vLLM-specific: any server or gateway that speaks the
+// OpenAI Chat Completions wire shape works (verified live against the
+// LunaRoute router with GLM and DeepSeek models, issue #54). Reasoning
+// models that return reasoning in a separate reasoning_content field are
+// handled: Text is the answer only, and reasoning is counted in
+// Usage.ReasoningTokens (ADR-0016). The reasoning text itself is not
+// surfaced (it remains in Raw).
+//
 // Streaming is deferred per ADR-0003. vLLM supports SSE on Chat Completions
 // but until streaming-aware middleware semantics land we ship Complete only.
 package vllm

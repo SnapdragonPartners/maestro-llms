@@ -68,5 +68,19 @@ jobs:
       - name: Vulnerability check
         run: govulncheck ./...
 
+      # Each example is its own module with a `replace` onto the root, so
+      # root dependency bumps can silently break it (e.g. a raised `go`
+      # directive). `go mod tidy -diff` fails if the example's go.mod/go.sum
+      # drifted from what the root now requires.
+      - name: Build examples
+        run: |
+          set -euo pipefail
+          for mod in examples/*/go.mod; do
+            dir="$(dirname "$mod")"
+            echo "==> $dir"
+            (cd "$dir" && go mod tidy -diff) || { echo "::error::$dir is out of sync with the root module; run 'make tidy' and commit"; exit 1; }
+            (cd "$dir" && go build ./... && govulncheck ./...)
+          done
+
       - name: Test
         run: go test -cover ./...

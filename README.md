@@ -685,6 +685,17 @@ endpoint/transport injection, task-typed embeddings — see
 `ToolCall.ProviderSignature` — see
 [ADR-0010](docs/adr/0010-toolcall-provider-signature.md)),
 **v0.5.0** (`llms/toolloop` synchronous tool-loop helper — see
-[ADR-0011](docs/adr/0011-toolloop-helper.md)).
+[ADR-0011](docs/adr/0011-toolloop-helper.md)),
+**v0.6.0** (model listing + per-family upgrade detection, text token
+estimator — see [ADR-0012](docs/adr/0012-model-lister.md),
+[ADR-0013](docs/adr/0013-text-token-estimator.md)),
+**v0.7.0** (self-hosted vLLM provider — see
+[ADR-0015](docs/adr/0015-vllm-provider.md)),
+**v0.7.1** (`Usage.ReasoningTokens` / `BillableOutputTokens` normalization —
+see [ADR-0016](docs/adr/0016-usage-reasoning-tokens.md)),
+**v0.8.0** (toolloop terminal tools + executed `MaxIterations` limit turn —
+see [ADR-0017](docs/adr/0017-toolloop-terminal-tools.md); anthropic-sdk-go
+v1.82 / genai v1.75 with the Anthropic client no longer reading SDK
+environment defaults; live toolloop and Vertex integration tests).
 
 MIT — see [`LICENSE`](LICENSE).

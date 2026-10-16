@@ -224,17 +224,54 @@ out := toolloop.Run(ctx, toolloop.Config{
 switch out.Kind {
 case toolloop.OutcomeFinalAnswer:
 	fmt.Println(out.Response.Text)
-case toolloop.OutcomeMaxIterations, toolloop.OutcomeLLMError,
-	toolloop.OutcomeToolError, toolloop.OutcomeCanceled:
+case toolloop.OutcomeTerminalTool, toolloop.OutcomeMaxIterations,
+	toolloop.OutcomeLLMError, toolloop.OutcomeToolError, toolloop.OutcomeCanceled:
 	// inspect out.Err, out.Messages, out.TotalUsage
 }
 ```
 
-Pre-execute `MaxIterations` stop: if the limit-hitting assistant turn has
-tool calls, that turn is appended to `out.Messages` as diagnostic state
-but its tool calls are not executed — the transcript ends with unresolved
-tool calls and is not directly re-feedable into `Complete` without
-appending tool results for the unresolved calls first.
+`MaxIterations` bounds the number of tool-calling turns. The limit-hitting
+turn's tools are executed and their results appended, then the loop stops
+with `OutcomeMaxIterations` without another provider call.
+
+#### Structured output via a terminal tool
+
+To get a schema-validated result, give the model a terminal tool and set
+`ToolResult.Stop` on a valid submission ([ADR-0017](docs/adr/0017-toolloop-terminal-tools.md)).
+The loop ends with `OutcomeTerminalTool` and no extra model call:
+
+```go
+submit := toolloop.Tool{
+	Definition: llms.ToolDefinition{Name: "submit_findings", InputSchema: findingsSchema},
+	Execute: func(ctx context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
+		var f Findings
+		if err := json.Unmarshal(call.Parameters, &f); err != nil || f.Validate() != nil {
+			// Model-visible: the model fixes its arguments and resubmits.
+			return toolloop.ToolResult{Content: "invalid findings: ...", IsError: true}, nil
+		}
+		return toolloop.ToolResult{Content: "accepted", Stop: true}, nil
+	},
+}
+
+out := toolloop.Run(ctx, toolloop.Config{
+	Client:  client,
+	Request: req,
+	Tools:   []toolloop.Tool{readFile, grep, submit},
+	// Optional: llms.ToolChoice{Type: llms.ToolChoiceRequired} keeps the model
+	// from ending with plain text instead of submitting.
+})
+if out.Kind == toolloop.OutcomeTerminalTool {
+	var f Findings
+	_ = json.Unmarshal(out.TerminalCall.Parameters, &f) // already validated
+}
+```
+
+`Stop` acts like a `return` within the assistant turn. Earlier calls in the
+turn have already run; later calls are not executed and receive a
+synthesized "not executed" error result. `out.Messages` stays well-formed
+and can be fed back into `Complete`. A terminal call on the turn that hits
+`MaxIterations` is still honored. Setting `Stop` and `IsError` together is
+rejected as `OutcomeToolError`.
 
 The helper is deliberately a tool loop, not an agent loop: no agent state,
 persistence, audit taxonomy, authorization, tool registries, or built-in

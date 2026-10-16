@@ -28,9 +28,20 @@ type Tool struct {
 // model can recover. An Execute error (the second return) is a loop-visible
 // abort: the loop stops and returns OutcomeToolError unless the context was
 // canceled, in which case it returns OutcomeCanceled.
+//
+// Stop marks this call as terminal (ADR-0017): the loop appends the result
+// and returns OutcomeTerminalTool instead of making another provider call.
+// It is a per-result decision so an executor can validate first — an
+// invalid submission returns IsError: true (the model fixes and
+// resubmits), and only a valid one sets Stop. Stop and IsError together
+// are a contract violation and produce OutcomeToolError. Like a return
+// statement, Stop ends the assistant turn at that call: later calls in the
+// same turn are not executed and receive a synthesized IsError result so
+// the transcript stays well-formed.
 type ToolResult struct {
 	Content string
 	IsError bool
+	Stop    bool
 }
 
 // Config drives a single Run. Client and Request are required (Request.Messages
@@ -88,20 +99,28 @@ type ToolCallEvent struct {
 	Iteration int
 }
 
-// OutcomeKind discriminates Outcome. The set is closed in v1; new kinds
-// require a superseding ADR.
+// OutcomeKind discriminates Outcome. The set is closed; new kinds require
+// a superseding ADR (OutcomeTerminalTool was added by ADR-0017).
 type OutcomeKind string
 
 const (
 	// OutcomeFinalAnswer is returned when the model emits a response with
 	// no tool calls. Response is that response; Err is nil.
 	OutcomeFinalAnswer OutcomeKind = "final_answer"
-	// OutcomeMaxIterations is returned when the loop has observed the
-	// configured number of tool-calling responses. The limit-hitting
-	// assistant message is appended to Messages as diagnostic state; its
-	// tool calls are NOT executed and Messages is NOT directly re-feedable
-	// into Complete without repairing the unresolved tool-call pairing.
-	// Err is nil.
+	// OutcomeTerminalTool is returned when an executor set
+	// ToolResult.Stop. TerminalCall and TerminalResult carry the
+	// terminating call and its result; Response is the assistant response
+	// that contained it. Messages ends with the tool-result message for
+	// that turn (including synthesized not-executed results for any calls
+	// after the terminal one), so it is well-formed and can be fed back
+	// into Complete. Err is nil.
+	OutcomeTerminalTool OutcomeKind = "terminal_tool"
+	// OutcomeMaxIterations is returned when the loop has executed the
+	// configured number of tool-calling responses without a terminal
+	// call. The limit-hitting turn's tool calls ARE executed (so a
+	// terminal call on that turn is honored, ADR-0017) and their results
+	// are appended, so Messages is well-formed; the loop simply makes no
+	// further provider call. Err is nil.
 	OutcomeMaxIterations OutcomeKind = "max_iterations"
 	// OutcomeLLMError is returned when ChatClient.Complete returned a
 	// non-cancellation error. Err is that error; Response is the last
@@ -138,17 +157,23 @@ const (
 // calls. A single response with no tool calls returns OutcomeFinalAnswer
 // with Iterations == 0.
 //
+// TerminalCall and TerminalResult are set only for OutcomeTerminalTool and
+// are zero otherwise.
+//
 // Err is set by Kind:
 //   - OutcomeFinalAnswer:   nil
+//   - OutcomeTerminalTool:  nil
 //   - OutcomeMaxIterations: nil
 //   - OutcomeLLMError:      the error returned by ChatClient.Complete
 //   - OutcomeToolError:     the configuration validation error or Execute error
 //   - OutcomeCanceled:      a cancellation error; use errors.Is(err, context.Canceled)
 type Outcome struct {
-	Response   llms.ChatResponse
-	Err        error
-	TotalUsage llms.Usage
-	Kind       OutcomeKind
-	Messages   []llms.Message
-	Iterations int
+	Response       llms.ChatResponse
+	Err            error
+	TerminalCall   llms.ToolCall
+	TotalUsage     llms.Usage
+	TerminalResult ToolResult
+	Kind           OutcomeKind
+	Messages       []llms.Message
+	Iterations     int
 }

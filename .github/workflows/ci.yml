@@ -5,6 +5,9 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Dispatched by dependabot-tidy.yml after it pushes a tidy commit (pushes
+  # made with GITHUB_TOKEN don't trigger workflows; dispatch is the exception).
+  workflow_dispatch: {}
 
 # Least privilege: this workflow only reads the repo.
 permissions:

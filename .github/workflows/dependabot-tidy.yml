@@ -1,0 +1,60 @@
+name: Dependabot tidy
+
+# Dependabot only edits the root go.mod. examples/* modules `replace` onto the
+# root, so every root bump leaves them out of sync and CI's "Build examples"
+# step fails. This job runs `make tidy` on Dependabot's own PRs and pushes the
+# result back to the PR branch.
+#
+# - `pull_request` (not `pull_request_target`): Dependabot-triggered runs get a
+#   read-only token by default, raised to contents:write via `permissions`.
+#   Gated to dependabot[bot], so no other actor's PR gets a write token.
+# - Commits pushed with GITHUB_TOKEN do not trigger workflows, which would leave
+#   the required `build-lint-test` check missing on the new head. The documented
+#   exception is workflow_dispatch, so after pushing we dispatch ci.yml on the
+#   branch; its check run attaches to the new head commit.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: dependabot-tidy-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  tidy:
+    if: github.actor == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/go_modules/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: make tidy
+        run: make tidy
+
+      - name: Commit, push, and re-run CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if git diff --quiet; then
+            echo "Already tidy; nothing to push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "build(deps): make tidy (sync examples/* with root)"
+          git push origin "HEAD:$BRANCH"
+          gh workflow run ci.yml --ref "$BRANCH"

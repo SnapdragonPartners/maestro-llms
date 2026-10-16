@@ -455,3 +455,29 @@ func TestUsageReasoningTokensNormalized(t *testing.T) {
 		t.Errorf("BillableOutputTokens = %d, want 250", u.BillableOutputTokens)
 	}
 }
+
+// A keyless client must not pick up an ambient OPENAI_API_KEY and send it to
+// the vLLM server, nor follow an ambient OPENAI_BASE_URL (divergence X6).
+func TestEnvironmentDefaultsIgnored(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "http://ambient.invalid/v1/")
+	t.Setenv("OPENAI_API_KEY", "ambient-key")
+	t.Setenv("OPENAI_ORG_ID", "ambient-org")
+	t.Setenv("OPENAI_PROJECT_ID", "ambient-project")
+	var got http.Header
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, textCompletionJSON)
+	})
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got == nil {
+		t.Fatal("request did not reach the configured base URL")
+	}
+	for _, h := range []string{"Authorization", "OpenAI-Organization", "OpenAI-Project"} {
+		if v := got.Get(h); v != "" {
+			t.Fatalf("%s = %q, want none (ambient env must not apply)", h, v)
+		}
+	}
+}

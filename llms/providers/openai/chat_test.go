@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -408,5 +409,46 @@ func TestUsageNonReasoningUnchanged(t *testing.T) {
 	u := resp.Usage
 	if u.OutputTokens != 7 || u.ReasoningTokens != 0 || u.BillableOutputTokens != 7 {
 		t.Errorf("non-reasoning usage drifted: %+v", u)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Ambient OPENAI_* env vars must not redirect traffic or attach credentials
+// (divergence X6): openai.NewClient would otherwise apply them.
+func TestEnvironmentDefaultsIgnored(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "http://ambient.invalid/v1/")
+	t.Setenv("OPENAI_API_KEY", "ambient-key")
+	t.Setenv("OPENAI_ORG_ID", "ambient-org")
+	t.Setenv("OPENAI_PROJECT_ID", "ambient-project")
+	var got *http.Request
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(respTextJSON)),
+			Request:    r,
+		}, nil
+	})
+	c, err := NewChat(WithAPIKey("app-key"), WithModel("gpt-test"), WithHTTPClient(&http.Client{Transport: rt}))
+	if err != nil {
+		t.Fatalf("NewChat: %v", err)
+	}
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got.URL.Host != "api.openai.com" {
+		t.Fatalf("request host = %q, want api.openai.com (ambient OPENAI_BASE_URL must not redirect)", got.URL.Host)
+	}
+	if a := got.Header.Get("Authorization"); a != "Bearer app-key" {
+		t.Fatalf("Authorization = %q, want the app-supplied key", a)
+	}
+	for _, h := range []string{"OpenAI-Organization", "OpenAI-Project"} {
+		if v := got.Header.Get(h); v != "" {
+			t.Fatalf("%s = %q, want none (ambient env must not apply)", h, v)
+		}
 	}
 }

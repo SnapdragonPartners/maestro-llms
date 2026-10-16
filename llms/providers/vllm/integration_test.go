@@ -24,6 +24,10 @@ func envBase() string { return os.Getenv("MAESTRO_VLLM") }
 // caller knows to autodetect via ListModels.
 func envModel() string { return os.Getenv("MAESTRO_VLLM_MODEL") }
 
+// envAPIKey returns MAESTRO_VLLM_API_KEY: optional, for servers started
+// with --api-key or OpenAI-compatible gateways that require auth.
+func envAPIKey() string { return os.Getenv("MAESTRO_VLLM_API_KEY") }
+
 // hclient is the shared httptest-tolerant client.
 func hclient() *http.Client { return &http.Client{Timeout: 60 * time.Second} }
 
@@ -39,6 +43,7 @@ func newVLLMOrSkip(t *testing.T) (*vllm.Client, string) {
 		probe, err := vllm.New(
 			vllm.WithBaseURL(base),
 			vllm.WithModel("placeholder"), // mandatory at construction; replaced after autodetect
+			vllm.WithAPIKey(envAPIKey()),
 			vllm.WithHTTPClient(hclient()),
 		)
 		if err != nil {
@@ -58,6 +63,7 @@ func newVLLMOrSkip(t *testing.T) (*vllm.Client, string) {
 	c, err := vllm.New(
 		vllm.WithBaseURL(base),
 		vllm.WithModel(model),
+		vllm.WithAPIKey(envAPIKey()),
 		vllm.WithHTTPClient(hclient()),
 	)
 	if err != nil {

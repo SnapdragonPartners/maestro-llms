@@ -117,6 +117,11 @@ text as well as tool use, so it needs its own part.
 
 - Tool loops on default Anthropic models keep their reasoning across turns.
   Replayed blocks are billed as input like any other history.
+- Every consumer of `ContentPart` payloads must handle the new pointer.
+  `middleware.DefaultEstimator` counts `Reasoning.ProviderData` (and, fixing
+  the same gap from ADR-0010, `ToolCall.ProviderSignature`), so replayed
+  payloads can't slip past a limiter. `testllm` deep-copies both in its
+  recordings.
 - **New failure mode for apps that edit history:** editing an earlier turn
   and resending later thinking blocks is a 400 on enforced accounts. Call
   `llms.WithoutReasoning` first. `toolloop` only appends and keeps `System`

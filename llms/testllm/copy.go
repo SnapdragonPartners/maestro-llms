@@ -23,11 +23,17 @@ func copyContentParts(in []llms.ContentPart) []llms.ContentPart {
 		if p.ToolCall != nil {
 			tc := *p.ToolCall
 			tc.Parameters = slices.Clone(p.ToolCall.Parameters)
+			tc.ProviderSignature = slices.Clone(p.ToolCall.ProviderSignature)
 			p.ToolCall = &tc
 		}
 		if p.ToolResult != nil {
 			tr := *p.ToolResult
 			p.ToolResult = &tr
+		}
+		if p.Reasoning != nil {
+			r := *p.Reasoning
+			r.ProviderData = slices.Clone(p.Reasoning.ProviderData)
+			p.Reasoning = &r
 		}
 		out[i] = p
 	}

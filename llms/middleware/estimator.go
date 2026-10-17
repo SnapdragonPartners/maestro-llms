@@ -44,10 +44,18 @@ func tokensForParts(parts []llms.ContentPart) int {
 		p := parts[i]
 		total += perPartOverhead + tokensForText(p.Text)
 		if p.ToolCall != nil {
-			total += tokensForText(p.ToolCall.Name) + tokensForText(string(p.ToolCall.Parameters))
+			total += tokensForText(p.ToolCall.Name) + tokensForText(string(p.ToolCall.Parameters)) +
+				tokensForText(string(p.ToolCall.ProviderSignature))
 		}
 		if p.ToolResult != nil {
 			total += tokensForText(p.ToolResult.Content)
+		}
+		if p.Reasoning != nil {
+			// Opaque provider data is sent back verbatim, so count all of
+			// it (it already holds the readable reasoning, so Text isn't
+			// added again). For a signed or encrypted payload this runs
+			// high, which is the safe direction for a reservation.
+			total += tokensForText(string(p.Reasoning.ProviderData))
 		}
 	}
 	return total

@@ -61,7 +61,7 @@ type Subject struct {
 // Fields are grouped pointer-bearing first (fieldalignment); construct with
 // keyed literals.
 type ReservationRequest struct {
-	Provider       string
+	Provider       llms.ProviderID
 	Model          string
 	Operation      Operation
 	Purpose        llms.Purpose

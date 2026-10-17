@@ -449,3 +449,38 @@ func TestUsageReasoningTokensZeroForNonReasoning(t *testing.T) {
 			resp.Usage.ReasoningTokens)
 	}
 }
+
+// TestForeignReasoningNotSent: a transcript carrying another provider's
+// reasoning (here Anthropic's) is accepted and none of it reaches the wire
+// (ADR-0021).
+func TestForeignReasoningNotSent(t *testing.T) {
+	var body string
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, respTextJSON)
+	})
+	_, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{
+		llms.UserText("q"),
+		{Role: llms.RoleAssistant, Content: []llms.ContentPart{
+			{Type: llms.ContentReasoning, Reasoning: &llms.Reasoning{
+				Provider:     llms.ProviderAnthropic,
+				Text:         "THINK-MARKER",
+				ProviderData: []byte(`{"type":"thinking","signature":"SIG-MARKER"}`),
+			}},
+			llms.Text("calling"),
+			{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{ID: "call_1", Name: "f", Parameters: json.RawMessage(`{}`)}},
+		}},
+		llms.ToolResultMessage(llms.ToolResult{ToolCallID: "call_1", Content: "r"}),
+	}})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if strings.Contains(body, "MARKER") {
+		t.Fatalf("foreign reasoning reached the wire:\n%s", body)
+	}
+	if !strings.Contains(body, "calling") {
+		t.Fatalf("the assistant text must still be sent:\n%s", body)
+	}
+}

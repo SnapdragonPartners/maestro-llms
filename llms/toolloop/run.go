@@ -205,17 +205,19 @@ func Run(ctx context.Context, cfg Config) Outcome {
 }
 
 // isEmptyResponse reports whether resp carries nothing the model said: no
-// tool calls and no non-empty text. Every adapter drops reasoning content,
-// so a response that spent its whole output budget on reasoning looks like
-// this on every provider. An empty text part counts as empty because
-// providers reject empty text blocks too.
+// tool calls and no non-empty text. Reasoning parts don't count (ADR-0021):
+// a response that spent its whole output budget on reasoning is empty on
+// every provider, whether or not the adapter returns the reasoning. An empty
+// text part counts as empty because providers reject empty text blocks too.
 func isEmptyResponse(resp *llms.ChatResponse) bool {
 	if len(resp.ToolCalls) > 0 {
 		return false
 	}
 	for i := range resp.Message.Content {
 		p := &resp.Message.Content[i]
-		if p.Type != llms.ContentText || p.Text != "" {
+		switch {
+		case p.Type == llms.ContentReasoning:
+		case p.Type != llms.ContentText || p.Text != "":
 			return false
 		}
 	}

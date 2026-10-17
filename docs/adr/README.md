@@ -54,3 +54,4 @@ Copy `0001`'s structure as the template.
 | [0018](0018-anthropic-thinking-tokens.md) | Anthropic `ReasoningTokens` from `output_tokens_details.thinking_tokens` (retires the ADR-0016 exception) | Accepted |
 | [0019](0019-toolloop-deadline-and-no-iteration-limit.md) | Tool loop `OutcomeDeadline` and `NoIterationLimit` (the loop's context decides deadline vs failure; negative `MaxIterations` is unlimited) | Accepted |
 | [0020](0020-toolloop-empty-response.md) | Tool loop `OutcomeEmptyResponse` (an empty response is reported, not appended) | Accepted |
+| [0021](0021-reasoning-content-part.md) | Round-trip provider reasoning as a `ContentReasoning` part (Anthropic thinking blocks); typed `ProviderID` | Accepted |

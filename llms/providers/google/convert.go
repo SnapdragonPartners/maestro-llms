@@ -71,6 +71,8 @@ func toolCallNames(req llms.ChatRequest) map[string]string {
 }
 
 func (c *Client) buildContents(req llms.ChatRequest) ([]*genai.Content, *llms.ProviderError) {
+	// Drop other providers' reasoning parts (ADR-0021); none is ours to replay.
+	req.Messages = llms.ReasoningFrom(providerName, req.Messages)
 	idToName := toolCallNames(req)
 	var contents []*genai.Content
 	for i := range req.Messages {

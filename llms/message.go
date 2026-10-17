@@ -27,6 +27,11 @@ const (
 	ContentToolCall ContentPartType = "tool_call"
 	// ContentToolResult is a tool execution result; ToolResult is populated.
 	ContentToolResult ContentPartType = "tool_result"
+	// ContentReasoning is a model's reasoning from an assistant turn;
+	// Reasoning is populated. Adapters emit it only where the provider
+	// requires reasoning to be sent back (Anthropic thinking blocks) and
+	// replay it only to the provider that produced it. See ADR-0021.
+	ContentReasoning ContentPartType = "reasoning"
 )
 
 // ContentPart is one discriminated piece of a message. Exactly one of the
@@ -38,6 +43,7 @@ type ContentPart struct {
 	Text       string
 	ToolCall   *ToolCall
 	ToolResult *ToolResult
+	Reasoning  *Reasoning
 	// CacheBreakpoint is an optional, provider-neutral hint: everything in
 	// the prompt up to and including this part may be prompt-cached.
 	// Providers that expose explicit inline cache control honor it (Anthropic
@@ -47,6 +53,27 @@ type ContentPart struct {
 	// cached-content API; Ollama has none). It is purely advisory: setting or
 	// ignoring it never changes the model's output, only cache economics.
 	CacheBreakpoint bool
+}
+
+// Reasoning is provider-owned reasoning state from an assistant turn, kept in
+// the transcript so the provider can see its earlier reasoning when the
+// conversation is sent back. It is opaque: replay it unchanged, or remove
+// every reasoning part with WithoutReasoning. Editing or removing individual
+// reasoning parts, or editing earlier turns while keeping later reasoning,
+// can make a provider reject the request (Anthropic binds each thinking
+// block to the conversation before it). See ADR-0021.
+type Reasoning struct {
+	// Provider is the adapter that produced this part. Adapters replay only
+	// their own parts and drop the rest (ReasoningFrom), so a transcript can
+	// move between providers.
+	Provider ProviderID
+	// Text is the human-readable reasoning or summary the provider returned,
+	// for display and logging only. It may be empty (Anthropic's default
+	// "omitted" display, redacted thinking) and is never sent back.
+	Text string
+	// ProviderData is the provider's own encoding of the reasoning, sent back
+	// unchanged. The core never interprets it.
+	ProviderData []byte
 }
 
 // Message is one app-neutral conversation turn. Provider adapters translate to

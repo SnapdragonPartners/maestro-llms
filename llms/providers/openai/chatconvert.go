@@ -50,6 +50,8 @@ func roleFor(r llms.Role) (responses.EasyInputMessageRole, bool) {
 // strict alternation requirement: text -> message item; assistant tool_call
 // -> function_call item; tool result -> function_call_output item.
 func (c *ChatClient) buildInput(req llms.ChatRequest) ([]responses.ResponseInputItemUnionParam, *llms.ProviderError) {
+	// Drop other providers' reasoning parts (ADR-0021); none is ours to replay.
+	req.Messages = llms.ReasoningFrom(providerName, req.Messages)
 	var items []responses.ResponseInputItemUnionParam
 	for i := range req.Messages {
 		m := req.Messages[i]

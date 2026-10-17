@@ -11,7 +11,7 @@ import (
 )
 
 // providerName is the llms.ModelRef.Provider value for this package.
-const providerName = "anthropic"
+const providerName = llms.ProviderAnthropic
 
 // defaultMaxTokens is used when a ChatRequest leaves MaxTokens unset; the
 // Anthropic API requires a positive max_tokens.

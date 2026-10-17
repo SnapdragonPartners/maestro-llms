@@ -231,6 +231,8 @@ func (c *Client) toWire(req llms.ChatRequest) (*wireRequest, *llms.ProviderError
 	if sys != "" {
 		msgs = append(msgs, wireMessage{Role: "system", Content: sys})
 	}
+	// Drop other providers' reasoning parts (ADR-0021); none is ours to replay.
+	req.Messages = llms.ReasoningFrom(providerName, req.Messages)
 	for i := range req.Messages {
 		mp, mperr := c.messageParts(req.Messages[i])
 		if mperr != nil {

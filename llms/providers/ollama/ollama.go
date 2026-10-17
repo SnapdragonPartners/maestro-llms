@@ -17,7 +17,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
-const providerName = "ollama"
+const providerName = llms.ProviderOllama
 
 // defaultBaseURL is the conventional local Ollama endpoint.
 const defaultBaseURL = "http://localhost:11434"

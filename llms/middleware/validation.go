@@ -62,11 +62,13 @@ func validateChatRequest(req llms.ChatRequest) error {
 	ps := &pairingState{pending: map[string]struct{}{}, resolved: map[string]struct{}{}}
 	for mi := range req.Messages {
 		m := &req.Messages[mi]
-		if len(m.Content) == 0 {
+		if !hasNonReasoning(m) {
 			if m.Role == llms.RoleAssistant {
 				// The usual source is a caller appending a ChatResponse
 				// with no text and no tool calls (a reasoning model that
-				// spent its output budget on reasoning); say so.
+				// spent its output budget on reasoning); say so. Reasoning
+				// parts alone don't count: other providers drop them, and
+				// a reasoning-only turn is not a reply (ADR-0021).
 				return &ValidationError{fmt.Sprintf("message %d (%s): empty content; drop assistant responses with no text or tool calls (e.g. output budget spent on reasoning) before resending", mi, m.Role)}
 			}
 			return &ValidationError{fmt.Sprintf("message %d (%s): empty content", mi, m.Role)}
@@ -84,9 +86,19 @@ func validateChatRequest(req llms.ChatRequest) error {
 	return nil
 }
 
+// hasNonReasoning reports whether m has any part other than reasoning.
+func hasNonReasoning(m *llms.Message) bool {
+	for i := range m.Content {
+		if m.Content[i].Type != llms.ContentReasoning {
+			return true
+		}
+	}
+	return false
+}
+
 // validateParts checks each content part matches its discriminant AND is
-// legal for the message role: tool_call only on assistant, tool_result only
-// on tool. Text is allowed on user/assistant here; tool messages are further
+// legal for the message role: tool_call and reasoning only on assistant,
+// tool_result only on tool. Text is allowed on user/assistant here; tool messages are further
 // restricted to tool_result-only by pairingState.tool (so the effective
 // contract is: text on user/assistant, tool_call on assistant, tool_result
 // on tool). Enforcing role/part legality here (not just the payload
@@ -104,6 +116,10 @@ func validateParts(mi int, m *llms.Message) error {
 			if m.Role != llms.RoleAssistant {
 				return &ValidationError{fmt.Sprintf("message %d part %d: tool_call only allowed on assistant messages, got role %q", mi, pi, m.Role)}
 			}
+		case llms.ContentReasoning:
+			if err := validateReasoning(mi, pi, m.Role, p); err != nil {
+				return err
+			}
 		case llms.ContentToolResult:
 			if p.ToolResult == nil || p.ToolResult.ToolCallID == "" {
 				return &ValidationError{fmt.Sprintf("message %d part %d: tool_result missing ToolResult/ToolCallID", mi, pi)}
@@ -114,6 +130,18 @@ func validateParts(mi int, m *llms.Message) error {
 		default:
 			return &ValidationError{fmt.Sprintf("message %d part %d: unknown content type %q", mi, pi, p.Type)}
 		}
+	}
+	return nil
+}
+
+// validateReasoning checks a reasoning part: payload and Provider set, and
+// only on assistant messages (ADR-0021).
+func validateReasoning(mi, pi int, role llms.Role, p *llms.ContentPart) error {
+	if p.Reasoning == nil || p.Reasoning.Provider == "" {
+		return &ValidationError{fmt.Sprintf("message %d part %d: reasoning missing Reasoning/Provider", mi, pi)}
+	}
+	if role != llms.RoleAssistant {
+		return &ValidationError{fmt.Sprintf("message %d part %d: reasoning only allowed on assistant messages, got role %q", mi, pi, role)}
 	}
 	return nil
 }

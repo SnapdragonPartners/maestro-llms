@@ -16,7 +16,7 @@ type Event struct {
 	// fieldalignment: pointer-bearing fields first (the strings, the error
 	// interface, and Usage — which itself ends in a string), then the only
 	// non-pointer field, Latency, last.
-	Provider  string
+	Provider  llms.ProviderID
 	Model     string
 	Operation ratelimit.Operation
 	Purpose   llms.Purpose

@@ -13,8 +13,8 @@ import (
 // ADR-0020 / #85: a response with no text and no tool calls.
 
 // budgetExhausted is what a reasoning model returns when it spends its
-// whole output budget on reasoning: adapters drop reasoning content, so
-// the message is empty. StopReason is the provider's raw string.
+// whole output budget on reasoning: no text and no tool calls, at most
+// reasoning parts. StopReason is the provider's raw string.
 func budgetExhausted(content []llms.ContentPart) llms.ChatResponse {
 	return llms.ChatResponse{
 		Message:    llms.Message{Role: llms.RoleAssistant, Content: content},
@@ -30,6 +30,12 @@ func TestRun_EmptyResponse_NotAppendedAndSendable(t *testing.T) {
 	}{
 		{name: "no parts (vLLM, OpenAI, Google shape)", content: nil},
 		{name: "empty text part (Anthropic shape)", content: []llms.ContentPart{{Type: llms.ContentText}}},
+		// ADR-0021: Anthropic returns the thinking block it spent the
+		// budget on; reasoning alone is not a reply.
+		{name: "reasoning only (Anthropic with thinking)", content: []llms.ContentPart{{
+			Type:      llms.ContentReasoning,
+			Reasoning: &llms.Reasoning{Provider: llms.ProviderAnthropic, ProviderData: []byte(`{}`)},
+		}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

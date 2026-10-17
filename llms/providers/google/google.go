@@ -9,7 +9,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
-const providerName = "google"
+const providerName = llms.ProviderGoogle
 
 // Option configures a Client. Applications own config resolution; this package
 // accepts already-resolved values.

@@ -1,6 +1,6 @@
 # 0010. Round-trip opaque provider state via `ToolCall.ProviderSignature`
 
-- **Status:** Accepted
+- **Status:** Accepted; extended by 0021 (reasoning as its own part)
 - **Date:** 2026-05-19
 
 ## Context

@@ -45,6 +45,8 @@ func (c *Client) systemText(req llms.ChatRequest) (string, *llms.ProviderError) 
 //
 //nolint:cyclop // explicit case-per-content-type kept linear for readability
 func (c *Client) buildMessages(req llms.ChatRequest, system string) ([]openai.ChatCompletionMessageParamUnion, *llms.ProviderError) {
+	// Drop other providers' reasoning parts (ADR-0021); none is ours to replay.
+	req.Messages = llms.ReasoningFrom(providerName, req.Messages)
 	var out []openai.ChatCompletionMessageParamUnion
 	if system != "" {
 		out = append(out, openai.SystemMessage(system))

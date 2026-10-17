@@ -31,7 +31,7 @@ type Extract func(err error) (status int, header http.Header, message string, ok
 // provider-health signal, so it stays non-retryable and the caller can still
 // match it with errors.Is(err, context.Canceled). A recognized API error
 // uses its real status and Retry-After; anything else is unknown.
-func Classify(provider, model string, err error, extract Extract) error {
+func Classify(provider llms.ProviderID, model string, err error, extract Extract) error {
 	if err == nil {
 		return nil
 	}

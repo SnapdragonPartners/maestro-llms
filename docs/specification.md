@@ -166,9 +166,22 @@ Discovery is by type assertion on a `ChatClient`. Providers without a list API s
 
 ```go
 type ModelRef struct {
-    Provider string
+    Provider ProviderID
     Name     string
 }
+
+// ProviderID names a provider adapter (wire protocol, not deployment:
+// Anthropic on Vertex is ProviderAnthropic). Open set; the core compares it
+// only for equality. See ADR-0021.
+type ProviderID string
+
+const (
+    ProviderAnthropic ProviderID = "anthropic"
+    ProviderOpenAI    ProviderID = "openai"
+    ProviderGoogle    ProviderID = "google"
+    ProviderOllama    ProviderID = "ollama"
+    ProviderVLLM      ProviderID = "vllm"
+)
 ```
 
 ### Chat Request
@@ -217,6 +230,7 @@ type ContentPart struct {
     Text            string
     ToolCall        *ToolCall
     ToolResult      *ToolResult
+    Reasoning       *Reasoning
     CacheBreakpoint bool // optional prompt-cache hint (see below)
 }
 
@@ -226,7 +240,14 @@ const (
     ContentText       ContentPartType = "text"
     ContentToolCall   ContentPartType = "tool_call"
     ContentToolResult ContentPartType = "tool_result"
+    ContentReasoning  ContentPartType = "reasoning"
 )
+
+type Reasoning struct {
+    Provider     ProviderID // adapter that produced it; only that adapter replays it
+    Text         string     // readable reasoning/summary; display only, never sent back
+    ProviderData []byte     // opaque, provider-owned; sent back unchanged
+}
 ```
 
 Tool calls and tool results are content parts, not side-channel fields on `Message`. This keeps the conversation round-trip explicit:
@@ -243,6 +264,16 @@ knobs; see ADR-0008). Anthropic honors it (maps to `cache_control: ephemeral`
 on the block); OpenAI prefix-caches automatically (no-op); Gemini's explicit
 caching is a separate cached-content API the inline hint does not drive;
 Ollama has none. Provider adapters must not error on it.
+
+`reasoning` parts carry provider reasoning state that must go back to the
+provider that produced it (Anthropic `thinking` / `redacted_thinking`
+blocks). They appear only on assistant messages, in the position the provider
+returned them. Every adapter drops reasoning parts from other providers before
+translating (`ReasoningFrom`), so a transcript can move between providers. A
+reasoning-only assistant turn is not a reply and is rejected like an empty
+one. Reasoning is bound to the conversation before it: an app that edits
+earlier turns must remove all reasoning first (`WithoutReasoning`). See
+ADR-0021.
 
 Provider mapping:
 
@@ -557,7 +588,7 @@ const (
 )
 
 type ProviderError struct {
-    Provider   string
+    Provider   ProviderID
     Model      string
     Kind       ErrorKind
     StatusCode int
@@ -579,7 +610,7 @@ Local limiter rejections should not be represented as provider errors. Use a sep
 
 ```go
 type LimitError struct {
-    Provider string
+    Provider ProviderID
     Model    string
     Reason   string
     RetryAfter time.Duration
@@ -656,7 +687,7 @@ type Limiter interface {
 }
 
 type ReservationRequest struct {
-    Provider       string
+    Provider       ProviderID
     Model          string
     Operation      Operation
     Purpose        Purpose
@@ -828,7 +859,7 @@ The package should accept already-resolved provider configs.
 
 ```go
 type ProviderConfig struct {
-    Provider string
+    Provider ProviderID
     Model    string
     APIKey   string
     BaseURL  string

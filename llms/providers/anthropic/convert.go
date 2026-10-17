@@ -2,6 +2,8 @@ package anthropic
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -109,6 +111,14 @@ func (c *Client) blocksForParts(parts []llms.ContentPart, cb *cacheBudget) (tool
 			}
 			toolResults = append(toolResults, anthropic.NewToolResultBlock(
 				p.ToolResult.ToolCallID, p.ToolResult.Content, p.ToolResult.IsError))
+		case llms.ContentReasoning:
+			// Only this provider's parts reach here (buildMessages runs
+			// llms.ReasoningFrom first).
+			b, err := thinkingBlockParam(p.Reasoning)
+			if err != nil {
+				return nil, nil, badRequest(c.model, err.Error())
+			}
+			others = append(others, b)
 		default:
 			return nil, nil, badRequest(c.model, "unknown content part type: "+string(p.Type))
 		}
@@ -133,8 +143,11 @@ func (c *Client) buildMessages(req llms.ChatRequest, cb *cacheBudget) ([]anthrop
 		}
 	}
 
-	for i := range req.Messages {
-		m := req.Messages[i]
+	// Replay only Anthropic's own reasoning; other providers' is dropped
+	// (ADR-0021).
+	msgs := llms.ReasoningFrom(providerName, req.Messages)
+	for i := range msgs {
+		m := msgs[i]
 		tr, other, perr := c.blocksForParts(m.Content, cb)
 		if perr != nil {
 			return nil, perr
@@ -142,7 +155,7 @@ func (c *Client) buildMessages(req llms.ChatRequest, cb *cacheBudget) ([]anthrop
 		switch m.Role {
 		case llms.RoleAssistant:
 			flush()
-			if len(other) == 0 {
+			if !hasReply(m.Content) {
 				return nil, badRequest(c.model, "assistant message has no content")
 			}
 			out = append(out, anthropic.MessageParam{
@@ -337,6 +350,10 @@ func toResponse(msg *anthropic.Message) llms.ChatResponse {
 			t := block.AsText().Text
 			text.WriteString(t)
 			parts = append(parts, llms.ContentPart{Type: llms.ContentText, Text: t})
+		case blockThinking, blockRedactedThinking:
+			if part, ok := reasoningPart(&block); ok {
+				parts = append(parts, part)
+			}
 		case "tool_use":
 			tu := block.AsToolUse()
 			tc := llms.ToolCall{
@@ -384,4 +401,89 @@ func buildUsage(msg *anthropic.Message) llms.Usage {
 		CacheWriteTokens:     int(msg.Usage.CacheCreationInputTokens),
 		ProviderRequestID:    msg.ID,
 	}
+}
+
+// Anthropic thinking block types.
+const (
+	blockThinking         = "thinking"
+	blockRedactedThinking = "redacted_thinking"
+)
+
+// thinkingWire is the ProviderData encoding of an Anthropic thinking or
+// redacted_thinking block: the block's own fields, which are sent back
+// unchanged (ADR-0021).
+type thinkingWire struct {
+	Type      string `json:"type"`
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	Data      string `json:"data,omitempty"`
+}
+
+// reasoningPart captures a thinking or redacted_thinking response block as a
+// ContentReasoning part. The block's fields go into ProviderData verbatim;
+// Text mirrors the readable thinking (empty under the default "omitted"
+// display and for redacted blocks).
+func reasoningPart(block *anthropic.ContentBlockUnion) (llms.ContentPart, bool) {
+	w := thinkingWire{Type: block.Type}
+	text := ""
+	switch block.Type {
+	case blockThinking:
+		tb := block.AsThinking()
+		w.Thinking, w.Signature = tb.Thinking, tb.Signature
+		text = tb.Thinking
+	case blockRedactedThinking:
+		w.Data = block.AsRedactedThinking().Data
+	default:
+		return llms.ContentPart{}, false
+	}
+	data, err := json.Marshal(w)
+	if err != nil {
+		return llms.ContentPart{}, false
+	}
+	return llms.ContentPart{Type: llms.ContentReasoning, Reasoning: &llms.Reasoning{
+		Provider:     providerName,
+		Text:         text,
+		ProviderData: data,
+	}}, true
+}
+
+// thinkingBlockParam rebuilds the request block from a part reasoningPart
+// produced. The readable Reasoning.Text is ignored: only ProviderData is
+// sent back, so editing Text cannot alter the block.
+func thinkingBlockParam(r *llms.Reasoning) (anthropic.ContentBlockParamUnion, error) {
+	if r == nil {
+		return anthropic.ContentBlockParamUnion{}, errors.New("reasoning content part with nil Reasoning")
+	}
+	var w thinkingWire
+	if err := json.Unmarshal(r.ProviderData, &w); err != nil {
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("reasoning content part: malformed ProviderData: %w", err)
+	}
+	switch w.Type {
+	case blockThinking:
+		if w.Signature == "" {
+			return anthropic.ContentBlockParamUnion{}, errors.New("reasoning content part: thinking block without signature")
+		}
+		return anthropic.NewThinkingBlock(w.Signature, w.Thinking), nil
+	case blockRedactedThinking:
+		if w.Data == "" {
+			return anthropic.ContentBlockParamUnion{}, errors.New("reasoning content part: redacted_thinking block without data")
+		}
+		return anthropic.NewRedactedThinkingBlock(w.Data), nil
+	default:
+		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("reasoning content part: unknown block type %q", w.Type)
+	}
+}
+
+// hasReply reports whether an assistant message's parts include text or a
+// tool call, the only parts an assistant turn sends besides reasoning
+// (tool_result parts are split off and dropped there). A reasoning-only or
+// tool-result-only assistant turn is rejected like an empty one, matching
+// middleware.ValidationChat.
+func hasReply(parts []llms.ContentPart) bool {
+	for i := range parts {
+		if t := parts[i].Type; t == llms.ContentText || t == llms.ContentToolCall {
+			return true
+		}
+	}
+	return false
 }

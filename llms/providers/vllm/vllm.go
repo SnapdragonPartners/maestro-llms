@@ -11,7 +11,7 @@ import (
 )
 
 // providerName is the llms.ModelRef.Provider value for this package.
-const providerName = "vllm"
+const providerName = llms.ProviderVLLM
 
 // Option configures a Client. Applications own config resolution; this
 // package accepts already-resolved values.

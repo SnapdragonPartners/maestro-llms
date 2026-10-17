@@ -29,6 +29,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   representation; each provider adapter translates to/from that provider's
   wire shape at the boundary. Tool calls and results are content parts, not
   side-channel fields, so a conversation round-trips unambiguously.
+- **Reasoning round-trip.** Anthropic `thinking` blocks come back as
+  `ContentReasoning` parts and are replayed unchanged when you resend the
+  transcript; other providers drop parts that aren't theirs. See
+  [ADR-0021](docs/adr/0021-reasoning-content-part.md).
 - **Five chat providers**: Anthropic (Messages), OpenAI (Responses API),
   Google (Gemini via genai), Ollama (hand-rolled `/api/chat`, no SDK),
   vLLM (OpenAI Chat Completions surface via openai-go; ADR-0015).
@@ -194,6 +198,21 @@ Anthropic `any` / OpenAI `required` / Gemini ANY-mode; on Ollama both
 `Required`/`Tool` choice with no tools offered is rejected up front.
 Provider differences are documented in
 [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
+
+#### Reasoning parts
+
+Current Anthropic models think by default. Each `thinking` /
+`redacted_thinking` block comes back in `resp.Message` as a
+`ContentReasoning` part. Append `resp.Message` as-is, and the blocks go back
+on the next request, which a tool loop needs. `Reasoning.Text` is for display
+only and is empty unless the app asks for summarized thinking. Other providers
+drop reasoning parts that aren't theirs, so a transcript can switch providers.
+
+Anthropic binds each thinking block to the conversation before it. **If you
+edit history** (drop or rewrite earlier turns, compact client-side), remove
+all reasoning first with `llms.WithoutReasoning(msgs)`. Otherwise newer
+Anthropic accounts reject the request with `400 ... bound to a different
+conversation`. Appending is always safe, and `toolloop` only appends.
 
 ### Tool loop (`llms/toolloop`)
 

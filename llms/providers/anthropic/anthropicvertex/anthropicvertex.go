@@ -40,7 +40,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic"
 )
 
-const providerName = "anthropic"
+const providerName = llms.ProviderAnthropic
 
 // Option configures the Vertex-backed client. Applications own config
 // resolution; this package accepts already-resolved values.

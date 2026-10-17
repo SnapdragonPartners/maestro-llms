@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,5 +220,40 @@ func TestDefaultEstimator(t *testing.T) {
 	})
 	if emb.InputTokens <= 0 || emb.OutputTokensMax != 0 || emb.Requests != 1 {
 		t.Fatalf("bad embedding units: %+v", emb)
+	}
+}
+
+// Opaque payloads that adapters send back verbatim count toward the
+// estimate (ADR-0021 reasoning, ADR-0010 tool-call signatures), so a large
+// replayed payload can't slip past a limiter.
+func TestDefaultEstimatorCountsOpaquePayloads(t *testing.T) {
+	payload := strings.Repeat("x", 3000) // ~1000 tokens at 3 chars/token
+	base := llms.ChatRequest{Messages: []llms.Message{llms.UserText("q"), llms.AssistantText("a")}}
+	baseIn := DefaultEstimator{}.EstimateChat(base).InputTokens
+
+	withReasoning := base
+	withReasoning.Messages = []llms.Message{llms.UserText("q"), {Role: llms.RoleAssistant, Content: []llms.ContentPart{
+		{Type: llms.ContentReasoning, Reasoning: &llms.Reasoning{Provider: llms.ProviderAnthropic, ProviderData: []byte(payload)}},
+		llms.Text("a"),
+	}}}
+	withSig := base
+	withSig.Messages = []llms.Message{llms.UserText("q"), {Role: llms.RoleAssistant, Content: []llms.ContentPart{
+		{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{ID: "c", Name: "f", ProviderSignature: []byte(payload)}},
+	}}}
+	cases := map[string]llms.ChatRequest{"reasoning": withReasoning, "signature": withSig}
+	var est DefaultEstimator
+	for name, req := range cases {
+		if in := est.EstimateChat(req).InputTokens; in < baseIn+1000 {
+			t.Errorf("%s: InputTokens = %d, want >= %d (payload counted)", name, in, baseIn+1000)
+		}
+	}
+
+	// The reservation consequence: the payload alone exceeds the limiter.
+	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{TokensPerMinute: 100}) // cap 90
+	fake := &testllm.FakeChatClient{Text: "should not be called"}
+	_, err := RateLimitChat(lim, DefaultEstimator{})(fake).Complete(context.Background(), withReasoning)
+	var le *llms.LimitError
+	if !errors.As(err, &le) || len(fake.Calls()) != 0 {
+		t.Fatalf("err = %v, calls = %d; want a LimitError before any call", err, len(fake.Calls()))
 	}
 }

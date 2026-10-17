@@ -11,7 +11,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
-const providerName = "openai"
+const providerName = llms.ProviderOpenAI
 
 // maxBatchInputs caps inputs per request. OpenAI's embeddings endpoint accepts
 // at most 2048 inputs; exceeding it is a caller error. Chunking is the

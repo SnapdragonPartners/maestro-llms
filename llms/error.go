@@ -33,7 +33,7 @@ const (
 // represents a failure of (or before) the provider call itself; local limiter
 // rejections use LimitError instead so middleware can tell the two apart.
 type ProviderError struct {
-	Provider   string
+	Provider   ProviderID
 	Model      string
 	Kind       ErrorKind
 	StatusCode int
@@ -76,7 +76,7 @@ func (e *ProviderError) Retryable() bool {
 // ProviderError so retry/circuit middleware can distinguish "we throttled
 // locally" from "the provider returned 429".
 type LimitError struct {
-	Provider string
+	Provider ProviderID
 	Model    string
 	Reason   string
 	// RetryAfter is how long the caller should wait before retrying; zero if

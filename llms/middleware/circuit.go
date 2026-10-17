@@ -17,7 +17,7 @@ import (
 // the Open->HalfOpen transition on a later call, not by in-call retry. See
 // docs/adr/0005-circuit-open-error.md.
 type CircuitOpenError struct {
-	Provider string
+	Provider llms.ProviderID
 	Model    string
 	// RetryAfter is the remaining time until the breaker will admit a probe
 	// (a hint for the caller; the error stays non-retryable for middleware).
@@ -75,7 +75,7 @@ type breaker struct {
 	// Pointer-bearing fields first, ordered to minimize the GC pointer-scan
 	// prefix (fieldalignment): time.Time's internal pointer is at offset 16.
 	openedAt  time.Time
-	provider  string
+	provider  llms.ProviderID
 	model     string
 	cfg       CircuitConfig
 	mu        sync.Mutex

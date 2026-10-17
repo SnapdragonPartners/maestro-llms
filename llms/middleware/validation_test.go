@@ -82,6 +82,28 @@ func TestValidationToolRoundTripValid(t *testing.T) {
 	}
 }
 
+func reasoning(p llms.ProviderID) llms.ContentPart {
+	return llms.ContentPart{Type: llms.ContentReasoning, Reasoning: &llms.Reasoning{Provider: p, ProviderData: []byte("x")}}
+}
+
+func TestValidationReasoningRoundTripValid(t *testing.T) {
+	var calls int32
+	c := ValidationChat()(countingFake(&calls))
+	call := asstCall("a")
+	call.Content = append([]llms.ContentPart{reasoning(llms.ProviderAnthropic)}, call.Content...)
+	req := llms.ChatRequest{Messages: []llms.Message{
+		llms.UserText("q"),
+		call,
+		llms.ToolResultMessage(llms.ToolResult{ToolCallID: "a", Content: "r"}),
+	}}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatalf("assistant turn with reasoning rejected: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("inner client should be called once, got %d", calls)
+	}
+}
+
 func TestValidationRejections(t *testing.T) {
 	var calls int32
 	tc := func(name, want string, req llms.ChatRequest) {
@@ -99,6 +121,27 @@ func TestValidationRejections(t *testing.T) {
 	// An empty assistant message (#85) gets a hint naming the usual cause.
 	tc("empty assistant content", "drop assistant responses with no text or tool calls", llms.ChatRequest{
 		Messages: []llms.Message{llms.UserText("q"), {Role: llms.RoleAssistant}, llms.UserText("finish")},
+	})
+	// A reasoning-only assistant turn is not a reply (ADR-0021).
+	tc("reasoning-only assistant content", "drop assistant responses with no text or tool calls", llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("q"), {Role: llms.RoleAssistant, Content: []llms.ContentPart{
+			reasoning(llms.ProviderAnthropic),
+		}}, llms.UserText("finish")},
+	})
+	tc("reasoning missing payload", "reasoning missing", llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("q"), {Role: llms.RoleAssistant, Content: []llms.ContentPart{
+			{Type: llms.ContentReasoning}, llms.Text("a"),
+		}}},
+	})
+	tc("reasoning missing provider", "reasoning missing", llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("q"), {Role: llms.RoleAssistant, Content: []llms.ContentPart{
+			reasoning(""), llms.Text("a"),
+		}}},
+	})
+	tc("reasoning on user message", "reasoning only allowed on assistant", llms.ChatRequest{
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{
+			reasoning(llms.ProviderAnthropic), llms.Text("q"),
+		}}},
 	})
 	tc("tool_call missing ID", "tool_call missing", llms.ChatRequest{
 		Messages: []llms.Message{{Role: llms.RoleAssistant, Content: []llms.ContentPart{

@@ -184,3 +184,32 @@ func TestFakesConcurrentUse(t *testing.T) {
 		t.Fatalf("lost calls under concurrency: chat=%d emb=%d", len(c.Calls()), len(e.Calls()))
 	}
 }
+
+// Opaque payload pointers and byte slices are deep-copied too, on the way in
+// and on the way out of Calls().
+func TestFakeChatRecordingIsolatesOpaquePayloads(t *testing.T) {
+	c := &FakeChatClient{Text: "ok"}
+	req := llms.ChatRequest{Messages: []llms.Message{llms.UserText("q"), {Role: llms.RoleAssistant, Content: []llms.ContentPart{
+		{Type: llms.ContentReasoning, Reasoning: &llms.Reasoning{Provider: llms.ProviderAnthropic, Text: "t", ProviderData: []byte("data")}},
+		{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{ID: "c", Name: "f", ProviderSignature: []byte("sig")}},
+	}}}}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	// Caller mutates after the call.
+	parts := req.Messages[1].Content
+	parts[0].Reasoning.Text = "mutated"
+	parts[0].Reasoning.ProviderData[0] = 'X'
+	parts[1].ToolCall.ProviderSignature[0] = 'X'
+	// A test mutates what Calls() returned.
+	got := c.Calls()[0].Messages[1].Content
+	got[0].Reasoning.ProviderData[1] = 'Y'
+
+	rec := c.Calls()[0].Messages[1].Content
+	if rec[0].Reasoning.Text != "t" || string(rec[0].Reasoning.ProviderData) != "data" {
+		t.Fatalf("reasoning recording not isolated: %+v / %q", rec[0].Reasoning, rec[0].Reasoning.ProviderData)
+	}
+	if string(rec[1].ToolCall.ProviderSignature) != "sig" {
+		t.Fatalf("ProviderSignature recording not isolated: %q", rec[1].ToolCall.ProviderSignature)
+	}
+}

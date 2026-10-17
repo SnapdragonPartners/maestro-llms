@@ -474,12 +474,14 @@ func thinkingBlockParam(r *llms.Reasoning) (anthropic.ContentBlockParamUnion, er
 	}
 }
 
-// hasReply reports whether parts hold anything besides reasoning. A
-// reasoning-only assistant turn is not a reply and is rejected like an empty
-// one, matching middleware.ValidationChat.
+// hasReply reports whether an assistant message's parts include text or a
+// tool call, the only parts an assistant turn sends besides reasoning
+// (tool_result parts are split off and dropped there). A reasoning-only or
+// tool-result-only assistant turn is rejected like an empty one, matching
+// middleware.ValidationChat.
 func hasReply(parts []llms.ContentPart) bool {
 	for i := range parts {
-		if parts[i].Type != llms.ContentReasoning {
+		if t := parts[i].Type; t == llms.ContentText || t == llms.ContentToolCall {
 			return true
 		}
 	}

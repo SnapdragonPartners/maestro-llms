@@ -172,6 +172,15 @@ func TestInvalidReasoningRejected(t *testing.T) {
 		{"thinking without signature", "without signature", []llms.ContentPart{own(`{"type":"thinking","thinking":"x"}`), llms.Text("a")}},
 		{"redacted without data", "without data", []llms.ContentPart{own(`{"type":"redacted_thinking"}`), llms.Text("a")}},
 		{"reasoning-only assistant", "assistant message has no content", []llms.ContentPart{own(`{"type":"redacted_thinking","data":"d"}`)}},
+		// PR #94 review: tool results on an assistant turn are dropped, so
+		// they are not a reply either.
+		{"tool-result-only assistant", "assistant message has no content", []llms.ContentPart{
+			{Type: llms.ContentToolResult, ToolResult: &llms.ToolResult{ToolCallID: "t", Content: "r"}},
+		}},
+		{"reasoning and tool-result assistant", "assistant message has no content", []llms.ContentPart{
+			own(`{"type":"redacted_thinking","data":"d"}`),
+			{Type: llms.ContentToolResult, ToolResult: &llms.ToolResult{ToolCallID: "t", Content: "r"}},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newClient(t, func(http.ResponseWriter, *http.Request) {

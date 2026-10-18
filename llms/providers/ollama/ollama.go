@@ -109,5 +109,7 @@ func (c *Client) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatR
 	if err != nil {
 		return llms.ChatResponse{}, err
 	}
-	return toChatResponse(resp), nil
+	out := toChatResponse(resp)
+	_, out.AppliedReasoning = mapReasoning(req.Reasoning)
+	return out, nil
 }

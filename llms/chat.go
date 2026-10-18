@@ -54,6 +54,43 @@ type ChatRequest struct {
 	// logging. It is never sent to a provider unless a middleware or provider
 	// explicitly opts a key in.
 	Metadata map[string]string
+	// Reasoning, if set, asks a reasoning model to bound its thinking. Each
+	// adapter maps what its provider supports and omits the rest (the model
+	// default then applies); ChatResponse.AppliedReasoning reports what was
+	// sent. See ADR-0022.
+	Reasoning *ReasoningConfig
+}
+
+// ReasoningEffort is a provider-neutral reasoning-effort level. Use the
+// constants; a value outside them is treated as unsupported and omitted.
+type ReasoningEffort string
+
+// Reasoning-effort levels, lowest to highest. Not every provider supports
+// every level; ADR-0022 has the per-provider table.
+const (
+	ReasoningEffortNone    ReasoningEffort = "none"
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+	ReasoningEffortXHigh   ReasoningEffort = "xhigh"
+	ReasoningEffortMax     ReasoningEffort = "max"
+)
+
+// ReasoningConfig bounds a reasoning model's thinking. Both fields are
+// optional and independent; the zero value of each means "not set".
+//
+// Adapters map each field 1:1 to their provider's control, or omit it when
+// the provider has none for that value, so the model default applies. They
+// never predict which values a particular model accepts: a value the
+// provider supports but the model rejects comes back as the provider's error.
+type ReasoningConfig struct {
+	// Effort is a reasoning-effort level.
+	Effort ReasoningEffort
+	// BudgetTokens is a thinking-token budget, for providers that take one
+	// (Gemini 2.5 thinkingBudget, Anthropic budget_tokens on models before
+	// Opus 4.7). Zero or negative means not set.
+	BudgetTokens int
 }
 
 // StopReason is the provider-reported reason a response ended. Values are
@@ -78,6 +115,12 @@ type ChatResponse struct {
 	StopReason StopReason
 	// Usage is normalized token accounting.
 	Usage Usage
+	// AppliedReasoning is the reasoning control the adapter actually sent,
+	// in neutral terms: only the fields it mapped are set. It is nil when the
+	// request had no Reasoning or nothing in it could be mapped, in which
+	// case the model default applied. Compare it with ChatRequest.Reasoning
+	// to see what a provider could not express. See ADR-0022.
+	AppliedReasoning *ReasoningConfig
 	// Raw is optional provider-specific data for advanced callers. It is
 	// outside the stability contract; middleware must not depend on it and
 	// callers that use it accept provider-package breakage risk.

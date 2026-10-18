@@ -38,7 +38,7 @@ func (e enforceThinkingBinding) RoundTrip(r *http.Request) (*http.Response, erro
 				"display":       "summarized",
 				"block_binding": map[string]any{"prefix_mismatch_behavior": "error"},
 			}
-			body["output_config"] = map[string]any{"effort": "high"}
+			body["output_config"] = map[string]any{"effort": "max"}
 			if nb, err := json.Marshal(body); err == nil {
 				b = nb
 			}

@@ -342,6 +342,9 @@ func (c *Client) toParams(req llms.ChatRequest) ([]*genai.Content, *genai.Genera
 	if tcfg != nil {
 		cfg.ToolConfig = tcfg
 	}
+	if tc, _ := mapReasoning(req.Reasoning); tc != nil {
+		cfg.ThinkingConfig = tc
+	}
 	return contents, cfg, nil
 }
 
@@ -418,4 +421,45 @@ func toChatResponse(result *genai.GenerateContentResponse) llms.ChatResponse {
 		Usage:      usage,
 		Raw:        result,
 	}
+}
+
+// mapReasoning maps a ReasoningConfig 1:1 to Gemini's thinkingConfig,
+// omitting what Gemini can't express so the model default applies. The
+// adapter does not guess the model generation; the caller picks the field
+// (ADR-0022):
+//
+//   - Effort minimal/low/medium/high → thinkingLevel (Gemini 3). None,
+//     xhigh and max have no Gemini level and are omitted.
+//   - BudgetTokens → thinkingBudget (Gemini 2.5).
+//
+// Sending a field the model doesn't take is the provider's error. It
+// returns the config (nil when nothing maps) and what was applied.
+func mapReasoning(r *llms.ReasoningConfig) (*genai.ThinkingConfig, *llms.ReasoningConfig) {
+	if r == nil {
+		return nil, nil
+	}
+	var tc genai.ThinkingConfig
+	var applied llms.ReasoningConfig
+	switch r.Effort {
+	case llms.ReasoningEffortMinimal:
+		tc.ThinkingLevel = genai.ThinkingLevelMinimal
+	case llms.ReasoningEffortLow:
+		tc.ThinkingLevel = genai.ThinkingLevelLow
+	case llms.ReasoningEffortMedium:
+		tc.ThinkingLevel = genai.ThinkingLevelMedium
+	case llms.ReasoningEffortHigh:
+		tc.ThinkingLevel = genai.ThinkingLevelHigh
+	}
+	if tc.ThinkingLevel != "" {
+		applied.Effort = r.Effort
+	}
+	if r.BudgetTokens > 0 {
+		b := int32(min(r.BudgetTokens, math.MaxInt32)) //nolint:gosec // G115: clamped to MaxInt32
+		tc.ThinkingBudget = &b
+		applied.BudgetTokens = int(b)
+	}
+	if applied == (llms.ReasoningConfig{}) {
+		return nil, nil
+	}
+	return &tc, &applied
 }

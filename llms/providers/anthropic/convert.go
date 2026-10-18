@@ -323,6 +323,9 @@ func (c *Client) toParams(req llms.ChatRequest) (anthropic.MessageNewParams, err
 	if req.Temperature != nil {
 		params.Temperature = anthropic.Float(float64(*req.Temperature))
 	}
+	rw := mapReasoning(req.Reasoning)
+	params.Thinking = rw.thinking
+	params.OutputConfig.Effort = rw.effort
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
@@ -486,4 +489,49 @@ func hasReply(parts []llms.ContentPart) bool {
 		}
 	}
 	return false
+}
+
+// reasoningWire is the Anthropic mapping of a ReasoningConfig: the wire
+// fields to set and the neutral record of what they express (ADR-0022).
+type reasoningWire struct {
+	applied  *llms.ReasoningConfig
+	thinking anthropic.ThinkingConfigParamUnion
+	effort   anthropic.OutputConfigEffort
+}
+
+// mapReasoning maps a ReasoningConfig 1:1 to Anthropic's controls, omitting
+// what Anthropic can't express so the model default applies:
+//
+//   - Effort low/medium/high/xhigh/max → output_config.effort. Minimal has
+//     no Anthropic level and is omitted.
+//   - Effort none → thinking {type: "disabled"} (models from Opus 5.5 on
+//     reject it; that is the provider's 400, not predicted here).
+//   - BudgetTokens → thinking {type: "enabled", budget_tokens} (models
+//     before Opus 4.7; budget must be at least 1024 and below MaxTokens).
+//     It takes the thinking field, so it wins over Effort none.
+func mapReasoning(r *llms.ReasoningConfig) reasoningWire {
+	var w reasoningWire
+	if r == nil {
+		return w
+	}
+	var applied llms.ReasoningConfig
+	if r.BudgetTokens > 0 {
+		w.thinking = anthropic.ThinkingConfigParamOfEnabled(int64(r.BudgetTokens))
+		applied.BudgetTokens = r.BudgetTokens
+	}
+	switch r.Effort {
+	case llms.ReasoningEffortLow, llms.ReasoningEffortMedium, llms.ReasoningEffortHigh,
+		llms.ReasoningEffortXHigh, llms.ReasoningEffortMax:
+		w.effort = anthropic.OutputConfigEffort(r.Effort)
+		applied.Effort = r.Effort
+	case llms.ReasoningEffortNone:
+		if r.BudgetTokens <= 0 {
+			w.thinking = anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}}
+			applied.Effort = r.Effort
+		}
+	}
+	if applied != (llms.ReasoningConfig{}) {
+		w.applied = &applied
+	}
+	return w
 }

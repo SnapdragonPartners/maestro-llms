@@ -196,8 +196,25 @@ type ChatRequest struct {
     MaxTokens   int
     Temperature *float32
     Metadata    map[string]string
+    Reasoning   *ReasoningConfig
+}
+
+type ReasoningEffort string // none, minimal, low, medium, high, xhigh, max
+
+type ReasoningConfig struct {
+    Effort       ReasoningEffort // zero: not set
+    BudgetTokens int             // <= 0: not set
 }
 ```
+
+`Reasoning` asks a reasoning model to bound its thinking. Each adapter maps
+each field 1:1 to its provider's control, or omits it when the provider has
+none for that value, so the model default applies. A local failure for an
+unsupported value is never returned: it can't be retried and the compiler
+can't catch it. Adapters don't predict which values a particular model
+accepts, so a value the provider supports but the model rejects comes back as
+the provider's error. `ChatResponse.AppliedReasoning` reports what was sent.
+See ADR-0022 for the per-provider tables.
 
 `Metadata` is app-supplied, provider-neutral context for middleware and logging. It must not be sent to providers unless a middleware or provider explicitly chooses to use a key.
 
@@ -445,6 +462,9 @@ type ChatResponse struct {
     ToolCalls  []ToolCall
     StopReason StopReason
     Usage      Usage
+    // AppliedReasoning is the reasoning control the adapter sent, in neutral
+    // terms (only mapped fields set); nil when nothing was sent. ADR-0022.
+    AppliedReasoning *ReasoningConfig
     Raw        any
 }
 

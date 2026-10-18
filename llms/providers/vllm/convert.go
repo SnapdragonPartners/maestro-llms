@@ -294,6 +294,9 @@ func (c *Client) toParams(req llms.ChatRequest) (openai.ChatCompletionNewParams,
 	if ok {
 		params.ToolChoice = ch
 	}
+	if effort, _ := mapEffort(req.Reasoning); effort != "" {
+		params.ReasoningEffort = effort
+	}
 	return params, nil
 }
 
@@ -363,5 +366,25 @@ func (c *Client) toResponse(resp *openai.ChatCompletion) llms.ChatResponse {
 		StopReason: llms.StopReason(choice.FinishReason),
 		Usage:      usage,
 		Raw:        resp,
+	}
+}
+
+// mapEffort maps a ReasoningConfig's effort 1:1 to the OpenAI-compatible
+// reasoning_effort field, which has all seven neutral levels. How strongly a
+// server and model honor it varies (GLM on LunaRoute treats it as soft,
+// DeepSeek honors none; see #86); any other value is omitted.
+// BudgetTokens has no Chat Completions control and is never mapped (ADR-0022).
+// It returns the wire value ("" when omitted) and what was applied.
+func mapEffort(r *llms.ReasoningConfig) (shared.ReasoningEffort, *llms.ReasoningConfig) {
+	if r == nil {
+		return "", nil
+	}
+	switch r.Effort {
+	case llms.ReasoningEffortNone, llms.ReasoningEffortMinimal, llms.ReasoningEffortLow,
+		llms.ReasoningEffortMedium, llms.ReasoningEffortHigh, llms.ReasoningEffortXHigh,
+		llms.ReasoningEffortMax:
+		return shared.ReasoningEffort(r.Effort), &llms.ReasoningConfig{Effort: r.Effort}
+	default:
+		return "", nil
 	}
 }

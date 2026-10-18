@@ -144,5 +144,7 @@ func (c *Client) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatR
 	if apiErr != nil {
 		return llms.ChatResponse{}, classifyError(c.model, apiErr)
 	}
-	return toResponse(msg), nil
+	resp := toResponse(msg)
+	resp.AppliedReasoning = mapReasoning(req.Reasoning).applied
+	return resp, nil
 }

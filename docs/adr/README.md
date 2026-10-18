@@ -55,3 +55,4 @@ Copy `0001`'s structure as the template.
 | [0019](0019-toolloop-deadline-and-no-iteration-limit.md) | Tool loop `OutcomeDeadline` and `NoIterationLimit` (the loop's context decides deadline vs failure; negative `MaxIterations` is unlimited) | Accepted |
 | [0020](0020-toolloop-empty-response.md) | Tool loop `OutcomeEmptyResponse` (an empty response is reported, not appended) | Accepted |
 | [0021](0021-reasoning-content-part.md) | Round-trip provider reasoning as a `ContentReasoning` part (Anthropic thinking blocks); typed `ProviderID` | Accepted |
+| [0022](0022-reasoning-effort.md) | Provider-neutral reasoning control (`ChatRequest.Reasoning`, `ChatResponse.AppliedReasoning`): 1:1 mapping or omitted, no per-model prediction | Accepted |

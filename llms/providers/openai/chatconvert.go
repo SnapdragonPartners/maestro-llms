@@ -7,6 +7,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
@@ -204,6 +205,9 @@ func (c *ChatClient) toParams(req llms.ChatRequest) (responses.ResponseNewParams
 	if ok {
 		params.ToolChoice = ch
 	}
+	if effort, _ := mapEffort(req.Reasoning); effort != "" {
+		params.Reasoning = shared.ReasoningParam{Effort: effort}
+	}
 	return params, nil
 }
 
@@ -286,5 +290,23 @@ func toChatResponse(resp *responses.Response) llms.ChatResponse {
 			ProviderRequestID:    resp.ID,
 		},
 		Raw: resp,
+	}
+}
+
+// mapEffort maps a ReasoningConfig's effort 1:1 to the OpenAI reasoning_effort
+// enum, which has all seven neutral levels; any other value is omitted.
+// BudgetTokens has no Responses control and is never mapped (ADR-0022).
+// It returns the wire value ("" when omitted) and what was applied.
+func mapEffort(r *llms.ReasoningConfig) (shared.ReasoningEffort, *llms.ReasoningConfig) {
+	if r == nil {
+		return "", nil
+	}
+	switch r.Effort {
+	case llms.ReasoningEffortNone, llms.ReasoningEffortMinimal, llms.ReasoningEffortLow,
+		llms.ReasoningEffortMedium, llms.ReasoningEffortHigh, llms.ReasoningEffortXHigh,
+		llms.ReasoningEffortMax:
+		return shared.ReasoningEffort(r.Effort), &llms.ReasoningConfig{Effort: r.Effort}
+	default:
+		return "", nil
 	}
 }

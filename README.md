@@ -33,6 +33,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   `ContentReasoning` parts and are replayed unchanged when you resend the
   transcript; other providers drop parts that aren't theirs. See
   [ADR-0021](docs/adr/0021-reasoning-content-part.md).
+- **Reasoning control.** `ChatRequest.Reasoning` (effort level and/or
+  thinking budget) maps 1:1 to each provider's control or is omitted, and
+  `ChatResponse.AppliedReasoning` reports what was sent. See
+  [ADR-0022](docs/adr/0022-reasoning-effort.md).
 - **Five chat providers**: Anthropic (Messages), OpenAI (Responses API),
   Google (Gemini via genai), Ollama (hand-rolled `/api/chat`, no SDK),
   vLLM (OpenAI Chat Completions surface via openai-go; ADR-0015).
@@ -213,6 +217,38 @@ edit history** (drop or rewrite earlier turns, compact client-side), remove
 all reasoning first with `llms.WithoutReasoning(msgs)`. Otherwise newer
 Anthropic accounts reject the request with `400 ... bound to a different
 conversation`. Appending is always safe, and `toolloop` only appends.
+
+#### Reasoning control
+
+```go
+resp, err := client.Complete(ctx, llms.ChatRequest{
+	Messages:  msgs,
+	Reasoning: &llms.ReasoningConfig{Effort: llms.ReasoningEffortLow},
+})
+// resp.AppliedReasoning is what the adapter actually sent (nil: nothing,
+// so the model default applied).
+```
+
+Each adapter maps a value to exactly one provider setting, or omits it when
+the provider has no equivalent. An unsupported value never fails locally; it
+runs at the model default, and `AppliedReasoning` shows that. Adapters don't
+guess which values a particular model accepts, so a value the provider
+supports but the model rejects comes back as the provider's error. For
+example, Opus 5.5 can't disable thinking, so `ReasoningEffortNone` (sent as
+`thinking: disabled`) gets a 400.
+
+| Neutral | Anthropic | OpenAI / vllm | Google | Ollama |
+|---|---|---|---|---|
+| `None` | `thinking: disabled` | `none` | — | `think: false` |
+| `Minimal` | — | `minimal` | `MINIMAL` | — |
+| `Low`/`Medium`/`High` | `output_config.effort` | same | `LOW`/`MEDIUM`/`HIGH` | `think: "low"`… |
+| `XHigh`/`Max` | `output_config.effort` | same | — | — |
+| `BudgetTokens` | `thinking: enabled, budget_tokens` | — | `thinkingBudget` | — |
+
+Gemini takes `thinkingLevel` on Gemini 3 and `thinkingBudget` on 2.5. Set the
+field that fits your model. OpenAI-compatible servers vary: on LunaRoute,
+GLM-5.3 treats effort as a soft bound and DeepSeek turns reasoning off at
+`None`.
 
 ### Tool loop (`llms/toolloop`)
 

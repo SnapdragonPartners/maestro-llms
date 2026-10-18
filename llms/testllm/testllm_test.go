@@ -213,3 +213,19 @@ func TestFakeChatRecordingIsolatesOpaquePayloads(t *testing.T) {
 		t.Fatalf("ProviderSignature recording not isolated: %q", rec[1].ToolCall.ProviderSignature)
 	}
 }
+
+func TestFakeChatRecordingIsolatesReasoningConfig(t *testing.T) {
+	c := &FakeChatClient{Text: "ok"}
+	req := llms.ChatRequest{
+		Messages:  []llms.Message{llms.UserText("q")},
+		Reasoning: &llms.ReasoningConfig{Effort: llms.ReasoningEffortLow},
+	}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	req.Reasoning.Effort = llms.ReasoningEffortHigh
+	c.Calls()[0].Reasoning.BudgetTokens = 99
+	if rec := c.Calls()[0].Reasoning; rec.Effort != llms.ReasoningEffortLow || rec.BudgetTokens != 0 {
+		t.Fatalf("ReasoningConfig recording not isolated: %+v", rec)
+	}
+}

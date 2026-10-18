@@ -81,6 +81,7 @@ func TestProviderErrorRetryableAndUnwrap(t *testing.T) {
 		ErrorKindConfig:        false,
 		ErrorKindBadRequest:    false,
 		ErrorKindContentPolicy: false,
+		ErrorKindContextLength: false,
 	}
 	for kind, wantRetryable := range cases {
 		err := &ProviderError{Provider: "anthropic", Model: "claude", Kind: kind, Cause: cause}

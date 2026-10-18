@@ -107,7 +107,8 @@ type ToolCallEvent struct {
 
 // OutcomeKind discriminates Outcome. The set is closed; new kinds require
 // a superseding ADR (OutcomeTerminalTool was added by ADR-0017,
-// OutcomeDeadline by ADR-0019, OutcomeEmptyResponse by ADR-0020).
+// OutcomeDeadline by ADR-0019, OutcomeEmptyResponse by ADR-0020,
+// OutcomeContextExceeded by ADR-0026).
 type OutcomeKind string
 
 const (
@@ -143,6 +144,16 @@ const (
 	// non-cancellation error. Err is that error; Response is the last
 	// successful provider response, if any.
 	OutcomeLLMError OutcomeKind = "llm_error"
+	// OutcomeContextExceeded is returned when ChatClient.Complete failed
+	// with a *llms.ProviderError of kind llms.ErrorKindContextLength
+	// (ADR-0026): the transcript no longer fits the model's context
+	// window. Messages is the transcript that was sent, unchanged and
+	// well-formed, so the caller can shorten it (strip reasoning with
+	// llms.WithoutReasoning, then trim or compact the history) and run
+	// again with it as Request.Messages. Err is the provider error;
+	// Response is the last successful provider response, if any. Overflow
+	// a provider does not signal deterministically stays OutcomeLLMError.
+	OutcomeContextExceeded OutcomeKind = "context_exceeded"
 	// OutcomeToolError is returned for a loop-level execution failure:
 	// configuration validation, or an Execute that returned an error.
 	// Model-visible tool failures (ToolResult{IsError: true}) do NOT
@@ -186,14 +197,15 @@ const (
 // are zero otherwise.
 //
 // Err is set by Kind:
-//   - OutcomeFinalAnswer:   nil
-//   - OutcomeEmptyResponse: nil
-//   - OutcomeTerminalTool:  nil
-//   - OutcomeMaxIterations: nil
-//   - OutcomeLLMError:      the error returned by ChatClient.Complete
-//   - OutcomeToolError:     the configuration validation error or Execute error
-//   - OutcomeCanceled:      a cancellation error; use errors.Is(err, context.Canceled)
-//   - OutcomeDeadline:      the error that surfaced; errors.Is(err, context.DeadlineExceeded) holds
+//   - OutcomeFinalAnswer:     nil
+//   - OutcomeEmptyResponse:   nil
+//   - OutcomeTerminalTool:    nil
+//   - OutcomeMaxIterations:   nil
+//   - OutcomeLLMError:        the error returned by ChatClient.Complete
+//   - OutcomeContextExceeded: the error returned by ChatClient.Complete, a *llms.ProviderError of Kind llms.ErrorKindContextLength
+//   - OutcomeToolError:       the configuration validation error or Execute error
+//   - OutcomeCanceled:        a cancellation error; use errors.Is(err, context.Canceled)
+//   - OutcomeDeadline:        the error that surfaced; errors.Is(err, context.DeadlineExceeded) holds
 type Outcome struct {
 	Response       llms.ChatResponse
 	Err            error

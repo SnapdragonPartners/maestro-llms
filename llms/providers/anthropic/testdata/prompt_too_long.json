@@ -1,0 +1,1 @@
+{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 260024 tokens > 200000 maximum"},"request_id":"req_011CgAQLFWxJU4VtRkp4eQv7"}

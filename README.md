@@ -306,7 +306,8 @@ case toolloop.OutcomeFinalAnswer:
 	fmt.Println(out.Response.Text)
 case toolloop.OutcomeTerminalTool, toolloop.OutcomeEmptyResponse,
 	toolloop.OutcomeMaxIterations, toolloop.OutcomeLLMError,
-	toolloop.OutcomeToolError, toolloop.OutcomeCanceled, toolloop.OutcomeDeadline:
+	toolloop.OutcomeContextExceeded, toolloop.OutcomeToolError,
+	toolloop.OutcomeCanceled, toolloop.OutcomeDeadline:
 	// inspect out.Err, out.Messages, out.TotalUsage
 }
 ```
@@ -331,6 +332,14 @@ model that spent its whole output budget on reasoning, the outcome is
 empty message is not appended, so `out.Messages` can be continued directly,
 for example by appending a user message asking the model to finish, or
 retried with a larger `MaxTokens`.
+
+If the transcript outgrows the model's context window, the outcome is
+`OutcomeContextExceeded` ([ADR-0026](docs/adr/0026-context-length-error-kind.md)).
+`out.Messages` is the transcript that was sent, unchanged, so the app can
+shorten it (`llms.WithoutReasoning`, then trim or compact the history) and
+run again with it as `Request.Messages`. It relies on the provider signalling
+overflow, which Ollama does not (it silently truncates to `num_ctx`); an
+overflow without a recognizable signal stays `OutcomeLLMError`.
 
 #### Unbounded runs
 
@@ -775,8 +784,8 @@ case llms.Retryable(err):
 default:
 	var pe *llms.ProviderError
 	if errors.As(err, &pe) {
-		// pe.Kind (auth, config, bad_request, content_policy, ...),
-		// pe.StatusCode, pe.RetryAfter
+		// pe.Kind (auth, config, bad_request, content_policy,
+		// context_length, ...), pe.StatusCode, pe.RetryAfter
 	}
 }
 ```
@@ -786,6 +795,13 @@ it, no second policy ([ADR-0004](docs/adr/0004-retry-circuit-reuse-llms-retryabl
 `*CircuitOpenError` and `*ValidationError` (from middleware) are deliberately
 **non-retryable** ([ADR-0005](docs/adr/0005-circuit-open-error.md),
 [ADR-0006](docs/adr/0006-validation-error.md)).
+
+`context_length` means the input does not fit the model's context window:
+shorten the conversation before sending it again. Adapters report it only
+for a deterministic provider signal (a structured error code, or a
+documented message backed by a captured fixture) and otherwise leave the
+error `bad_request`; Ollama truncates instead of erroring, so it never
+reports it ([ADR-0026](docs/adr/0026-context-length-error-kind.md)).
 
 ### Testing your code (fakes)
 

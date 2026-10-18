@@ -97,7 +97,7 @@ func Run(ctx context.Context, cfg Config) Outcome {
 
 		// Step 5: handle provider error before touching the transcript.
 		if callErr != nil {
-			kind, err := classifyStop(ctx, callErr, OutcomeLLMError)
+			kind, err := classifyStop(ctx, callErr, llmErrorKind(callErr))
 			return Outcome{
 				Kind:       kind,
 				Response:   lastResponse,
@@ -380,6 +380,20 @@ func classifyStop(ctx context.Context, err error, fallback OutcomeKind) (Outcome
 		return OutcomeCanceled, err
 	}
 	return fallback, err
+}
+
+// llmErrorKind is the classifyStop fallback for a provider error: a
+// context-window overflow (ADR-0026) is OutcomeContextExceeded, anything
+// else OutcomeLLMError. It is only the fallback, so a done loop context
+// still wins (OutcomeCanceled / OutcomeDeadline). Executor errors never use
+// it: a tool that itself overflows some other model's context is a tool
+// failure, not this loop's transcript overflowing.
+func llmErrorKind(err error) OutcomeKind {
+	var pe *llms.ProviderError
+	if errors.As(err, &pe) && pe.Kind == llms.ErrorKindContextLength {
+		return OutcomeContextExceeded
+	}
+	return OutcomeLLMError
 }
 
 // addUsage sums every numeric token field (TestRun_TotalUsageSumsEveryIntField

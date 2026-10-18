@@ -23,6 +23,15 @@ import (
 // classifies it as unknown). header may be nil.
 type Extract func(err error) (status int, header http.Header, message string, ok bool)
 
+// Overflow reports whether err, which Extract recognized as the provider's
+// API error and whose status maps to bad_request, is a deterministic
+// context-window overflow signal (ADR-0026). Implementations match the
+// provider's structured error code where one exists and otherwise a
+// documented message fragment backed by a real-body fixture. False
+// negatives are acceptable (the error stays bad_request); false positives
+// are not.
+type Overflow func(err error) bool
+
 // Classify maps err to a *llms.ProviderError, with two deliberate exceptions.
 // It returns nil for a nil err. context.DeadlineExceeded is a retryable
 // timeout *llms.ProviderError (a provider-slowness signal — often the
@@ -32,6 +41,15 @@ type Extract func(err error) (status int, header http.Header, message string, ok
 // match it with errors.Is(err, context.Canceled). A recognized API error
 // uses its real status and Retry-After; anything else is unknown.
 func Classify(provider llms.ProviderID, model string, err error, extract Extract) error {
+	return ClassifyOverflow(provider, model, err, extract, nil)
+}
+
+// ClassifyOverflow is Classify with a provider's context-overflow detector.
+// It is the single choke point for ErrorKindContextLength: overflow is
+// consulted only when the status already maps to bad_request, so a detector
+// can narrow bad_request to context_length but never reclassify an auth,
+// throttling, or server error. A nil overflow behaves exactly like Classify.
+func ClassifyOverflow(provider llms.ProviderID, model string, err error, extract Extract, overflow Overflow) error {
 	if err == nil {
 		return nil
 	}
@@ -69,6 +87,9 @@ func Classify(provider llms.ProviderID, model string, err error, extract Extract
 		Kind:       KindForStatus(status),
 		Message:    message,
 		Cause:      err,
+	}
+	if pe.Kind == llms.ErrorKindBadRequest && overflow != nil && overflow(err) {
+		pe.Kind = llms.ErrorKindContextLength
 	}
 	if header != nil {
 		pe.RetryAfter = parseRetryAfter(header)

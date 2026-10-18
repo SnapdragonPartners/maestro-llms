@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 400,
+    "message": "* GenerateContentRequest.generation_config.temperature: temperature must be in the range [0.0, 2.0].\n",
+    "status": "INVALID_ARGUMENT"
+  }
+}

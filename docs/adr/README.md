@@ -45,7 +45,7 @@ Copy `0001`'s structure as the template.
 | [0008](0008-prompt-cache-hint.md) | Provider-neutral prompt-cache hint (`ContentPart.CacheBreakpoint`) | Accepted |
 | [0009](0009-vertex-backend-psc-and-gemini-embeddings.md) | Vertex backend (Anthropic + Gemini embeddings), PSC injection, task-typed embeddings — design of record; v0.4 implementation | Accepted |
 | [0010](0010-toolcall-provider-signature.md) | Round-trip opaque provider state via `ToolCall.ProviderSignature` (Gemini 3 thought_signature) | Accepted |
-| [0011](0011-toolloop-helper.md) | Tool loop helper — scope, API, and non-goals | Accepted; partially superseded by 0017; amended by 0019, 0020 |
+| [0011](0011-toolloop-helper.md) | Tool loop helper — scope, API, and non-goals | Accepted; partially superseded by 0017; amended by 0019, 0020, 0026 |
 | [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted |
 | [0013](0013-text-token-estimator.md) | Text-level token estimator (`EstimateTextTokens`) — neutral-biased free function distinct from the high-biased middleware estimator | Accepted |
 | [0015](0015-vllm-provider.md) | vLLM provider — leaf package, OpenAI Chat Completions wire shape (no auth allowed, no `LatestInFamily`, `Created` is local load time) | Accepted |
@@ -59,3 +59,4 @@ Copy `0001`'s structure as the template.
 | [0023](0023-usage-input-includes-cache.md) | `Usage.InputTokens` includes cached input on every provider; cache reads/writes are subsets | Accepted |
 | [0024](0024-provider-params.md) | Per-request `ProviderParams`: raw provider body fields keyed by `ProviderID`, deep-merged after mapping | Accepted |
 | [0025](0025-bucket-distributed-limiter.md) | Generic `bucket` limiter with a Postgres backend (lease rows + renewal for slots; FIFO queue planned, not MVP) | Accepted |
+| [0026](0026-context-length-error-kind.md) | Context-window overflow: `ErrorKindContextLength` (deterministic provider signals only) and toolloop `OutcomeContextExceeded` | Accepted |

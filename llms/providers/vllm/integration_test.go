@@ -29,7 +29,10 @@ func envModel() string { return os.Getenv("MAESTRO_VLLM_MODEL") }
 func envAPIKey() string { return os.Getenv("MAESTRO_VLLM_API_KEY") }
 
 // hclient is the shared httptest-tolerant client.
-func hclient() *http.Client { return &http.Client{Timeout: 60 * time.Second} }
+// hclient's timeout is only a backstop: each test bounds its requests with a
+// context deadline. It must not be shorter than the longest of those (3
+// minutes), or it silently cuts them short.
+func hclient() *http.Client { return &http.Client{Timeout: 3 * time.Minute} }
 
 func newVLLMOrSkip(t *testing.T) (*vllm.Client, string) {
 	t.Helper()

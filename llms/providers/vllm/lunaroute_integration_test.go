@@ -184,7 +184,9 @@ func lunaRouteToolChoiceRequired(t *testing.T, c *vllm.Client) {
 // reasoning from the billable total, so the Billable identity alone would
 // stay green if reasoning-token details were dropped.
 func lunaRouteReasoning(t *testing.T, c *vllm.Client, reasoningModel bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// GLM on LunaRoute intermittently takes over a minute even on this
+	// one-line prompt.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	resp, err := c.Complete(ctx, llms.ChatRequest{
 		Messages:  []llms.Message{llms.UserText("What is 17*23? Reply with just the number.")},

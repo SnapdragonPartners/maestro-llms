@@ -1,0 +1,46 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "annotations": null,
+        "audio": null,
+        "content": "3",
+        "function_call": null,
+        "reasoning": "We need answer item 123 aisle from given. Need parse pattern. Fact 123: item 123 filed shelf 4 aisle 3. So answer 3. Must just number.",
+        "refusal": null,
+        "role": "assistant"
+      },
+      "routed_experts": null,
+      "stop_reason": null,
+      "token_ids": null
+    }
+  ],
+  "created": 1792284899,
+  "ec_transfer_params": null,
+  "id": "chatcmpl-a054198074b19f91",
+  "kv_transfer_params": null,
+  "metrics": null,
+  "model": "deepseek-4.1-flash",
+  "object": "chat.completion",
+  "prompt_logprobs": null,
+  "prompt_text": null,
+  "prompt_token_ids": null,
+  "service_tier": null,
+  "system_fingerprint": "vllm-0.29.1rc1.dev573+ge97573215-tp4-ep-dd25145b",
+  "usage": {
+    "completion_tokens": 41,
+    "completion_tokens_details": {
+      "reasoning_tokens": 38
+    },
+    "prompt_tokens": 8043,
+    "prompt_tokens_details": {
+      "cached_tokens": 7936,
+      "created_cache_tokens": 0,
+      "multimodal_tokens": null
+    },
+    "total_tokens": 8084
+  }
+}

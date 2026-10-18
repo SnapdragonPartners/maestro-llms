@@ -379,7 +379,8 @@ func toResponse(msg *anthropic.Message) llms.ChatResponse {
 	}
 }
 
-// buildUsage normalizes Anthropic usage per ADR-0016 as amended by ADR-0018.
+// buildUsage normalizes Anthropic usage per ADR-0016 as amended by ADR-0018,
+// and input per ADR-0023.
 // The wire output_tokens includes thinking; output_tokens_details.
 // thinking_tokens is the thinking subset (the SDK documents it as always
 // <= output_tokens). When the details field is present, OutputTokens is the
@@ -394,14 +395,19 @@ func buildUsage(msg *anthropic.Message) llms.Usage {
 		reasoning = min(max(int(msg.Usage.OutputTokensDetails.ThinkingTokens), 0), wireOut)
 		visible = wireOut - reasoning
 	}
+	// Anthropic's input_tokens excludes cache reads and writes; InputTokens
+	// includes them, so it is all input processed (ADR-0023).
+	read := max(int(msg.Usage.CacheReadInputTokens), 0)
+	write := max(int(msg.Usage.CacheCreationInputTokens), 0)
+	input := max(int(msg.Usage.InputTokens), 0) + read + write
 	return llms.Usage{
-		InputTokens:          int(msg.Usage.InputTokens),
+		InputTokens:          input,
 		OutputTokens:         visible,
 		ReasoningTokens:      reasoning,
 		BillableOutputTokens: wireOut,
-		TotalTokens:          int(msg.Usage.InputTokens) + wireOut,
-		CacheReadTokens:      int(msg.Usage.CacheReadInputTokens),
-		CacheWriteTokens:     int(msg.Usage.CacheCreationInputTokens),
+		TotalTokens:          input + wireOut,
+		CacheReadTokens:      read,
+		CacheWriteTokens:     write,
 		ProviderRequestID:    msg.ID,
 	}
 }

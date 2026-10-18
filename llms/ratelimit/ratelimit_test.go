@@ -237,3 +237,27 @@ func TestUnlimitedDimensions(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// ADR-0023: cache reads and writes are subsets of InputTokens/TotalTokens,
+// so Commit charges them once, not on top.
+func TestCommitDoesNotDoubleCountCache(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(0, 0)}
+	l := NewInMemoryLimiter(Config{TokensPerMinute: 1000, MaxConcurrency: 2, Clock: clk.Now})
+	r := mustReserve(t, l, chatReq(200))
+	if err := r.Commit(context.Background(), llms.Usage{
+		InputTokens: 90, OutputTokens: 10, TotalTokens: 100, CacheReadTokens: 60, CacheWriteTokens: 20,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Capacity 900; the reservation's 200 is refunded down to the 100 used.
+	if s, _ := l.Stats(context.Background()); s.AvailableTokens != 800 {
+		t.Fatalf("want 100 tokens charged (cache counted once), available = %d", s.AvailableTokens)
+	}
+	r2 := mustReserve(t, l, chatReq(200))
+	if err := r2.Commit(context.Background(), llms.Usage{InputTokens: 90, OutputTokens: 10, CacheReadTokens: 60}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := l.Stats(context.Background()); s.AvailableTokens != 700 {
+		t.Fatalf("no TotalTokens: want input+output (100) charged, available = %d", s.AvailableTokens)
+	}
+}

@@ -77,7 +77,9 @@ func TestCompleteTextResponse(t *testing.T) {
 		t.Fatalf("stop reason = %q", resp.StopReason)
 	}
 	u := resp.Usage
-	if u.InputTokens != 11 || u.OutputTokens != 7 || u.TotalTokens != 18 ||
+	// ADR-0023: wire input_tokens (11) excludes cache reads (3) and writes
+	// (2); InputTokens includes them.
+	if u.InputTokens != 16 || u.OutputTokens != 7 || u.TotalTokens != 23 ||
 		u.CacheWriteTokens != 2 || u.CacheReadTokens != 3 || u.ProviderRequestID != "msg_1" {
 		t.Fatalf("usage mapping wrong: %+v", u)
 	}

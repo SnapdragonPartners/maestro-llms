@@ -252,16 +252,15 @@ type reservation struct {
 	released  bool
 }
 
-// effectiveTokens is the total tokens to charge for actual usage. It covers
-// chat (TotalTokens) and embeddings (EmbeddingTokens), and adds cache tokens
-// on top since providers report those separately; overcounting is the safe
-// direction for a limiter.
+// effectiveTokens is the total tokens to charge for actual usage: chat
+// (TotalTokens, else input + output) and embeddings (EmbeddingTokens). Cache
+// reads and writes are subsets of InputTokens (ADR-0023), so they are already
+// counted and are not added again.
 func effectiveTokens(u llms.Usage) int {
-	base := u.TotalTokens
-	if base <= 0 {
-		base = u.InputTokens + u.OutputTokens + u.EmbeddingTokens
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
 	}
-	return base + u.CacheReadTokens + u.CacheWriteTokens
+	return u.InputTokens + u.OutputTokens + u.EmbeddingTokens
 }
 
 // Commit reconciles actual token usage against the estimate. Lower actual

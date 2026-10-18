@@ -276,17 +276,24 @@ func toChatResponse(resp *responses.Response) llms.ChatResponse {
 		visible = 0
 	}
 
+	// input_tokens already includes cached tokens; the details are subsets
+	// (ADR-0023).
+	input := int(resp.Usage.InputTokens)
+	cacheRead, cacheWrite := llms.CacheSplit(input,
+		int(resp.Usage.InputTokensDetails.CachedTokens), int(resp.Usage.InputTokensDetails.CacheWriteTokens))
 	return llms.ChatResponse{
 		Message:    llms.Message{Role: llms.RoleAssistant, Content: parts},
 		Text:       text,
 		ToolCalls:  toolCalls,
 		StopReason: openaiStopReason(resp),
 		Usage: llms.Usage{
-			InputTokens:          int(resp.Usage.InputTokens),
+			InputTokens:          input,
 			OutputTokens:         visible,
 			ReasoningTokens:      reasoning,
 			BillableOutputTokens: billable,
 			TotalTokens:          int(resp.Usage.TotalTokens),
+			CacheReadTokens:      cacheRead,
+			CacheWriteTokens:     cacheWrite,
 			ProviderRequestID:    resp.ID,
 		},
 		Raw: resp,

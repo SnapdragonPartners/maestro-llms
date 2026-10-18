@@ -1,0 +1,79 @@
+{
+  "id": "resp_b459b0ee7ac61eab",
+  "created_at": 1792284917,
+  "incomplete_details": null,
+  "instructions": null,
+  "metadata": null,
+  "model": "deepseek-4.1-flash",
+  "object": "response",
+  "output": [
+    {
+      "id": "rs_9710563d93b4a4af",
+      "summary": [],
+      "type": "reasoning",
+      "content": [
+        {
+          "text": "We need answer. Need parse mapping. Need item 123 aisle. Given Fact 123: item numbered 123 filed under shelf 4 in aisle 3. So aisle 3. Need just number. Final 3.",
+          "type": "reasoning_text"
+        }
+      ],
+      "encrypted_content": null,
+      "status": null
+    },
+    {
+      "id": "msg_ba09bc1a21af8872",
+      "content": [
+        {
+          "annotations": [],
+          "text": "3",
+          "type": "output_text",
+          "logprobs": null
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message",
+      "phase": null
+    }
+  ],
+  "parallel_tool_calls": true,
+  "temperature": 1.0,
+  "tool_choice": "none",
+  "tools": [],
+  "top_p": 1.0,
+  "background": false,
+  "max_output_tokens": 64,
+  "max_tool_calls": null,
+  "previous_response_id": null,
+  "prompt": null,
+  "reasoning": null,
+  "service_tier": "auto",
+  "status": "completed",
+  "text": null,
+  "top_logprobs": null,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 8043,
+    "input_tokens_details": {
+      "cached_tokens": 7936,
+      "cache_write_tokens": 0,
+      "input_tokens_per_turn": [],
+      "cached_tokens_per_turn": []
+    },
+    "output_tokens": 49,
+    "output_tokens_details": {
+      "reasoning_tokens": 46,
+      "tool_output_tokens": 0,
+      "output_tokens_per_turn": [],
+      "tool_output_tokens_per_turn": []
+    },
+    "total_tokens": 8092
+  },
+  "user": null,
+  "presence_penalty": 0.0,
+  "frequency_penalty": 0.0,
+  "kv_transfer_params": null,
+  "ec_transfer_params": null,
+  "input_messages": null,
+  "output_messages": null
+}

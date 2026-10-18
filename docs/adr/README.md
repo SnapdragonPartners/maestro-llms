@@ -56,3 +56,4 @@ Copy `0001`'s structure as the template.
 | [0020](0020-toolloop-empty-response.md) | Tool loop `OutcomeEmptyResponse` (an empty response is reported, not appended) | Accepted |
 | [0021](0021-reasoning-content-part.md) | Round-trip provider reasoning as a `ContentReasoning` part (Anthropic thinking blocks); typed `ProviderID` | Accepted |
 | [0022](0022-reasoning-effort.md) | Provider-neutral reasoning control (`ChatRequest.Reasoning`, `ChatResponse.AppliedReasoning`): 1:1 mapping or omitted, no per-model prediction | Accepted |
+| [0023](0023-usage-input-includes-cache.md) | `Usage.InputTokens` includes cached input on every provider; cache reads/writes are subsets | Accepted |

@@ -324,3 +324,38 @@ func TestFakeChatRejectsNonMarshalableProviderParams(t *testing.T) {
 		t.Fatalf("calls = %d, want the rejected call recorded", len(c.Calls()))
 	}
 }
+
+// PR #98 review: an adapter validates only its own entry, so an invalid entry
+// for another provider must not fail a fake standing in for this one.
+func TestFakeChatIgnoresInvalidForeignProviderParams(t *testing.T) {
+	c := &FakeChatClient{Text: "ok", ModelRef: llms.ModelRef{Provider: llms.ProviderVLLM, Name: "m"}}
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{
+			llms.ProviderVLLM:   {"max_tokens": 5},
+			llms.ProviderOpenAI: {"bad": make(chan int)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v, want success: the invalid entry is another provider's", err)
+	}
+	rec := c.Calls()[0].ProviderParams
+	if rec[llms.ProviderVLLM]["max_tokens"] != json.Number("5") {
+		t.Fatalf("selected entry = %#v, want its JSON snapshot", rec[llms.ProviderVLLM])
+	}
+	if rec[llms.ProviderOpenAI] != nil {
+		t.Fatalf("invalid foreign entry = %#v, want recorded as nil", rec[llms.ProviderOpenAI])
+	}
+
+	// With no selected provider, the fake stands in for any adapter, so the
+	// invalid entry fails the call.
+	unscoped := &FakeChatClient{Text: "ok"}
+	_, err = unscoped.Complete(context.Background(), llms.ChatRequest{
+		Messages:       []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderOpenAI: {"bad": make(chan int)}},
+	})
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+		t.Fatalf("unscoped fake: err = %v, want bad_request", err)
+	}
+}

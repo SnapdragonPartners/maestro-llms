@@ -12,9 +12,11 @@ import (
 // tests. Configure it with scripted responses and/or a scripted error, or take
 // full control with Func. It records every request for assertions;
 // ProviderParams are recorded in their JSON form (what an adapter sends:
-// objects as map[string]any, arrays as []any, numbers as json.Number), and a
-// value that doesn't marshal fails the call as bad_request, as the adapters
-// do.
+// objects as map[string]any, arrays as []any, numbers as json.Number). An
+// entry that doesn't marshal fails the call as bad_request when it is
+// ModelRef.Provider's, as that adapter would; other providers' entries are
+// ignored, as adapters ignore them. With ModelRef.Provider unset, any such
+// entry fails the call.
 // Fields are grouped pointer-bearing first (fieldalignment); construct with
 // keyed literals.
 type FakeChatClient struct {
@@ -44,7 +46,7 @@ func (f *FakeChatClient) Model() llms.ModelRef { return f.ModelRef }
 func (f *FakeChatClient) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
 	// Record before the context check so a canceled call is still observable
 	// (the doc promises every request is recorded).
-	rec, recErr := recordChatRequest(req)
+	rec, recErr := recordChatRequest(req, f.ModelRef.Provider)
 	f.mu.Lock()
 	f.calls = append(f.calls, rec)
 	f.mu.Unlock()

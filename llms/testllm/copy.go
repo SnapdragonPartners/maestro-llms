@@ -86,9 +86,12 @@ func copyChatRequest(r llms.ChatRequest) llms.ChatRequest {
 // recorded as their JSON form, which is what an adapter sends (ADR-0024):
 // objects as map[string]any, arrays as []any, numbers as json.Number. The
 // snapshot shares nothing with the caller's values whatever their Go types,
-// private state and json:"-" cycles included. A value that doesn't marshal
-// is reported as an error, as the adapters reject it.
-func recordChatRequest(r llms.ChatRequest) (llms.ChatRequest, error) {
+// private state and json:"-" cycles included. An entry that doesn't marshal
+// is recorded as nil, and is an error only when it is the selected
+// provider's: an adapter validates only its own entry and ignores the rest.
+// With no selected provider (a fake not standing in for a specific adapter)
+// every entry counts.
+func recordChatRequest(r llms.ChatRequest, selected llms.ProviderID) (llms.ChatRequest, error) {
 	params := r.ProviderParams
 	r.ProviderParams = nil
 	out := copyChatRequest(r)
@@ -99,7 +102,7 @@ func recordChatRequest(r llms.ChatRequest) (llms.ChatRequest, error) {
 	var firstErr error
 	for k, v := range params {
 		snap, err := jsonSnapshot(v)
-		if err != nil && firstErr == nil {
+		if err != nil && firstErr == nil && (selected == "" || k == selected) {
 			firstErr = fmt.Errorf("ProviderParams[%q] does not marshal to JSON: %w", k, err)
 		}
 		out.ProviderParams[k] = snap

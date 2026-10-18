@@ -609,6 +609,7 @@ const (
     ErrorKindUnavailable   ErrorKind = "unavailable"
     ErrorKindBadRequest    ErrorKind = "bad_request"
     ErrorKindContentPolicy ErrorKind = "content_policy"
+    ErrorKindContextLength ErrorKind = "context_length"
     ErrorKindUnknown       ErrorKind = "unknown"
 )
 
@@ -628,7 +629,8 @@ Applications should be able to use `errors.As` to inspect `ProviderError`.
 Retry guidance:
 
 - `rate_limited`, `timeout`, and `unavailable` are normally retryable.
-- `auth`, `config`, `bad_request`, and `content_policy` are normally not retryable.
+- `auth`, `config`, `bad_request`, `content_policy`, and `context_length` are normally not retryable.
+- `context_length` means the input does not fit the model's context window; the caller must shorten the conversation before retrying. Adapters report it only for a deterministic provider signal and otherwise leave the error `bad_request` (ADR-0026).
 - `RetryAfter` should capture provider `Retry-After` headers when available.
 
 Local limiter rejections should not be represented as provider errors. Use a separate error type:

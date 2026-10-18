@@ -145,3 +145,50 @@ func TestClassifyAPIErrorWithRetryAfter(t *testing.T) {
 		t.Fatal("429 should be retryable")
 	}
 }
+
+// TestClassifyOverflowNarrowsOnlyBadRequest pins the ADR-0026 choke point:
+// the detector turns a bad_request status into context_length, but cannot
+// reclassify any other status, and is never consulted for errors Extract
+// does not recognize or for context errors.
+func TestClassifyOverflowNarrowsOnlyBadRequest(t *testing.T) {
+	always := func(error) bool { return true }
+	cases := map[int]llms.ErrorKind{
+		400: llms.ErrorKindContextLength,
+		404: llms.ErrorKindContextLength,
+		422: llms.ErrorKindContextLength,
+		401: llms.ErrorKindAuth,
+		413: llms.ErrorKindUnknown,
+		429: llms.ErrorKindRateLimited,
+		500: llms.ErrorKindUnavailable,
+	}
+	for status, want := range cases {
+		err := ClassifyOverflow("p", "m", errors.New("x"), okExtract(status, nil, "x"), always)
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != want {
+			t.Errorf("status %d: got %v, want kind %q", status, err, want)
+		}
+	}
+
+	called := false
+	spy := func(error) bool { called = true; return true }
+	_ = ClassifyOverflow("p", "m", errors.New("weird"), notMineExtract(), spy)
+	if called {
+		t.Error("overflow consulted for an error Extract did not recognize")
+	}
+	for _, in := range []error{context.DeadlineExceeded, context.Canceled} {
+		_ = ClassifyOverflow("p", "m", in, okExtract(400, nil, "x"), spy)
+		if called {
+			t.Errorf("overflow consulted for %v", in)
+		}
+	}
+
+	never := func(error) bool { return false }
+	err := ClassifyOverflow("p", "m", errors.New("x"), okExtract(400, nil, "x"), never)
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+		t.Errorf("non-overflow 400: got %v, want bad_request", err)
+	}
+	if llms.Retryable(&llms.ProviderError{Kind: llms.ErrorKindContextLength}) {
+		t.Error("context_length must not be retryable")
+	}
+}

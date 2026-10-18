@@ -25,6 +25,14 @@ const (
 	ErrorKindBadRequest ErrorKind = "bad_request"
 	// ErrorKindContentPolicy is a content-policy refusal.
 	ErrorKindContentPolicy ErrorKind = "content_policy"
+	// ErrorKindContextLength is a request whose input does not fit the
+	// model's context window (ADR-0026). It is not retryable: the same
+	// request fails again, so the caller must shorten the conversation
+	// (trim or compact the history) first. Adapters report it only where
+	// the provider signals overflow deterministically; any other overflow
+	// stays ErrorKindBadRequest, and Ollama silently truncates instead of
+	// erroring.
+	ErrorKindContextLength ErrorKind = "context_length"
 	// ErrorKindUnknown is an unclassified failure.
 	ErrorKindUnknown ErrorKind = "unknown"
 )
@@ -60,11 +68,13 @@ func (e *ProviderError) Unwrap() error { return e.Cause }
 
 // Retryable reports whether this error kind is normally worth retrying.
 // rate_limited, timeout, and unavailable are retryable; auth, config,
-// bad_request, and content_policy are not. Unknown is treated as retryable
-// (conservative: a single retry is usually cheaper than a missed transient).
+// bad_request, content_policy, and context_length are not. Unknown is
+// treated as retryable (conservative: a single retry is usually cheaper
+// than a missed transient).
 func (e *ProviderError) Retryable() bool {
 	switch e.Kind {
-	case ErrorKindAuth, ErrorKindConfig, ErrorKindBadRequest, ErrorKindContentPolicy:
+	case ErrorKindAuth, ErrorKindConfig, ErrorKindBadRequest, ErrorKindContentPolicy,
+		ErrorKindContextLength:
 		return false
 	default:
 		return true

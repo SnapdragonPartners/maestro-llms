@@ -313,6 +313,11 @@ type httpStatusErr struct {
 
 func (e *httpStatusErr) Error() string { return fmt.Sprintf("ollama: status %d: %s", e.status, e.msg) }
 
+// classify has no context-overflow detector (ADR-0026): Ollama does not
+// error on an over-long prompt, it silently truncates it to num_ctx
+// (observed 2026-10-18 on Ollama 0.33.2: a ~3000-token prompt with num_ctx
+// 256 returned 200 with prompt_eval_count 130). Nothing here can report
+// ErrorKindContextLength, so callers must budget Ollama context themselves.
 func (c *Client) classify(err error) error {
 	return apierr.Classify(providerName, c.model, err, func(e error) (int, http.Header, string, bool) {
 		var he *httpStatusErr

@@ -1,6 +1,6 @@
 # 0011. Tool loop helper — scope, API, and non-goals
 
-- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed); amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (`OutcomeDeadline`; negative `MaxIterations` is unlimited) and [ADR-0020](0020-toolloop-empty-response.md) (`OutcomeEmptyResponse`)
+- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed); amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (`OutcomeDeadline`; negative `MaxIterations` is unlimited), [ADR-0020](0020-toolloop-empty-response.md) (`OutcomeEmptyResponse`) and [ADR-0026](0026-context-length-error-kind.md) (`OutcomeContextExceeded`)
 - **Date:** 2026-05-19
 
 ## Context

@@ -32,7 +32,10 @@ type Config struct {
 	// Injectable so refill is deterministic in tests. Waiting (MaxWait,
 	// polling) always uses real time.
 	Clock func() time.Time
-	// MaxWait bounds how long Acquire blocks; 0 waits until ctx is done.
+	// MaxWait bounds how long Acquire waits for capacity; 0 waits until ctx
+	// is done. Nothing is admitted after it. The limiter's internal mutex
+	// guards constant-time sections only (no I/O), so contention on it adds
+	// at most microseconds past MaxWait; it is not cancelable.
 	MaxWait time.Duration
 	// PollInterval is the first re-check delay while blocked; defaults to
 	// 100ms. It doubles up to MaxPollInterval (default 1s).

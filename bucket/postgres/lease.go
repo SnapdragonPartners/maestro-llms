@@ -24,29 +24,35 @@ type lease struct {
 	key        string
 	id         string
 	bucketID   int64
-	tokens     int
+	tokens     int // the estimate debited at acquire, when tokenCharged
 	lostOnce   sync.Once
 	release    sync.Once
 	mu         sync.Mutex
 	adjusted   bool
+	// tokenCharged records whether acquire actually debited tokens (the
+	// bucket was token-limited then). Adjust reconciles only a charge that
+	// happened, so a limit change in between can't refund tokens that were
+	// never taken.
+	tokenCharged bool
 }
 
 // newLease starts renewal for a freshly inserted lease row. The renewal
 // context keeps acquireCtx's values but not its cancellation: the request
 // ending must not stop renewal while the slot is still held. Release stops
 // it.
-func (l *Limiter) newLease(acquireCtx context.Context, key, id string, bucketID int64, tokens int) *lease {
+func (l *Limiter) newLease(acquireCtx context.Context, key, id string, bucketID int64, tokens int, tokenCharged bool) *lease {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(acquireCtx))
 	r := &lease{
-		acquired: time.Now(),
-		l:        l,
-		cancel:   cancel,
-		done:     make(chan struct{}),
-		lost:     make(chan struct{}),
-		key:      key,
-		id:       id,
-		bucketID: bucketID,
-		tokens:   tokens,
+		acquired:     time.Now(),
+		l:            l,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		lost:         make(chan struct{}),
+		key:          key,
+		id:           id,
+		bucketID:     bucketID,
+		tokens:       tokens,
+		tokenCharged: tokenCharged,
 	}
 	go r.renew(ctx)
 	return r
@@ -123,7 +129,10 @@ WHERE id = $1 AND expires_at > clock_timestamp()`,
 }
 
 // Adjust implements bucket.Lease. It settles refill under the current
-// limits, then charges or refunds the difference. It runs on a
+// limits, then charges or refunds the difference. It is a no-op for a lease
+// acquired while the bucket had no token limit (nothing was debited, so
+// there is nothing to reconcile), and when the bucket has no token limit
+// now. It runs on a
 // cancellation-surviving context bounded by OpTimeout: the call it
 // reconciles already happened.
 func (r *lease) Adjust(ctx context.Context, actualTokens int) error {
@@ -134,6 +143,9 @@ func (r *lease) Adjust(ctx context.Context, actualTokens int) error {
 	}
 	r.adjusted = true
 	r.mu.Unlock()
+	if !r.tokenCharged {
+		return nil
+	}
 	actualTokens = max(actualTokens, 0)
 	return r.l.inTx(context.WithoutCancel(ctx), func(ctx context.Context, tx *sql.Tx) error {
 		b, now, err := lockBucketByID(ctx, tx, r.key, r.bucketID)

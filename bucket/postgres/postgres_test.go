@@ -466,11 +466,22 @@ func TestAcquireAfterLongLockWait(t *testing.T) {
 
 	unlock := lockBucketRow(t, name)
 	// The acquire's transaction starts now, then waits on the lock.
-	got := make(chan *lease, 1)
-	go func() { got <- mustAcquire(t, l, name, 0) }()
+	type result struct {
+		lease bucket.Lease
+		err   error
+	}
+	got := make(chan result, 1)
+	go func() {
+		ls, err := l.Acquire(context.Background(), name, 0)
+		got <- result{ls, err} // report in the test goroutine; t.Fatal here would hang <-got
+	}()
 	time.Sleep(3 * ttl)
 	unlock()
-	ls := <-got
+	res := <-got
+	if res.err != nil {
+		t.Fatalf("Acquire after a long lock wait: %v", res.err)
+	}
+	ls := res.lease.(*lease) //nolint:forcetypeassert // test
 	var live bool
 	if err := db.QueryRow(`SELECT expires_at > clock_timestamp() + interval '200 milliseconds' FROM bucket.lease WHERE id = $1`, ls.id).Scan(&live); err != nil || !live {
 		t.Fatalf("lease after a long lock wait is not live: %v", err)
@@ -595,6 +606,31 @@ func TestEnsure(t *testing.T) {
 	if err := l.Ensure(ctx, name, bucket.Limits{TokensPerMinute: -1}, true); err == nil {
 		t.Fatal("invalid limits accepted")
 	}
+}
+
+// TestAdjustAfterLimitingEnabledRefundsNothing: a lease acquired while the
+// bucket was token-unlimited debited nothing, so adjusting it after Ensure
+// turns limiting on must not refund its estimate into the new budget.
+func TestAdjustAfterLimitingEnabledRefundsNothing(t *testing.T) {
+	db := openMain(t)
+	l := newLimiter(t, db, Config{})
+	name := bucketName(t)
+	ensure(t, l, name, bucket.Limits{MaxConcurrency: 5}) // no token limit
+	old := mustAcquire(t, l, name, 100)                  // debits nothing
+	ensure(t, l, name, bucket.Limits{TokensPerMinute: 100, MaxConcurrency: 5, BufferFactor: 1})
+	drain := mustAcquire(t, l, name, 100) // starts full at 100; now about 0
+	if err := old.Adjust(context.Background(), 10); err != nil {
+		t.Fatal(err)
+	}
+	var bal float64
+	if err := db.QueryRow(`SELECT token_balance FROM bucket.bucket WHERE name = $1`, name).Scan(&bal); err != nil {
+		t.Fatal(err)
+	}
+	if bal > 5 { // refill over the test's few ms is well under 5 tokens
+		t.Fatalf("balance = %v after adjusting an uncharged lease; want about 0, not a 90-token refund", bal)
+	}
+	_ = old.Release(context.Background())
+	_ = drain.Release(context.Background())
 }
 
 // TestEnsureSettlesBeforeRateChange is ADR-0025's example: -600 at 60 TPM,

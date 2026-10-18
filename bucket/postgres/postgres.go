@@ -192,6 +192,7 @@ func (l *Limiter) tryAcquire(ctx context.Context, key string, tokens int) (core.
 	var res core.Result
 	var leaseID string
 	var bucketID int64
+	var tokenCharged bool
 	err := l.inTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		r, now, err := lockBucket(ctx, tx, key)
 		if err != nil {
@@ -232,13 +233,14 @@ RETURNING id`, r.id, micros(l.cfg.LeaseTTL)).Scan(&leaseID); err != nil {
 			return fmt.Errorf("bucket %q: insert lease: %w", key, schemaErr(err))
 		}
 		bucketID = r.id
+		tokenCharged = r.limits.TokenLimited()
 		return nil
 	})
 	if err != nil {
 		return core.Result{}, err
 	}
 	if leaseID != "" {
-		res.Lease = l.newLease(ctx, key, leaseID, bucketID, tokens)
+		res.Lease = l.newLease(ctx, key, leaseID, bucketID, tokens, tokenCharged)
 	}
 	return res, nil
 }

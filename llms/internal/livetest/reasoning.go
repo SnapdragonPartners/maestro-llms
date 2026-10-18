@@ -31,7 +31,7 @@ func ReasoningReplay(t *testing.T, c llms.ChatClient) {
 	}
 	notes := map[string]string{
 		"a": "Not here yet. Continue with note b.",
-		"b": "End of chain. The vault code is " + codename + ".",
+		"b": "End of chain. The answer word is " + codename + ".",
 	}
 	readNote := toolloop.Tool{
 		Definition: toolDef("read_note", "Read a note by id.",
@@ -48,9 +48,9 @@ func ReasoningReplay(t *testing.T, c llms.ChatClient) {
 		},
 	}
 	system := []llms.ContentPart{llms.Text(
-		"Follow the chain of notes with read_note, one note at a time, until a note gives the vault code. " +
+		"Follow the chain of notes with read_note, one note at a time, until a note gives the answer word. " +
 			"Before each tool call, think about what the notes so far tell you. " +
-			"Then reply in plain text with the vault code.")}
+			"Then reply in plain text with the answer word.")}
 
 	tools := []toolloop.Tool{readNote}
 	msgs := reasoningLoop(t, c, system, tools)
@@ -62,6 +62,39 @@ func ReasoningReplay(t *testing.T, c llms.ChatClient) {
 // transcript.
 func reasoningLoop(t *testing.T, c llms.ChatClient, system []llms.ContentPart, tools []toolloop.Tool) []llms.Message {
 	t.Helper()
+	// The scenario needs at least one thinking turn to replay, and the
+	// model sometimes doesn't think (adaptive thinking) or a safety
+	// classifier refuses a turn. Neither is an adapter fault, so retry a
+	// few times before failing.
+	const attempts = 3
+	for attempt := 1; ; attempt++ {
+		out, withReasoning := runReasoningLoop(t, c, system, tools)
+		retryable := withReasoning == 0 ||
+			(out.Kind == toolloop.OutcomeEmptyResponse && out.Response.StopReason == "refusal")
+		if retryable && attempt < attempts {
+			t.Logf("1. attempt %d: kind=%q stop=%q, %d assistant turn(s) with reasoning; retrying",
+				attempt, out.Kind, out.Response.StopReason, withReasoning)
+			continue
+		}
+		if out.Kind != toolloop.OutcomeFinalAnswer {
+			t.Fatalf("1. tool loop: kind=%q stop=%q iterations=%d err=%v, want final_answer",
+				out.Kind, out.Response.StopReason, out.Iterations, out.Err)
+		}
+		if out.Iterations < 2 {
+			t.Fatalf("1. tool loop: iterations=%d, want >= 2 so reasoning was replayed at least once", out.Iterations)
+		}
+		if withReasoning == 0 {
+			t.Fatalf("1. tool loop: no assistant turn carried a reasoning part in %d attempts; the provider returned none or the adapter dropped it", attempts)
+		}
+		t.Logf("1. tool loop OK: %d iteration(s), %d assistant turn(s) with reasoning", out.Iterations, withReasoning)
+		return out.Messages
+	}
+}
+
+// runReasoningLoop runs the tool loop once and counts the assistant turns
+// that carry reasoning.
+func runReasoningLoop(t *testing.T, c llms.ChatClient, system []llms.ContentPart, tools []toolloop.Tool) (toolloop.Outcome, int) {
+	t.Helper()
 	var tr trace
 	ctx, cancel := context.WithTimeout(context.Background(), scenarioTimeout)
 	defer cancel()
@@ -69,7 +102,7 @@ func reasoningLoop(t *testing.T, c llms.ChatClient, system []llms.ContentPart, t
 		Client: withRetry(c),
 		Request: llms.ChatRequest{
 			System:    system,
-			Messages:  []llms.Message{llms.UserText("Start at note a. What is the vault code?")},
+			Messages:  []llms.Message{llms.UserText("Start at note a. What is the answer word?")},
 			MaxTokens: 4096,
 		},
 		Tools:         tools,
@@ -78,18 +111,7 @@ func reasoningLoop(t *testing.T, c llms.ChatClient, system []llms.ContentPart, t
 		OnToolCall:    tr.onToolCall,
 	})
 	tr.dump(t)
-	withReasoning := logReasoning(t, out.Messages)
-	if out.Kind != toolloop.OutcomeFinalAnswer {
-		t.Fatalf("1. tool loop: kind=%q iterations=%d err=%v, want final_answer", out.Kind, out.Iterations, out.Err)
-	}
-	if out.Iterations < 2 {
-		t.Fatalf("1. tool loop: iterations=%d, want >= 2 so reasoning was replayed at least once", out.Iterations)
-	}
-	if withReasoning == 0 {
-		t.Fatal("1. tool loop: no assistant turn carried a reasoning part; the provider returned none or the adapter dropped it")
-	}
-	t.Logf("1. tool loop OK: %d iteration(s), %d assistant turn(s) with reasoning", out.Iterations, withReasoning)
-	return out.Messages
+	return out, logReasoning(t, out.Messages)
 }
 
 // reasoningFollowUps is steps 2-4: unchanged transcript accepted, edited
@@ -101,7 +123,7 @@ func reasoningFollowUps(t *testing.T, c llms.ChatClient, system []llms.ContentPa
 	follow := func(msgs []llms.Message) error {
 		_, err := withRetry(c).Complete(ctx, llms.ChatRequest{
 			System:    system,
-			Messages:  append(slices.Clone(msgs), llms.UserText("Repeat the vault code only.")),
+			Messages:  append(slices.Clone(msgs), llms.UserText("Repeat the answer word only.")),
 			Tools:     []llms.ToolDefinition{tool},
 			MaxTokens: 1024,
 		})
@@ -113,7 +135,7 @@ func reasoningFollowUps(t *testing.T, c llms.ChatClient, system []llms.ContentPa
 	t.Log("2. unchanged transcript accepted")
 
 	edited := slices.Clone(msgs)
-	edited[0] = llms.UserText("Start at note a, please. What is the vault code?")
+	edited[0] = llms.UserText("Start at note a, please. What is the answer word?")
 	err := follow(edited)
 	var pe *llms.ProviderError
 	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest || !strings.Contains(err.Error(), "signature") {

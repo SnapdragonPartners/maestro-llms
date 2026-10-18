@@ -50,5 +50,7 @@ func (c *ChatClient) Complete(ctx context.Context, req llms.ChatRequest) (llms.C
 	if apiErr != nil {
 		return llms.ChatResponse{}, classifyError(c.model, apiErr)
 	}
-	return toChatResponse(resp), nil
+	out := toChatResponse(resp)
+	_, out.AppliedReasoning = mapEffort(req.Reasoning)
+	return out, nil
 }

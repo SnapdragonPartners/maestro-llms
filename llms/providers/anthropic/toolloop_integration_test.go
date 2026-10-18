@@ -56,9 +56,9 @@ func TestIntegrationAnthropicReasoningReplay(t *testing.T) {
 		anthropic.WithModel(reasoningModel()),
 		anthropic.WithRequestOptions(
 			option.WithHeader("anthropic-beta", "thinking-binding-controls-2026-08-01"),
-			// Effort high: adaptive thinking may skip thinking on an easy
+			// Effort max: adaptive thinking may skip thinking on an easy
 			// step, and the test needs thinking blocks to replay.
-			option.WithJSONSet("output_config", map[string]any{"effort": "high"}),
+			option.WithJSONSet("output_config", map[string]any{"effort": "max"}),
 			option.WithJSONSet("thinking", map[string]any{
 				"type":          "adaptive",
 				"display":       "summarized",

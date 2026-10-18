@@ -49,11 +49,14 @@ type wireTool struct {
 
 //nolint:govet // fieldalignment: internal JSON wire DTO, layout irrelevant.
 type wireRequest struct {
+	// Think is Ollama's thinking control: false, or a level string
+	// ("low"/"medium"/"high"). Nil omits it (ADR-0022).
+	Think    any            `json:"think,omitempty"`
 	Model    string         `json:"model"`
 	Messages []wireMessage  `json:"messages"`
-	Stream   bool           `json:"stream"`
 	Tools    []wireTool     `json:"tools,omitempty"`
 	Options  map[string]any `json:"options,omitempty"`
+	Stream   bool           `json:"stream"`
 }
 
 type wireResponse struct {
@@ -272,7 +275,31 @@ func (c *Client) toWire(req llms.ChatRequest) (*wireRequest, *llms.ProviderError
 	if len(opts) > 0 {
 		w.Options = opts
 	}
+	w.Think, _ = mapReasoning(req.Reasoning)
 	return w, nil
+}
+
+// mapReasoning maps a ReasoningConfig 1:1 to Ollama's think field, omitting
+// what Ollama can't express so the model default applies (ADR-0022):
+//
+//   - Effort none → think: false.
+//   - Effort low/medium/high → think: "low"/"medium"/"high" (models that take
+//     levels, such as gpt-oss; a model that doesn't is the provider's error).
+//   - Minimal, xhigh, max and BudgetTokens have no Ollama control.
+//
+// It returns the think value (nil when omitted) and what was applied.
+func mapReasoning(r *llms.ReasoningConfig) (any, *llms.ReasoningConfig) {
+	if r == nil {
+		return nil, nil
+	}
+	switch r.Effort {
+	case llms.ReasoningEffortNone:
+		return false, &llms.ReasoningConfig{Effort: r.Effort}
+	case llms.ReasoningEffortLow, llms.ReasoningEffortMedium, llms.ReasoningEffortHigh:
+		return string(r.Effort), &llms.ReasoningConfig{Effort: r.Effort}
+	default:
+		return nil, nil
+	}
 }
 
 // httpStatusErr lets the shared apierr classifier consume a non-2xx HTTP

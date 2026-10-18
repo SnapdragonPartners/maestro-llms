@@ -64,6 +64,10 @@ func copyChatRequest(r llms.ChatRequest) llms.ChatRequest {
 		t := *r.Temperature
 		r.Temperature = &t
 	}
+	if r.Reasoning != nil {
+		rc := *r.Reasoning
+		r.Reasoning = &rc
+	}
 	r.Metadata = maps.Clone(r.Metadata)
 	return r
 }

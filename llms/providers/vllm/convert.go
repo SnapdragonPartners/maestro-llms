@@ -316,12 +316,19 @@ func buildUsage(resp *openai.ChatCompletion) llms.Usage {
 	// Output + Reasoning == Billable, as the Anthropic adapter does.
 	reasoning := min(max(int(resp.Usage.CompletionTokensDetails.ReasoningTokens), 0), billable)
 	visible := billable - reasoning
+	// prompt_tokens already includes cached tokens; the details are
+	// subsets (ADR-0023). Servers that don't cache leave them zero.
+	input := int(resp.Usage.PromptTokens)
+	cacheRead, cacheWrite := llms.CacheSplit(input,
+		int(resp.Usage.PromptTokensDetails.CachedTokens), int(resp.Usage.PromptTokensDetails.CacheWriteTokens))
 	return llms.Usage{
-		InputTokens:          int(resp.Usage.PromptTokens),
+		InputTokens:          input,
 		OutputTokens:         visible,
 		ReasoningTokens:      reasoning,
 		BillableOutputTokens: billable,
 		TotalTokens:          int(resp.Usage.TotalTokens),
+		CacheReadTokens:      cacheRead,
+		CacheWriteTokens:     cacheWrite,
 		ProviderRequestID:    resp.ID,
 	}
 }

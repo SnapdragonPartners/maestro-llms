@@ -587,7 +587,9 @@ type Usage struct {
 
 If a provider does not return a field, leave it zero. Middleware can estimate tokens before a call; provider clients should fill actual usage when available.
 
-`CacheReadTokens` and `CacheWriteTokens` cover provider prompt-cache accounting such as Anthropic cache reads and cache creation. Providers that do not expose cache token accounting should leave these fields zero.
+`CacheReadTokens` and `CacheWriteTokens` cover provider prompt-cache accounting: Anthropic cache reads and creation, OpenAI `cached_tokens` / `cache_write_tokens`, and Gemini `cachedContentTokenCount`. Providers that do not expose cache token accounting should leave these fields zero.
+
+`InputTokens` is all input the provider processed, **including** cached tokens, on every provider. `CacheReadTokens` and `CacheWriteTokens` are subsets of it, so `InputTokens − CacheReadTokens − CacheWriteTokens` is the uncached remainder and is never negative. Anthropic's wire `input_tokens` excludes cache reads and writes, so its adapter adds them. See ADR-0023.
 
 ## Errors
 

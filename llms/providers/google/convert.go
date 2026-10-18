@@ -402,12 +402,18 @@ func toChatResponse(result *genai.GenerateContentResponse) llms.ChatResponse {
 		// TotalTokenCount = prompt + candidates + tool_use + thoughts.
 		visible := int(u.CandidatesTokenCount)
 		reasoning := int(u.ThoughtsTokenCount)
+		// promptTokenCount already includes cachedContentTokenCount
+		// (implicit or explicit caching); Gemini reports no cache writes
+		// (ADR-0023).
+		input := int(u.PromptTokenCount)
+		cacheRead, _ := llms.CacheSplit(input, int(u.CachedContentTokenCount), 0)
 		usage = llms.Usage{
-			InputTokens:          int(u.PromptTokenCount),
+			InputTokens:          input,
 			OutputTokens:         visible,
 			ReasoningTokens:      reasoning,
 			BillableOutputTokens: visible + reasoning,
 			TotalTokens:          int(u.TotalTokenCount),
+			CacheReadTokens:      cacheRead,
 		}
 	}
 

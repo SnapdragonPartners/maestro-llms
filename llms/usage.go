@@ -21,6 +21,15 @@ package llms
 //     reports the combined count in OutputTokens with ReasoningTokens
 //     zero.
 //
+// Cross-provider semantics for input and caching (ADR-0023):
+//
+//   - InputTokens is ALL input the provider processed, including tokens
+//     read from or written to a prompt cache. Cached tokens still occupy
+//     the context window.
+//   - CacheReadTokens and CacheWriteTokens are subsets of InputTokens, so
+//     InputTokens - CacheReadTokens - CacheWriteTokens is the uncached
+//     remainder (never negative). Cost math prices the three separately.
+//
 // Budget math: a length-truncation fires when
 // InputTokens + OutputTokens + ReasoningTokens approaches the cap, not
 // when OutputTokens alone does. Callers that see a small OutputTokens
@@ -37,4 +46,15 @@ type Usage struct {
 	CacheReadTokens      int
 	CacheWriteTokens     int
 	ProviderRequestID    string
+}
+
+// CacheSplit clamps provider-reported cache reads and writes so they are
+// subsets of input: read in [0, input], write in [0, input-read]. Adapters
+// use it so InputTokens - CacheReadTokens - CacheWriteTokens is never
+// negative even when a server reports inconsistent counts (ADR-0023).
+func CacheSplit(input, read, write int) (cacheRead, cacheWrite int) {
+	input = max(input, 0)
+	cacheRead = min(max(read, 0), input)
+	cacheWrite = min(max(write, 0), input-cacheRead)
+	return cacheRead, cacheWrite
 }

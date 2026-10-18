@@ -85,9 +85,11 @@ type Waiter struct {
 }
 
 // Wait runs try until it admits, reports the request impossible, fails, or
-// the wait ends. Each try receives a context that ends when the caller's
-// ctx does or MaxWait elapses, so no attempt can admit work after the wait
-// budget is spent. A try error is a backend failure and is returned as is,
+// the wait ends. MaxWait is a hard deadline on the whole call. Each try
+// receives a context that ends when the caller's ctx does or MaxWait
+// elapses, and a backend must check it after taking any lock and before
+// charging capacity, so no attempt can admit work after the budget is
+// spent. A try error is a backend failure and is returned as is,
 // unless that context is done, in which case the ended wait is reported as
 // a *bucket.LimitError.
 func Wait(ctx context.Context, key string, w Waiter, try func(context.Context) (Result, error)) (bucket.Lease, error) {
@@ -106,11 +108,8 @@ func Wait(ctx context.Context, key string, w Waiter, try func(context.Context) (
 	}
 	backoff := w.Initial
 	var retryAfter time.Duration
-	for attempt := 0; ; attempt++ {
-		// The first attempt is always made unless the caller's ctx is done,
-		// so a MaxWait shorter than one attempt still admits when capacity
-		// is free right now (that attempt is itself bounded by the budget).
-		if ctx.Err() != nil || (attempt > 0 && waitCtx.Err() != nil) {
+	for {
+		if waitCtx.Err() != nil {
 			return nil, ended("before capacity was available", retryAfter)
 		}
 		res, err := try(waitCtx)

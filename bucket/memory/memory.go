@@ -125,9 +125,17 @@ func (l *Limiter) settleLocked(s *keyState) {
 // Acquire implements bucket.Limiter.
 func (l *Limiter) Acquire(ctx context.Context, key string, tokens int) (bucket.Lease, error) {
 	tokens = max(tokens, 0)
-	return core.Wait(ctx, key, l.waiter, func(context.Context) (core.Result, error) {
+	return core.Wait(ctx, key, l.waiter, func(attemptCtx context.Context) (core.Result, error) {
 		l.mu.Lock()
 		defer l.mu.Unlock()
+		// The attempt's context carries the MaxWait budget. Check it after
+		// taking the lock and before charging anything, so contention on
+		// the mutex can never admit work after the budget is spent (the
+		// Postgres backend gets the same guarantee from its transaction's
+		// context).
+		if err := attemptCtx.Err(); err != nil {
+			return core.Result{}, fmt.Errorf("memory: %w", err)
+		}
 		s, err := l.stateLocked(key)
 		if err != nil {
 			return core.Result{}, err

@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -73,7 +74,7 @@ func TestTokenRefillAndRetryAfter(t *testing.T) {
 	l := mustNew(t, Config{
 		Limits:  map[string]bucket.Limits{"api": {TokensPerMinute: 60, BufferFactor: 1}},
 		Clock:   clk.now,
-		MaxWait: time.Nanosecond,
+		MaxWait: 20 * time.Millisecond,
 	})
 	ctx := context.Background()
 	lease, err := l.Acquire(ctx, "api", 60)
@@ -97,7 +98,7 @@ func TestAdjust(t *testing.T) {
 	l := mustNew(t, Config{
 		Limits:  map[string]bucket.Limits{"api": {TokensPerMinute: 60, BufferFactor: 1}},
 		Clock:   clk.now,
-		MaxWait: time.Nanosecond,
+		MaxWait: 20 * time.Millisecond,
 	})
 	ctx := context.Background()
 	lease, _ := l.Acquire(ctx, "api", 50)
@@ -136,7 +137,7 @@ func TestImpossibleUnknownAndDefault(t *testing.T) {
 }
 
 func TestReleaseIdempotentAndLostNeverCloses(t *testing.T) {
-	l := mustNew(t, Config{Limits: map[string]bucket.Limits{"api": {MaxConcurrency: 1}}, MaxWait: time.Millisecond})
+	l := mustNew(t, Config{Limits: map[string]bucket.Limits{"api": {MaxConcurrency: 1}}, MaxWait: 20 * time.Millisecond})
 	ctx := context.Background()
 	lease, _ := l.Acquire(ctx, "api", 0)
 	_ = lease.Release(ctx)
@@ -160,4 +161,23 @@ func TestReleaseIdempotentAndLostNeverCloses(t *testing.T) {
 		t.Fatalf("canceled ctx: %v", err)
 	}
 	_ = held.Release(ctx)
+}
+
+// TestMaxWaitHoldsUnderMutexContention: an attempt that waits on the
+// limiter's mutex past MaxWait is not admitted when it finally gets it.
+func TestMaxWaitHoldsUnderMutexContention(t *testing.T) {
+	l := mustNew(t, Config{Limits: map[string]bucket.Limits{"api": {MaxConcurrency: 1}}, MaxWait: 20 * time.Millisecond})
+	l.mu.Lock()
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		l.mu.Unlock()
+	}()
+	_, err := l.Acquire(context.Background(), "api", 0)
+	var le *bucket.LimitError
+	if !errors.As(err, &le) || !strings.Contains(le.Reason, "MaxWait") {
+		t.Fatalf("Acquire after mutex contention = %v, want a MaxWait LimitError", err)
+	}
+	if s := l.state["api"]; s != nil && s.live != 0 {
+		t.Fatalf("live = %d: capacity was charged after MaxWait", s.live)
+	}
 }

@@ -360,9 +360,10 @@ When a request doesn't fit, `Acquire` sleeps for the shorter of the
 `RetryAfter` hint and a backoff with jitter, then tries again, until `ctx`
 ends or `MaxWait` elapses. `MaxWait` bounds the whole wait, including an
 attempt that is itself blocked on the bucket lock: each attempt runs under a
-context that ends with the wait budget, so nothing is admitted after
-`MaxWait`. The first attempt is always made, so a `MaxWait` shorter than one
-attempt can still admit when capacity is free right away. When it gives up it returns `LimitError` with
+context that ends with the wait budget, and each backend checks that
+context after taking its lock and before charging capacity. `MaxWait` is
+therefore a hard deadline on the whole `Acquire`: nothing is admitted after
+it, even when the wait was spent on lock contention rather than polling. When it gives up it returns `LimitError` with
 `RetryAfter`.
 
 Polling is not fair:

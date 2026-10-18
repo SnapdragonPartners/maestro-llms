@@ -59,6 +59,15 @@ type ChatRequest struct {
 	// default then applies); ChatResponse.AppliedReasoning reports what was
 	// sent. See ADR-0022.
 	Reasoning *ReasoningConfig
+	// ProviderParams are raw request-body fields for when the application
+	// knows more about a model than this package does, keyed by provider.
+	// Each adapter deep-merges only its own entry into the wire request
+	// after mapping everything else: objects merge recursively, and any
+	// other value replaces the mapped one. Values must marshal to JSON
+	// (else bad_request). Middleware (estimation, validation, rate limiting)
+	// does not see them, and they are outside the stability contract: the
+	// wire shapes are the providers'. See ADR-0024.
+	ProviderParams map[ProviderID]map[string]any
 }
 
 // ReasoningEffort is a provider-neutral reasoning-effort level. Use the

@@ -8,6 +8,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
 // providerName is the llms.ModelRef.Provider value for this package.
@@ -136,15 +137,23 @@ func (c *Client) Model() llms.ModelRef {
 
 // Complete sends a synchronous chat completion.
 func (c *Client) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+	extra, _, err := extraparams.For(&req, providerName)
+	if err != nil {
+		return llms.ChatResponse{}, badRequest(c.model, err.Error())
+	}
 	params, err := c.toParams(req)
 	if err != nil {
 		return llms.ChatResponse{}, err
 	}
-	msg, apiErr := c.api.Messages.New(ctx, params)
+	var opts []option.RequestOption
+	if extra != nil {
+		opts = append(opts, option.WithMiddleware(extraparams.Middleware(extra))) //nolint:bodyclose // the SDK owns and closes the response
+	}
+	msg, apiErr := c.api.Messages.New(ctx, params, opts...)
 	if apiErr != nil {
 		return llms.ChatResponse{}, classifyError(c.model, apiErr)
 	}
 	resp := toResponse(msg)
-	resp.AppliedReasoning = mapReasoning(req.Reasoning).applied
+	resp.AppliedReasoning = withoutOverridden(mapReasoning(req.Reasoning).applied, extra)
 	return resp, nil
 }

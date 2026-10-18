@@ -1,6 +1,9 @@
 package testllm
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -69,7 +72,84 @@ func copyChatRequest(r llms.ChatRequest) llms.ChatRequest {
 		r.Reasoning = &rc
 	}
 	r.Metadata = maps.Clone(r.Metadata)
+	if r.ProviderParams != nil {
+		pp := make(map[llms.ProviderID]map[string]any, len(r.ProviderParams))
+		for k, v := range r.ProviderParams {
+			pp[k], _ = deepCopyJSON(v).(map[string]any)
+		}
+		r.ProviderParams = pp
+	}
 	return r
+}
+
+// recordChatRequest is copyChatRequest for the way in. ProviderParams are
+// recorded as their JSON form, which is what an adapter sends (ADR-0024):
+// objects as map[string]any, arrays as []any, numbers as json.Number. The
+// snapshot shares nothing with the caller's values whatever their Go types,
+// private state and json:"-" cycles included. An entry that doesn't marshal
+// is recorded as nil, and is an error only when it is the selected
+// provider's: an adapter validates only its own entry and ignores the rest.
+// With no selected provider (a fake not standing in for a specific adapter)
+// every entry counts.
+func recordChatRequest(r llms.ChatRequest, selected llms.ProviderID) (llms.ChatRequest, error) {
+	params := r.ProviderParams
+	r.ProviderParams = nil
+	out := copyChatRequest(r)
+	if params == nil {
+		return out, nil
+	}
+	out.ProviderParams = make(map[llms.ProviderID]map[string]any, len(params))
+	var firstErr error
+	for k, v := range params {
+		snap, err := jsonSnapshot(v)
+		if err != nil && firstErr == nil && (selected == "" || k == selected) {
+			firstErr = fmt.Errorf("ProviderParams[%q] does not marshal to JSON: %w", k, err)
+		}
+		out.ProviderParams[k] = snap
+	}
+	return out, firstErr
+}
+
+func jsonSnapshot(v map[string]any) (map[string]any, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // the caller wraps it with the provider key
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	var out map[string]any
+	if err := d.Decode(&out); err != nil {
+		return nil, err //nolint:wrapcheck // the caller wraps it with the provider key
+	}
+	return out, nil
+}
+
+// deepCopyJSON copies the nested maps and slices of a JSON-shaped value (the
+// recorded ProviderParams form); every other JSON value is an immutable
+// scalar.
+func deepCopyJSON(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		if t == nil {
+			return nil
+		}
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = deepCopyJSON(e)
+		}
+		return out
+	case []any:
+		if t == nil {
+			return nil
+		}
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = deepCopyJSON(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func copyEmbeddingRequest(r llms.EmbeddingRequest) llms.EmbeddingRequest {

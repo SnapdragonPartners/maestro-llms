@@ -9,6 +9,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
 // jsonObjectType is the JSON Schema object type; tool input schemas must be
@@ -468,4 +469,24 @@ func mapReasoning(r *llms.ReasoningConfig) (*genai.ThinkingConfig, *llms.Reasoni
 		return nil, nil
 	}
 	return &tc, &applied
+}
+
+// withoutOverridden drops from applied the reasoning fields whose wire value
+// ProviderParams overrides, so AppliedReasoning stays what was sent
+// (ADR-0024).
+func withoutOverridden(applied *llms.ReasoningConfig, extra map[string]any) *llms.ReasoningConfig {
+	if applied == nil || extra == nil {
+		return applied
+	}
+	out := *applied
+	if extraparams.Overrides(extra, "generationConfig", "thinkingConfig", "thinkingLevel") {
+		out.Effort = ""
+	}
+	if extraparams.Overrides(extra, "generationConfig", "thinkingConfig", "thinkingBudget") {
+		out.BudgetTokens = 0
+	}
+	if out == (llms.ReasoningConfig{}) {
+		return nil
+	}
+	return &out
 }

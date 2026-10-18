@@ -2,7 +2,10 @@ package testllm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"math/big"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -227,5 +230,132 @@ func TestFakeChatRecordingIsolatesReasoningConfig(t *testing.T) {
 	c.Calls()[0].Reasoning.BudgetTokens = 99
 	if rec := c.Calls()[0].Reasoning; rec.Effort != llms.ReasoningEffortLow || rec.BudgetTokens != 0 {
 		t.Fatalf("ReasoningConfig recording not isolated: %+v", rec)
+	}
+}
+
+func TestFakeChatRecordingIsolatesProviderParams(t *testing.T) {
+	c := &FakeChatClient{Text: "ok"}
+	req := llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{
+			llms.ProviderVLLM: {"chat_template_kwargs": map[string]any{"enable_thinking": false}, "stop": []any{"x"}},
+		},
+	}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	in := req.ProviderParams[llms.ProviderVLLM]
+	kw, _ := in["chat_template_kwargs"].(map[string]any)
+	kw["enable_thinking"] = true
+	stop, _ := in["stop"].([]any)
+	stop[0] = "y"
+	c.Calls()[0].ProviderParams[llms.ProviderVLLM]["new"] = 1
+	rec := c.Calls()[0].ProviderParams[llms.ProviderVLLM]
+	recKW, _ := rec["chat_template_kwargs"].(map[string]any)
+	recStop, _ := rec["stop"].([]any)
+	if recKW["enable_thinking"] != false || len(recStop) != 1 || recStop[0] != "x" || rec["new"] != nil {
+		t.Fatalf("ProviderParams recording not isolated: %+v", rec)
+	}
+}
+
+// #93 review: ProviderParams are recorded as their JSON form, so no Go value
+// shape can alias the recording: slices, maps, raw JSON, pointers, structs,
+// private state (*big.Int) and json:"-" cycles. Both mutation directions.
+func TestFakeChatRecordingIsolatesProviderParamValueShapes(t *testing.T) {
+	type node struct {
+		Name string `json:"name"`
+		Self *node  `json:"-"`
+	}
+	cyc := &node{Name: "n"}
+	cyc.Self = cyc
+	n := big.NewInt(123)
+	params := map[string]any{
+		"strings": []string{"a"},
+		"bools":   map[string]bool{"x": true},
+		"raw":     json.RawMessage(`{"k":1}`),
+		"big":     n,
+		"cycle":   cyc,
+		"array":   [1][]int{{1}},
+	}
+	c := &FakeChatClient{Text: "ok"}
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages:       []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderVLLM: params},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"strings": []any{"a"},
+		"bools":   map[string]any{"x": true},
+		"raw":     map[string]any{"k": json.Number("1")},
+		"big":     json.Number("123"),
+		"cycle":   map[string]any{"name": "n"},
+		"array":   []any{[]any{json.Number("1")}},
+	}
+	if got := c.Calls()[0].ProviderParams[llms.ProviderVLLM]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("recorded = %#v\nwant       %#v", got, want)
+	}
+	// The caller mutates its values after the call...
+	params["strings"].([]string)[0] = "MUT" //nolint:forcetypeassert // known fixture shape
+	n.SetInt64(456)
+	cyc.Name = "MUT"
+	// ...and a test mutates what Calls() returned.
+	got := c.Calls()[0].ProviderParams[llms.ProviderVLLM]
+	got["bools"].(map[string]any)["x"] = false //nolint:forcetypeassert // known recorded shape
+	got["strings"].([]any)[0] = "MUT"          //nolint:forcetypeassert // known recorded shape
+	if again := c.Calls()[0].ProviderParams[llms.ProviderVLLM]; !reflect.DeepEqual(again, want) {
+		t.Fatalf("recording changed by mutation: %#v", again)
+	}
+}
+
+// A ProviderParams value that can't marshal is rejected as bad_request (as
+// the adapters reject it), and the call is still recorded.
+func TestFakeChatRejectsNonMarshalableProviderParams(t *testing.T) {
+	c := &FakeChatClient{Text: "ok", ModelRef: llms.ModelRef{Provider: llms.ProviderVLLM, Name: "m"}}
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages:       []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderVLLM: {"bad": make(chan int)}},
+	})
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+		t.Fatalf("err = %v, want bad_request", err)
+	}
+	if len(c.Calls()) != 1 {
+		t.Fatalf("calls = %d, want the rejected call recorded", len(c.Calls()))
+	}
+}
+
+// PR #98 review: an adapter validates only its own entry, so an invalid entry
+// for another provider must not fail a fake standing in for this one.
+func TestFakeChatIgnoresInvalidForeignProviderParams(t *testing.T) {
+	c := &FakeChatClient{Text: "ok", ModelRef: llms.ModelRef{Provider: llms.ProviderVLLM, Name: "m"}}
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{
+			llms.ProviderVLLM:   {"max_tokens": 5},
+			llms.ProviderOpenAI: {"bad": make(chan int)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v, want success: the invalid entry is another provider's", err)
+	}
+	rec := c.Calls()[0].ProviderParams
+	if rec[llms.ProviderVLLM]["max_tokens"] != json.Number("5") {
+		t.Fatalf("selected entry = %#v, want its JSON snapshot", rec[llms.ProviderVLLM])
+	}
+	if rec[llms.ProviderOpenAI] != nil {
+		t.Fatalf("invalid foreign entry = %#v, want recorded as nil", rec[llms.ProviderOpenAI])
+	}
+
+	// With no selected provider, the fake stands in for any adapter, so the
+	// invalid entry fails the call.
+	unscoped := &FakeChatClient{Text: "ok"}
+	_, err = unscoped.Complete(context.Background(), llms.ChatRequest{
+		Messages:       []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderOpenAI: {"bad": make(chan int)}},
+	})
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+		t.Fatalf("unscoped fake: err = %v, want bad_request", err)
 	}
 }

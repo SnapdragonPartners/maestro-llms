@@ -12,6 +12,7 @@ import (
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/apierr"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
 // Ollama /api/chat wire types. Tool args and tool input schemas are kept as
@@ -322,10 +323,16 @@ func (c *Client) classify(err error) error {
 	})
 }
 
-func (c *Client) do(ctx context.Context, wr *wireRequest) (*wireResponse, error) {
+func (c *Client) do(ctx context.Context, wr *wireRequest, extra map[string]any) (*wireResponse, error) {
 	body, err := json.Marshal(wr)
 	if err != nil {
 		return nil, badRequest(c.model, "marshal request: "+err.Error())
+	}
+	if extra != nil {
+		// ProviderParams deep merge, the same as every adapter (ADR-0024).
+		if body, err = extraparams.MergeJSON(body, extra); err != nil {
+			return nil, badRequest(c.model, err.Error())
+		}
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/chat", bytes.NewReader(body))
 	if err != nil {

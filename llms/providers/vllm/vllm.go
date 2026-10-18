@@ -8,6 +8,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
 // providerName is the llms.ModelRef.Provider value for this package.
@@ -129,15 +130,27 @@ func (c *Client) Model() llms.ModelRef {
 // Complete sends a synchronous chat completion to vLLM via the OpenAI
 // Chat Completions endpoint.
 func (c *Client) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
-	params, err := c.toParams(req)
+	extra, _, err := extraparams.For(&req, providerName)
 	if err != nil {
-		return llms.ChatResponse{}, err
+		return llms.ChatResponse{}, chatBadRequest(c.model, err.Error())
 	}
-	resp, apiErr := c.api.Chat.Completions.New(ctx, params)
+	params, perr := c.toParams(req)
+	if perr != nil {
+		return llms.ChatResponse{}, perr
+	}
+	var opts []option.RequestOption
+	if extra != nil {
+		opts = append(opts, option.WithMiddleware(extraparams.Middleware(extra))) //nolint:bodyclose // the SDK owns and closes the response
+	}
+	resp, apiErr := c.api.Chat.Completions.New(ctx, params, opts...)
 	if apiErr != nil {
 		return llms.ChatResponse{}, classifyError(c.model, apiErr)
 	}
 	out := c.toResponse(resp)
-	_, out.AppliedReasoning = mapEffort(req.Reasoning)
+	_, applied := mapEffort(req.Reasoning)
+	if extraparams.Overrides(extra, "reasoning_effort") {
+		applied = nil // ProviderParams replaced the mapped effort (ADR-0024)
+	}
+	out.AppliedReasoning = applied
 	return out, nil
 }

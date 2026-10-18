@@ -9,6 +9,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
 func badRequest(model, msg string) *llms.ProviderError {
@@ -540,4 +541,28 @@ func mapReasoning(r *llms.ReasoningConfig) reasoningWire {
 		w.applied = &applied
 	}
 	return w
+}
+
+// withoutOverridden drops from applied the reasoning fields whose wire value
+// ProviderParams overrides, so AppliedReasoning stays what was sent
+// (ADR-0024).
+func withoutOverridden(applied *llms.ReasoningConfig, extra map[string]any) *llms.ReasoningConfig {
+	if applied == nil || extra == nil {
+		return applied
+	}
+	out := *applied
+	thinking := extraparams.Overrides(extra, "thinking", "type") || extraparams.Overrides(extra, "thinking", "budget_tokens")
+	if out.BudgetTokens > 0 && thinking {
+		out.BudgetTokens = 0
+	}
+	switch {
+	case out.Effort == llms.ReasoningEffortNone && extraparams.Overrides(extra, "thinking", "type"):
+		out.Effort = ""
+	case out.Effort != "" && out.Effort != llms.ReasoningEffortNone && extraparams.Overrides(extra, "output_config", "effort"):
+		out.Effort = ""
+	}
+	if out == (llms.ReasoningConfig{}) {
+		return nil
+	}
+	return &out
 }

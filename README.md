@@ -896,7 +896,7 @@ preallocation no longer scales with `MaxIterations`), **v0.10.0**
 [ADR-0019](docs/adr/0019-toolloop-deadline-and-no-iteration-limit.md);
 `OutcomeEmptyResponse` — see
 [ADR-0020](docs/adr/0020-toolloop-empty-response.md); adapters omit
-`tool_choice` when no tools are offered), and **v0.11.0** (Anthropic
+`tool_choice` when no tools are offered), **v0.11.0** (Anthropic
 thinking blocks round-trip as `ContentReasoning` parts, plus a typed
 `llms.ProviderID` — see
 [ADR-0021](docs/adr/0021-reasoning-content-part.md); reasoning control via
@@ -904,6 +904,11 @@ thinking blocks round-trip as `ContentReasoning` parts, plus a typed
 [ADR-0022](docs/adr/0022-reasoning-effort.md); `InputTokens` includes
 cached input on every provider — see
 [ADR-0023](docs/adr/0023-usage-input-includes-cache.md); per-request
-`ProviderParams` — see [ADR-0024](docs/adr/0024-provider-params.md)).
+`ProviderParams` — see [ADR-0024](docs/adr/0024-provider-params.md)), and
+**v0.12.0** (the generic `bucket` token/concurrency limiter with
+`bucket/memory` and shared `bucket/postgres` backends, adapted to the
+middleware by `ratelimit.FromBucket` — see
+[ADR-0025](docs/adr/0025-bucket-distributed-limiter.md); `bucket/postgres`
+needs its schema v1 migration applied before deploying).
 
 MIT — see [`LICENSE`](LICENSE).

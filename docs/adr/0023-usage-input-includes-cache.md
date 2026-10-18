@@ -39,8 +39,10 @@ whenever caching was on.
    - **OpenAI (Responses):** `input_tokens_details.cached_tokens` and
      `cache_write_tokens`.
    - **vllm (Chat Completions):** `prompt_tokens_details.cached_tokens` and
-     `cache_write_tokens`. LunaRoute reports writes under a non-standard
-     `created_cache_tokens` field, which is not mapped.
+     `cache_write_tokens`. When `cache_write_tokens` is absent, the adapter
+     reads the `created_cache_tokens` extension that LunaRoute
+     (DeepSeek-style servers) reports instead. buggrit reaches LunaRoute
+     through this adapter, so this is the path #95 needed.
    - **Google:** `cachedContentTokenCount` maps to `CacheReadTokens`. Gemini
      reports no cache writes.
    - **Ollama:** unchanged; it reports no cache accounting.
@@ -72,7 +74,7 @@ whenever caching was on.
   (`Usage` docs, `CacheSplit`), each adapter's usage builder,
   `llms/ratelimit/memory.go` (`effectiveTokens`).
 - Fixtures: `openai/testdata/lunaroute_responses_cached.json`,
-  `vllm/testdata/lunaroute_chat_cached.json`,
+  `vllm/testdata/lunaroute_chat_cached.json`, `vllm/testdata/lunaroute_chat_cache_write.json`,
   `google/testdata/gemini25_flash_implicit_cache.json`.
 - Live: `livetest.CachedInput`.
 - ADR-0016 / ADR-0018 (the output-side split this mirrors).

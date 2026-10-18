@@ -1,0 +1,46 @@
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "logprobs": null,
+      "message": {
+        "annotations": null,
+        "audio": null,
+        "content": null,
+        "function_call": null,
+        "reasoning": "We need answer just number. Need parse pattern. Need determine aisle for item 123. Many facts. Need infer.\n\nWe have item numbered n filed under shelf s in aisle a. Facts 0-399. Need aisle for item 123. Fact 123 explicitly: item numbered 123 is filed under shelf",
+        "refusal": null,
+        "role": "assistant"
+      },
+      "routed_experts": null,
+      "stop_reason": null,
+      "token_ids": null
+    }
+  ],
+  "created": 1792284898,
+  "ec_transfer_params": null,
+  "id": "chatcmpl-b5407c0bd7cbf459",
+  "kv_transfer_params": null,
+  "metrics": null,
+  "model": "deepseek-4.1-flash",
+  "object": "chat.completion",
+  "prompt_logprobs": null,
+  "prompt_text": null,
+  "prompt_token_ids": null,
+  "service_tier": null,
+  "system_fingerprint": "vllm-0.29.1rc1.dev573+ge97573215-tp4-ep-dd25145b",
+  "usage": {
+    "completion_tokens": 64,
+    "completion_tokens_details": {
+      "reasoning_tokens": 64
+    },
+    "prompt_tokens": 8043,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "created_cache_tokens": 7936,
+      "multimodal_tokens": null
+    },
+    "total_tokens": 8107
+  }
+}

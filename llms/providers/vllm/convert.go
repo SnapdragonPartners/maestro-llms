@@ -2,6 +2,7 @@ package vllm
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -320,7 +321,7 @@ func buildUsage(resp *openai.ChatCompletion) llms.Usage {
 	// subsets (ADR-0023). Servers that don't cache leave them zero.
 	input := int(resp.Usage.PromptTokens)
 	cacheRead, cacheWrite := llms.CacheSplit(input,
-		int(resp.Usage.PromptTokensDetails.CachedTokens), int(resp.Usage.PromptTokensDetails.CacheWriteTokens))
+		int(resp.Usage.PromptTokensDetails.CachedTokens), cacheWriteTokens(&resp.Usage.PromptTokensDetails))
 	return llms.Usage{
 		InputTokens:          input,
 		OutputTokens:         visible,
@@ -394,4 +395,23 @@ func mapEffort(r *llms.ReasoningConfig) (shared.ReasoningEffort, *llms.Reasoning
 	default:
 		return "", nil
 	}
+}
+
+// cacheWriteTokens returns prompt tokens written to the cache: OpenAI's
+// standard cache_write_tokens when the server sends it, else the
+// created_cache_tokens extension LunaRoute (DeepSeek-style servers) reports
+// instead (#95). Absent or unparsable means zero.
+func cacheWriteTokens(d *openai.CompletionUsagePromptTokensDetails) int {
+	if d.JSON.CacheWriteTokens.Valid() {
+		return int(d.CacheWriteTokens)
+	}
+	f, ok := d.JSON.ExtraFields["created_cache_tokens"]
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(f.Raw()))
+	if err != nil {
+		return 0
+	}
+	return n
 }

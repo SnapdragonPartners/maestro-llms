@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"reflect"
 	"sync"
 	"testing"
@@ -257,44 +258,69 @@ func TestFakeChatRecordingIsolatesProviderParams(t *testing.T) {
 	}
 }
 
-// #93 review: every JSON-marshalable value shape is isolated, with its
-// concrete type preserved, in both mutation directions.
+// #93 review: ProviderParams are recorded as their JSON form, so no Go value
+// shape can alias the recording: slices, maps, raw JSON, pointers, structs,
+// private state (*big.Int) and json:"-" cycles. Both mutation directions.
 func TestFakeChatRecordingIsolatesProviderParamValueShapes(t *testing.T) {
-	type knob struct {
-		Tags []string `json:"tags"`
+	type node struct {
+		Name string `json:"name"`
+		Self *node  `json:"-"`
 	}
-	newParams := func() map[string]any {
-		return map[string]any{
-			"strings": []string{"a"},
-			"bools":   map[string]bool{"x": true},
-			"raw":     json.RawMessage(`{"k":1}`),
-			"ptr":     &knob{Tags: []string{"t"}},
-			"struct":  knob{Tags: []string{"s"}},
-			"array":   [1][]int{{1}},
-		}
+	cyc := &node{Name: "n"}
+	cyc.Self = cyc
+	n := big.NewInt(123)
+	params := map[string]any{
+		"strings": []string{"a"},
+		"bools":   map[string]bool{"x": true},
+		"raw":     json.RawMessage(`{"k":1}`),
+		"big":     n,
+		"cycle":   cyc,
+		"array":   [1][]int{{1}},
 	}
-	params := newParams()
 	c := &FakeChatClient{Text: "ok"}
-	req := llms.ChatRequest{
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{
 		Messages:       []llms.Message{llms.UserText("q")},
 		ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderVLLM: params},
-	}
-	if _, err := c.Complete(context.Background(), req); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
-	mutate := func(m map[string]any) {
-		m["strings"].([]string)[0] = "MUT"        //nolint:forcetypeassert // test fixture shapes are known
-		m["bools"].(map[string]bool)["x"] = false //nolint:forcetypeassert // test fixture shapes are known
-		m["raw"].(json.RawMessage)[2] = 'Z'       //nolint:forcetypeassert // test fixture shapes are known
-		m["ptr"].(*knob).Tags[0] = "MUT"          //nolint:forcetypeassert // test fixture shapes are known
-		m["struct"].(knob).Tags[0] = "MUT"        //nolint:forcetypeassert // test fixture shapes are known
-		arr := m["array"].([1][]int)              //nolint:forcetypeassert // test fixture shapes are known
-		arr[0][0] = 99
+	want := map[string]any{
+		"strings": []any{"a"},
+		"bools":   map[string]any{"x": true},
+		"raw":     map[string]any{"k": json.Number("1")},
+		"big":     json.Number("123"),
+		"cycle":   map[string]any{"name": "n"},
+		"array":   []any{[]any{json.Number("1")}},
 	}
-	mutate(params)                                         // the caller's request after the call
-	mutate(c.Calls()[0].ProviderParams[llms.ProviderVLLM]) // what Calls() returned
+	if got := c.Calls()[0].ProviderParams[llms.ProviderVLLM]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("recorded = %#v\nwant       %#v", got, want)
+	}
+	// The caller mutates its values after the call...
+	params["strings"].([]string)[0] = "MUT" //nolint:forcetypeassert // known fixture shape
+	n.SetInt64(456)
+	cyc.Name = "MUT"
+	// ...and a test mutates what Calls() returned.
+	got := c.Calls()[0].ProviderParams[llms.ProviderVLLM]
+	got["bools"].(map[string]any)["x"] = false //nolint:forcetypeassert // known recorded shape
+	got["strings"].([]any)[0] = "MUT"          //nolint:forcetypeassert // known recorded shape
+	if again := c.Calls()[0].ProviderParams[llms.ProviderVLLM]; !reflect.DeepEqual(again, want) {
+		t.Fatalf("recording changed by mutation: %#v", again)
+	}
+}
 
-	if got, want := c.Calls()[0].ProviderParams[llms.ProviderVLLM], newParams(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("recording changed by mutation:\n got %#v\nwant %#v", got, want)
+// A ProviderParams value that can't marshal is rejected as bad_request (as
+// the adapters reject it), and the call is still recorded.
+func TestFakeChatRejectsNonMarshalableProviderParams(t *testing.T) {
+	c := &FakeChatClient{Text: "ok", ModelRef: llms.ModelRef{Provider: llms.ProviderVLLM, Name: "m"}}
+	_, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages:       []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderVLLM: {"bad": make(chan int)}},
+	})
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
+		t.Fatalf("err = %v, want bad_request", err)
+	}
+	if len(c.Calls()) != 1 {
+		t.Fatalf("calls = %d, want the rejected call recorded", len(c.Calls()))
 	}
 }

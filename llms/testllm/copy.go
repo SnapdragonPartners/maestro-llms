@@ -1,8 +1,10 @@
 package testllm
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -73,86 +75,78 @@ func copyChatRequest(r llms.ChatRequest) llms.ChatRequest {
 	if r.ProviderParams != nil {
 		pp := make(map[llms.ProviderID]map[string]any, len(r.ProviderParams))
 		for k, v := range r.ProviderParams {
-			pp[k], _ = deepCopy(v).(map[string]any)
+			pp[k], _ = deepCopyJSON(v).(map[string]any)
 		}
 		r.ProviderParams = pp
 	}
 	return r
 }
 
-// deepCopy returns a copy of v that shares no mutable storage with it:
-// maps, slices, arrays, pointers and interfaces are copied recursively, with
-// their concrete types preserved (a []string stays a []string, a
-// json.RawMessage stays a json.RawMessage). Struct values are copied with
-// their exported fields deep-copied; unexported fields are copied as-is.
-// Funcs and channels, which can't marshal and so can't be valid
-// ProviderParams, are copied as-is.
-func deepCopy(v any) any {
-	if v == nil {
-		return nil
+// recordChatRequest is copyChatRequest for the way in. ProviderParams are
+// recorded as their JSON form, which is what an adapter sends (ADR-0024):
+// objects as map[string]any, arrays as []any, numbers as json.Number. The
+// snapshot shares nothing with the caller's values whatever their Go types,
+// private state and json:"-" cycles included. A value that doesn't marshal
+// is reported as an error, as the adapters reject it.
+func recordChatRequest(r llms.ChatRequest) (llms.ChatRequest, error) {
+	params := r.ProviderParams
+	r.ProviderParams = nil
+	out := copyChatRequest(r)
+	if params == nil {
+		return out, nil
 	}
-	return deepCopyValue(reflect.ValueOf(v)).Interface()
+	out.ProviderParams = make(map[llms.ProviderID]map[string]any, len(params))
+	var firstErr error
+	for k, v := range params {
+		snap, err := jsonSnapshot(v)
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("ProviderParams[%q] does not marshal to JSON: %w", k, err)
+		}
+		out.ProviderParams[k] = snap
+	}
+	return out, firstErr
 }
 
-func deepCopyValue(v reflect.Value) reflect.Value {
-	switch v.Kind() {
-	case reflect.Map:
-		return deepCopyMap(v)
-	case reflect.Slice, reflect.Array:
-		return deepCopySeq(v)
-	case reflect.Pointer, reflect.Interface:
-		if v.IsNil() {
-			return v
+func jsonSnapshot(v map[string]any) (map[string]any, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // the caller wraps it with the provider key
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	var out map[string]any
+	if err := d.Decode(&out); err != nil {
+		return nil, err //nolint:wrapcheck // the caller wraps it with the provider key
+	}
+	return out, nil
+}
+
+// deepCopyJSON copies the nested maps and slices of a JSON-shaped value (the
+// recorded ProviderParams form); every other JSON value is an immutable
+// scalar.
+func deepCopyJSON(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		if t == nil {
+			return nil
 		}
-		if v.Kind() == reflect.Pointer {
-			out := reflect.New(v.Type().Elem())
-			out.Elem().Set(deepCopyValue(v.Elem()))
-			return out
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = deepCopyJSON(e)
 		}
-		out := reflect.New(v.Type()).Elem()
-		out.Set(deepCopyValue(v.Elem()))
 		return out
-	case reflect.Struct:
-		out := reflect.New(v.Type()).Elem()
-		out.Set(v)
-		for i := range v.NumField() {
-			if f := out.Field(i); f.CanSet() {
-				f.Set(deepCopyValue(v.Field(i)))
-			}
+	case []any:
+		if t == nil {
+			return nil
+		}
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = deepCopyJSON(e)
 		}
 		return out
 	default:
 		return v
 	}
-}
-
-func deepCopyMap(v reflect.Value) reflect.Value {
-	if v.IsNil() {
-		return v
-	}
-	out := reflect.MakeMapWithSize(v.Type(), v.Len())
-	iter := v.MapRange()
-	for iter.Next() {
-		out.SetMapIndex(deepCopyValue(iter.Key()), deepCopyValue(iter.Value()))
-	}
-	return out
-}
-
-// deepCopySeq copies a slice or an array element by element.
-func deepCopySeq(v reflect.Value) reflect.Value {
-	var out reflect.Value
-	if v.Kind() == reflect.Slice {
-		if v.IsNil() {
-			return v
-		}
-		out = reflect.MakeSlice(v.Type(), v.Len(), v.Len())
-	} else {
-		out = reflect.New(v.Type()).Elem()
-	}
-	for i := range v.Len() {
-		out.Index(i).Set(deepCopyValue(v.Index(i)))
-	}
-	return out
 }
 
 func copyEmbeddingRequest(r llms.EmbeddingRequest) llms.EmbeddingRequest {

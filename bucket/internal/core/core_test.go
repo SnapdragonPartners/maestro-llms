@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,11 +95,33 @@ func TestWaitMaxWait(t *testing.T) {
 	_, err := Wait(context.Background(), "k", Waiter{MaxWait: 30 * time.Millisecond, Initial: 5 * time.Millisecond, Max: 10 * time.Millisecond},
 		func(context.Context) (Result, error) { return Result{RetryAfter: time.Hour}, nil })
 	var le *bucket.LimitError
-	if !errors.As(err, &le) || le.RetryAfter != time.Hour {
+	if !errors.As(err, &le) || le.RetryAfter != time.Hour || !strings.Contains(le.Reason, "MaxWait") {
 		t.Fatalf("MaxWait: %v", err)
 	}
 	if el := time.Since(start); el > time.Second {
 		t.Fatalf("MaxWait overslept: %v", el)
+	}
+}
+
+// TestWaitMaxWaitBoundsABlockedAttempt: an attempt that blocks (a database
+// lock wait) sees MaxWait through its context and cannot admit late.
+func TestWaitMaxWaitBoundsABlockedAttempt(t *testing.T) {
+	start := time.Now()
+	_, err := Wait(context.Background(), "k", Waiter{MaxWait: 50 * time.Millisecond, Initial: time.Millisecond, Max: time.Millisecond},
+		func(ctx context.Context) (Result, error) {
+			select {
+			case <-ctx.Done():
+				return Result{}, ctx.Err()
+			case <-time.After(2 * time.Second):
+				return Result{Lease: fakeLease{}}, nil // would admit late
+			}
+		})
+	var le *bucket.LimitError
+	if !errors.As(err, &le) || !strings.Contains(le.Reason, "MaxWait") {
+		t.Fatalf("blocked attempt: %v", err)
+	}
+	if el := time.Since(start); el > time.Second {
+		t.Fatalf("blocked attempt ran %v past MaxWait", el)
 	}
 }
 

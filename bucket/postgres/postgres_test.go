@@ -423,6 +423,14 @@ func TestMaxLeaseDuration(t *testing.T) {
 	ensure(t, l, name, bucket.Limits{MaxConcurrency: 1})
 	start := time.Now()
 	leaked := mustAcquire(t, l, name, 0) // never released
+	select {
+	case <-leaked.Lost():
+		if el := time.Since(start); el < maxLease {
+			t.Fatalf("Lost() closed after %v, before MaxLeaseDuration %v", el, maxLease)
+		}
+	case <-time.After(maxLease + time.Second):
+		t.Fatal("Lost() not closed when the lease reached MaxLeaseDuration")
+	}
 	next := mustAcquire(t, l, name, 0)
 	if el := time.Since(start); el < maxLease-ttl || el > maxLease+ttl+time.Second {
 		t.Fatalf("leaked slot reclaimed after %v, want about %v", el, maxLease+ttl)
@@ -431,39 +439,70 @@ func TestMaxLeaseDuration(t *testing.T) {
 	_ = leaked.Release(context.Background())
 }
 
+// lockBucketRow holds key's bucket row lock in another transaction until the
+// returned func is called.
+func lockBucketRow(t *testing.T, key string) func() {
+	t.Helper()
+	tx, err := openMain(t).Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`SELECT 1 FROM bucket.bucket WHERE name = $1 FOR UPDATE`, key); err != nil {
+		t.Fatal(err)
+	}
+	return func() { _ = tx.Commit() }
+}
+
 // TestAcquireAfterLongLockWait: an acquire that waits on the bucket lock for
 // longer than LeaseTTL still returns a live lease (time is sampled after the
 // lock, not at transaction start).
 func TestAcquireAfterLongLockWait(t *testing.T) {
 	ttl := 500 * time.Millisecond
 	db := openMain(t)
-	l := newLimiter(t, db, Config{LeaseTTL: ttl, MaxWait: 100 * time.Millisecond})
+	l := newLimiter(t, db, Config{LeaseTTL: ttl, MaxWait: 10 * time.Second})
+	probe := newLimiter(t, db, Config{LeaseTTL: ttl, MaxWait: 100 * time.Millisecond})
 	name := bucketName(t)
 	ensure(t, l, name, bucket.Limits{MaxConcurrency: 1})
 
-	blocker, err := openMain(t).Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := blocker.Exec(`SELECT 1 FROM bucket.bucket WHERE name = $1 FOR UPDATE`, name); err != nil {
-		t.Fatal(err)
-	}
+	unlock := lockBucketRow(t, name)
 	// The acquire's transaction starts now, then waits on the lock.
 	got := make(chan *lease, 1)
 	go func() { got <- mustAcquire(t, l, name, 0) }()
 	time.Sleep(3 * ttl)
-	if err := blocker.Commit(); err != nil {
-		t.Fatal(err)
-	}
+	unlock()
 	ls := <-got
 	var live bool
 	if err := db.QueryRow(`SELECT expires_at > clock_timestamp() + interval '200 milliseconds' FROM bucket.lease WHERE id = $1`, ls.id).Scan(&live); err != nil || !live {
 		t.Fatalf("lease after a long lock wait is not live: %v", err)
 	}
-	if _, err := l.Acquire(context.Background(), name, 0); !isLimitErr(err) {
+	if _, err := probe.Acquire(context.Background(), name, 0); !isLimitErr(err) {
 		t.Fatalf("slot of a fresh lease was reclaimed: %v", err)
 	}
 	_ = ls.Release(context.Background())
+}
+
+// TestMaxWaitBoundsALockWait: MaxWait bounds an attempt blocked on the
+// bucket lock; it fails with LimitError instead of admitting late.
+func TestMaxWaitBoundsALockWait(t *testing.T) {
+	db := openMain(t)
+	l := newLimiter(t, db, Config{MaxWait: 200 * time.Millisecond}) // OpTimeout stays 5s
+	name := bucketName(t)
+	ensure(t, l, name, bucket.Limits{MaxConcurrency: 1})
+	unlock := lockBucketRow(t, name)
+	defer unlock()
+	start := time.Now()
+	_, err := l.Acquire(context.Background(), name, 0)
+	var le *bucket.LimitError
+	if !errors.As(err, &le) || !strings.Contains(le.Reason, "MaxWait") {
+		t.Fatalf("Acquire under a held lock = %v, want a MaxWait LimitError", err)
+	}
+	if el := time.Since(start); el > 2*time.Second {
+		t.Fatalf("Acquire took %v under MaxWait 200ms", el)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM bucket.lease l JOIN bucket.bucket b ON b.id = l.bucket_id WHERE b.name = $1`, name).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("a lease was written after MaxWait: %d (%v)", n, err)
+	}
 }
 
 // TestOpTimeoutBoundsOperations: Adjust and Release return within about

@@ -330,8 +330,8 @@ and set aside for now; see the alternatives.
 - **A hard cap: `MaxLeaseDuration`,** default 15 minutes. Renewal turns a
   leaked `Release` (a holder that never releases) into a slot held forever,
   where TTL alone would have recovered it. After `MaxLeaseDuration` from
-  acquire, renewal stops and the slot is reclaimed one TTL later. The
-  database enforces the same cap: renewal sets `expires_at` to the earlier
+  acquire, renewal stops and the lease is marked lost (`Lost()` closes), since
+  the slot may now be reassigned. The database enforces the same cap: renewal sets `expires_at` to the earlier
   of `clock_timestamp() + LeaseTTL` and `acquired_at + MaxLeaseDuration`.
   The cap must exceed the longest legitimate call; the per-attempt Timeout
   middleware normally bounds that.
@@ -358,7 +358,11 @@ and set aside for now; see the alternatives.
 
 When a request doesn't fit, `Acquire` sleeps for the shorter of the
 `RetryAfter` hint and a backoff with jitter, then tries again, until `ctx`
-ends or `MaxWait` elapses. When it gives up it returns `LimitError` with
+ends or `MaxWait` elapses. `MaxWait` bounds the whole wait, including an
+attempt that is itself blocked on the bucket lock: each attempt runs under a
+context that ends with the wait budget, so nothing is admitted after
+`MaxWait`. The first attempt is always made, so a `MaxWait` shorter than one
+attempt can still admit when capacity is free right away. When it gives up it returns `LimitError` with
 `RetryAfter`.
 
 Polling is not fair:

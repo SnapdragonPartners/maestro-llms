@@ -75,34 +75,48 @@ type Result struct {
 }
 
 // Waiter is the polling policy: back off with jitter from Initial to Max,
-// never sleeping past the RetryAfter hint or the remaining MaxWait.
+// never sleeping past the RetryAfter hint. MaxWait bounds the whole wait in
+// real time, including an attempt that is itself blocked (for example on a
+// database lock).
 type Waiter struct {
-	// Now measures MaxWait; defaults to time.Now.
-	Now     func() time.Time
 	MaxWait time.Duration // 0 = until ctx is done
 	Initial time.Duration
 	Max     time.Duration
 }
 
 // Wait runs try until it admits, reports the request impossible, fails, or
-// the wait ends. A try error is a backend failure and is returned as is,
-// unless ctx is done, in which case the caller's cancellation is reported
-// as a *bucket.LimitError like any other ended wait.
+// the wait ends. Each try receives a context that ends when the caller's
+// ctx does or MaxWait elapses, so no attempt can admit work after the wait
+// budget is spent. A try error is a backend failure and is returned as is,
+// unless that context is done, in which case the ended wait is reported as
+// a *bucket.LimitError.
 func Wait(ctx context.Context, key string, w Waiter, try func(context.Context) (Result, error)) (bucket.Lease, error) {
-	now := w.Now
-	if now == nil {
-		now = time.Now
+	waitCtx := ctx
+	if w.MaxWait > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, w.MaxWait)
+		defer cancel()
 	}
-	start := now()
-	backoff := w.Initial
-	for {
-		if ctx.Err() != nil {
-			return nil, &bucket.LimitError{Key: key, Reason: "context done before capacity was available"}
+	ended := func(when string, retryAfter time.Duration) *bucket.LimitError {
+		reason := "context done " + when
+		if ctx.Err() == nil {
+			reason = "wait exceeded MaxWait " + when
 		}
-		res, err := try(ctx)
+		return &bucket.LimitError{Key: key, Reason: reason, RetryAfter: retryAfter}
+	}
+	backoff := w.Initial
+	var retryAfter time.Duration
+	for attempt := 0; ; attempt++ {
+		// The first attempt is always made unless the caller's ctx is done,
+		// so a MaxWait shorter than one attempt still admits when capacity
+		// is free right now (that attempt is itself bounded by the budget).
+		if ctx.Err() != nil || (attempt > 0 && waitCtx.Err() != nil) {
+			return nil, ended("before capacity was available", retryAfter)
+		}
+		res, err := try(waitCtx)
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil, &bucket.LimitError{Key: key, Reason: "context done while acquiring"}
+			if waitCtx.Err() != nil {
+				return nil, ended("while acquiring", retryAfter)
 			}
 			return nil, err
 		}
@@ -112,23 +126,16 @@ func Wait(ctx context.Context, key string, w Waiter, try func(context.Context) (
 		if res.Impossible != "" {
 			return nil, &bucket.LimitError{Key: key, Reason: res.Impossible}
 		}
-
+		retryAfter = res.RetryAfter
 		sleep := jitter(backoff)
-		if res.RetryAfter > 0 {
-			sleep = min(sleep, res.RetryAfter)
-		}
-		if w.MaxWait > 0 {
-			remaining := w.MaxWait - now().Sub(start)
-			if remaining <= 0 {
-				return nil, &bucket.LimitError{Key: key, Reason: "wait exceeded MaxWait", RetryAfter: res.RetryAfter}
-			}
-			sleep = min(sleep, remaining)
+		if retryAfter > 0 {
+			sleep = min(sleep, retryAfter)
 		}
 		t := time.NewTimer(sleep)
 		select {
-		case <-ctx.Done():
+		case <-waitCtx.Done():
 			t.Stop()
-			return nil, &bucket.LimitError{Key: key, Reason: "context done while waiting for capacity", RetryAfter: res.RetryAfter}
+			return nil, ended("while waiting for capacity", retryAfter)
 		case <-t.C:
 		}
 		backoff = min(backoff*2, w.Max)

@@ -63,21 +63,27 @@ func (r *lease) Lost() <-chan struct{} { return r.lost }
 // retries, and TTL/3 leaves two retries before expiry. The database caps
 // expires_at at acquired_at + MaxLeaseDuration as well, so the cap holds
 // even if this goroutine's clock misbehaves.
+//
+// Reaching MaxLeaseDuration marks the lease lost: the database stops
+// extending it at that point, so the slot is (or is about to be) expired
+// and may be reassigned. acquired is stamped after the insert committed,
+// so this fires no earlier than the database-side cap.
 func (r *lease) renew(ctx context.Context) {
 	defer close(r.done)
 	cfg := r.l.cfg
 	interval := cfg.LeaseTTL / 3
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	hardCap := time.NewTimer(cfg.MaxLeaseDuration - time.Since(r.acquired))
+	defer hardCap.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
-		}
-		if time.Since(r.acquired) >= cfg.MaxLeaseDuration {
-			// Stop renewing; the row expires within one LeaseTTL.
+		case <-hardCap.C:
+			r.markLost()
 			return
+		case <-t.C:
 		}
 		lost, err := r.renewOnce(ctx, min(cfg.OpTimeout, interval))
 		if err != nil {

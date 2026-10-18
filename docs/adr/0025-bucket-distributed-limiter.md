@@ -135,6 +135,17 @@ The adapter maps the calls one to one:
   `InMemoryLimiter` uses.
 - `Release` calls `Release`.
 
+**A lease is always exactly one slot**, while `UsageUnits.Slots()` can be
+greater than 1, and `InMemoryLimiter` honours that weight. Acquiring one slot
+for a heavier reservation would silently undercount capacity, so the adapter
+rejects `Slots() > 1` **before** acquiring. It returns a non-retryable error
+that names the unsupported weight. This is not a `LimitError`: retrying
+would not help. Every estimator in this package sets `Requests: 1`, and no
+current consumer sets more. If a consumer needs weighted slots, the addition
+is an optional interface
+(`bucket.WeightedLimiter.AcquireN(ctx, key, tokens, slots)`), discovered by
+type assertion, so `Limiter` doesn't change.
+
 A `*bucket.LimitError` becomes a `*llms.LimitError` carrying the request's
 Provider and Model and the same `RetryAfter`, so retry and circuit
 middleware treat it exactly as they treat today's local rejections.
@@ -160,10 +171,16 @@ Two tables:
 
 **The database owns the limits.** Every acquire reads them from the row it
 already locks, so storing them costs nothing extra.
-- *Changing a limit* is an `UPDATE`, which takes effect on the next acquire
-  everywhere. Lowering `max_concurrency` below the slots currently held
-  preempts no one; new acquires wait until the count falls under the new
-  limit.
+- *Changing a limit* means calling `Ensure` with `overwrite=true`. It takes
+  effect on the next acquire everywhere. Lowering `max_concurrency` below
+  the slots currently held preempts no one; new acquires wait until the
+  count falls under the new limit. **Raw `UPDATE`s of the limit columns are
+  unsupported** (the schema's column comments say so). Refill is computed
+  lazily, from `last_refill` to now at the row's *current* rate. Changing
+  the rate without first settling the refill would apply the new rate
+  retroactively. For example, a balance of -600 at 60 TPM, raised to 600 TPM
+  sixty seconds later, would come back at 0 instead of -540, erasing usage
+  debt.
 - *Deleting a bucket* (cleanup, or a full reset) cascades to its leases.
   Holders still in flight find their lease gone on their next renewal
   (`ErrLeaseLost`, Decision 4). Acquiring on a deleted key fails closed
@@ -174,8 +191,19 @@ already locks, so storing them costs nothing extra.
 Buckets are created or updated with
 `postgres.Ensure(ctx, name string, limits bucket.Limits, overwrite bool)`.
 With `overwrite` false it inserts only when the bucket is missing
-(`ON CONFLICT DO NOTHING`); with `overwrite` true it upserts the limits and
-leaves the token balance and leases alone. The package builds no policy into
+(`ON CONFLICT DO NOTHING`). With `overwrite` true it changes the limits in
+one transaction:
+
+1. lock the row;
+2. settle the refill accrued so far under the **old** limits, capped at the
+   old capacity;
+3. set `last_refill` to the current time;
+4. install the new limits;
+5. cap the balance at the new capacity, so a lower limit takes effect
+   immediately. A negative balance (debt) is kept as is.
+
+Leases are untouched. A new bucket starts with a full balance. The package
+builds no policy into
 this. The docs recommend `overwrite=false` at startup in production, so the
 database is the source of truth and is changed deliberately. With
 `overwrite=true` config wins, and during a rolling deploy whichever instance
@@ -194,8 +222,24 @@ Each attempt to acquire is one short transaction:
 5. If the tokens and a slot both fit, debit the tokens, insert the lease,
    and commit. Otherwise roll back and return the `RetryAfter` hint.
 
-**All time comes from the database (`now()`).** No instance's clock enters
-the calculation, so clock skew across instances does not matter.
+**All time comes from the database, sampled after the lock is acquired.**
+No instance's clock enters the calculation, so clock skew across instances
+does not matter. Every timestamp the backend computes uses
+`clock_timestamp()`, not `now()`. `now()` is the *transaction start* time,
+and an acquire that waited on the bucket lock for longer than `LeaseTTL`
+would insert a lease that had already expired. Another acquire could then
+reclaim it immediately while the admitted call runs, breaking the cap with
+no renewal failure to report it. This applies to refill, expiry checks,
+`expires_at` on insert, renewal and `Ensure`.
+
+**Lock scope.** Only acquire and `Ensure` take the bucket row lock.
+Renewal and `Release` touch only their own lease row. Renewal changes
+`expires_at`, which is not a key column, so Postgres does not recheck the
+foreign key, and deleting a child row takes no lock on its parent. So
+renewal and release never queue behind contention among acquirers. If a
+renewal races an acquire that is deleting the same expired lease, the
+renewal waits for that row, finds it deleted, updates 0 rows and reports
+the lease lost, which is the correct outcome.
 
 A request larger than the key's capacity fails immediately with
 `LimitError`, since it can never fit.
@@ -206,7 +250,7 @@ configurable and validated as an identifier.
 
 ### 4. Slot leases: renewal, lost leases and a hard cap
 
-- **Renewal.** A lease row expires at `now() + LeaseTTL`, 30 seconds by
+- **Renewal.** A lease row expires at `clock_timestamp() + LeaseTTL`, 30 seconds by
   default, configurable per backend. While the lease is held, one goroutine
   per lease extends it every `LeaseTTL/3`. If the process dies, renewal
   stops and the slot frees within one TTL, however long calls run. Without
@@ -221,7 +265,7 @@ configurable and validated as an identifier.
 - **A transient renewal failure** (database unreachable) is retried on the
   next tick. Renewing at TTL/3 leaves two retries before the lease expires.
 - **A lost lease.** Renewal runs
-  `UPDATE … SET expires_at = now() + ttl WHERE id = $1 AND expires_at > now()`.
+  `UPDATE … SET expires_at = clock_timestamp() + ttl WHERE id = $1 AND expires_at > clock_timestamp()`.
   If no row updates, the lease has expired and may already have been
   reclaimed. Renewal then stops. `Release` returns `bucket.ErrLeaseLost`
   (informational; the middleware ignores Release errors), and `Lease` also
@@ -234,9 +278,23 @@ configurable and validated as an identifier.
   acquire, renewal stops and the slot is reclaimed one TTL later. The cap
   must exceed the longest legitimate call; the per-attempt Timeout
   middleware normally bounds that.
-- **`Release` bounds itself** with a short internal timeout. The middleware
-  calls it on `context.WithoutCancel(ctx)`, which has no deadline, so a hung
-  database would otherwise hang the caller.
+- **Every database operation has an internal deadline.** That covers each
+  acquire attempt, `Adjust`, each renewal, `Release` and `Ensure`. The
+  deadline is `OpTimeout`, 5 seconds by default, and the operation stops at
+  whichever comes first, it or the caller's context. Inside each
+  transaction, `SET LOCAL lock_timeout` stops a lock wait from outlasting
+  it. The middleware calls `Commit` (so `Adjust`) and `Release` on
+  `context.WithoutCancel(ctx)`, which has no deadline. Without these limits
+  a hung database would hang `Complete` in `Adjust`, before its deferred
+  `Release` ever runs, and a blocked renewal would never get to retry.
+  - The internal deadline derives from the context it was given, so it keeps
+    that context's values and can't be cut short by the request being
+    canceled.
+  - When it fires: an acquire attempt returns a backend error (fail
+    closed). `Adjust` returns the error, as the spec's reconciliation
+    contract requires. `Release` returns it, and the slot is reclaimed one
+    TTL later. A renewal counts it as a transient failure and retries on
+    the next tick.
 
 ### 5. Waiting: polling in the MVP, a FIFO queue planned
 
@@ -282,8 +340,12 @@ change.
   many goroutines across several `*sql.DB` handles, standing in for
   instances, asserting the concurrency cap is never exceeded; crash
   recovery, where a lease whose renewal is stopped is reclaimed after its
-  TTL; lost-lease detection; the `MaxLeaseDuration` cap; `Ensure` with and
-  without overwrite; a limit change seen by every handle on its next acquire;
+  TTL; lost-lease detection; the `MaxLeaseDuration` cap; an acquire that
+  waits on the bucket lock longer than `LeaseTTL` still returns a live lease
+  (lock contention held open by a second transaction); `OpTimeout` firing
+  on a blocked `Adjust`, renewal and `Release`; `Ensure` with and without
+  overwrite, including a rate change over existing debt (the -600 example
+  in Decision 3); the adapter rejecting `Slots() > 1` before acquiring; a limit change seen by every handle on its next acquire;
   delete-cascade while leases are held; and refill and
   `Adjust` arithmetic using database time.
 - pgx is a test-only dependency (its stdlib driver). Consumers that don't

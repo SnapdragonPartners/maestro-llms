@@ -58,3 +58,4 @@ Copy `0001`'s structure as the template.
 | [0022](0022-reasoning-effort.md) | Provider-neutral reasoning control (`ChatRequest.Reasoning`, `ChatResponse.AppliedReasoning`): 1:1 mapping or omitted, no per-model prediction | Accepted |
 | [0023](0023-usage-input-includes-cache.md) | `Usage.InputTokens` includes cached input on every provider; cache reads/writes are subsets | Accepted |
 | [0024](0024-provider-params.md) | Per-request `ProviderParams`: raw provider body fields keyed by `ProviderID`, deep-merged after mapping | Accepted |
+| [0025](0025-bucket-distributed-limiter.md) | Generic `bucket` limiter with a Postgres backend (lease rows + renewal for slots; FIFO queue planned, not MVP) | Accepted |

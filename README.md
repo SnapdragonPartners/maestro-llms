@@ -682,12 +682,63 @@ if s, ok := any(lim).(ratelimit.LimiterStats); ok {
 }
 ```
 
-**Distributed limiting:** the in-memory limiter is for single-process/local
-use. For a multi-instance deployment (e.g. Cloud Run) implement
-`ratelimit.Limiter` (`Reserve` returning a `Reservation` with `Commit`/
-`Release`) backed by shared storage and pass *that* to the same middleware —
-nothing else changes. The package intentionally ships only the in-memory
-implementation; the shared backend is the application's to provide.
+#### Shared limits across instances (`bucket`, Postgres)
+
+For a multi-instance deployment (e.g. Cloud Run, or a GitHub app whose every
+use shares one upstream concurrency limit), use the generic **`bucket`**
+package ([ADR-0025](docs/adr/0025-bucket-distributed-limiter.md)). It is not
+LLM-specific: `bucket.Limiter.Acquire(ctx, key, tokens)` blocks until the key
+has room for the tokens and one concurrency slot, and returns a `Lease` you
+`Adjust` and always `Release`. Backends: `bucket/memory` (process-local) and
+`bucket/postgres` (shared, PostgreSQL 13+). `ratelimit.FromBucket` adapts any
+of them to the same middleware:
+
+```go
+import (
+	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/SnapdragonPartners/maestro-llms/bucket"
+	"github.com/SnapdragonPartners/maestro-llms/bucket/postgres"
+	"github.com/SnapdragonPartners/maestro-llms/llms/ratelimit"
+)
+
+db := stdlib.OpenDBFromPool(pool) // any *sql.DB; the package imports no driver
+bl, err := postgres.New(ctx, db, postgres.Config{}) // fails with *postgres.SchemaError if migrations are missing
+// Create the bucket if missing (overwrite=false: the database stays the source of truth).
+err = bl.Ensure(ctx, "lunaroute", bucket.Limits{MaxConcurrency: 2}, false)
+
+lim := ratelimit.FromBucket(bl, func(ratelimit.ReservationRequest) string { return "lunaroute" })
+c := middleware.RecommendedChat(client, middleware.RecommendedConfig{Limiter: lim})
+```
+
+- **Limits live in the database** (`bucket.bucket`), read on every acquire, so
+  every instance agrees and a change applies at once. Change them only with
+  `Ensure(..., overwrite=true)`, which settles refill under the old rate
+  first; a raw `UPDATE` of the limit columns applies the new rate
+  retroactively. Deleting a bucket row cascades to its leases.
+- **Rates are tokens per minute.** Converting a per-second quota is the app's
+  job, and the bucket holds a full minute's burst, so lower the rate or
+  `BufferFactor` for per-second providers.
+- **Concurrency slots are lease rows renewed in the background.** A crashed
+  holder's slot frees within `LeaseTTL` (30s); `MaxLeaseDuration` (15m) caps
+  a lease that is never released. A lease found expired closes `Lost()` and
+  makes `Release` return `bucket.ErrLeaseLost`. Every database operation is
+  bounded by `OpTimeout` (5s). If Postgres is unreachable, nothing is
+  admitted (fail closed).
+- **A lease is one slot:** the adapter rejects reservations with
+  `EstimatedUnits.Requests > 1`.
+- **Waiting is polling** with backoff and jitter (no FIFO queue yet), bounded
+  by `MaxWait` or ctx.
+
+**Database migrations.** The package never runs DDL. Apply the files from
+`postgres.Migrations()` (golang-migrate naming, in a dedicated `bucket`
+Postgres schema) with your own migration tool, **before** deploying a release
+that needs them. `postgres.SchemaVersion` is the version a release requires;
+`postgres.New` and `postgres.CheckSchema` (for readiness probes and
+integration tests) return `*postgres.SchemaError` until it is applied. Unit
+tests with fakes pass without the migration, so watch the release notes: any
+release that raises `SchemaVersion` opens them with **"Database migration
+required"**.
 
 ### Text-level token estimation
 

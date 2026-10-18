@@ -162,6 +162,11 @@ linters-settings:
       # the top-level value (so plain type assertions / identity still
       # work, not just errors.As). So providers return it verbatim.
       - github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/apierr
+      # The bucket packages build their final errors (*bucket.LimitError,
+      # UnknownKey) in one place; the backends return them as is so errors.As
+      # and errors.Is resolve directly (ADR-0025).
+      - github.com/SnapdragonPartners/maestro-llms/bucket
+      - github.com/SnapdragonPartners/maestro-llms/bucket/internal/core
 
   errorlint:
     errorf: true
@@ -233,6 +238,14 @@ linters-settings:
         deny:
           - pkg: "github.com/SnapdragonPartners/maestro-llms/llms/providers"
             desc: "core/middleware/ratelimit must not import provider packages; providers are leaf imports"
+      # ADR-0025: bucket is generic and must not import the llms packages
+      # (TestNoLLMImports enforces the same rule).
+      bucket-no-llms:
+        files:
+          - "**/bucket/**"
+        deny:
+          - pkg: "github.com/SnapdragonPartners/maestro-llms/llms"
+            desc: "bucket is generic; llms/ratelimit adapts it, not the other way round"
 
 issues:
   exclude-use-default: false

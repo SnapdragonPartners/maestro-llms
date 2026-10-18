@@ -2,7 +2,9 @@ package testllm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -252,5 +254,47 @@ func TestFakeChatRecordingIsolatesProviderParams(t *testing.T) {
 	recStop, _ := rec["stop"].([]any)
 	if recKW["enable_thinking"] != false || len(recStop) != 1 || recStop[0] != "x" || rec["new"] != nil {
 		t.Fatalf("ProviderParams recording not isolated: %+v", rec)
+	}
+}
+
+// #93 review: every JSON-marshalable value shape is isolated, with its
+// concrete type preserved, in both mutation directions.
+func TestFakeChatRecordingIsolatesProviderParamValueShapes(t *testing.T) {
+	type knob struct {
+		Tags []string `json:"tags"`
+	}
+	newParams := func() map[string]any {
+		return map[string]any{
+			"strings": []string{"a"},
+			"bools":   map[string]bool{"x": true},
+			"raw":     json.RawMessage(`{"k":1}`),
+			"ptr":     &knob{Tags: []string{"t"}},
+			"struct":  knob{Tags: []string{"s"}},
+			"array":   [1][]int{{1}},
+		}
+	}
+	params := newParams()
+	c := &FakeChatClient{Text: "ok"}
+	req := llms.ChatRequest{
+		Messages:       []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderVLLM: params},
+	}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	mutate := func(m map[string]any) {
+		m["strings"].([]string)[0] = "MUT"        //nolint:forcetypeassert // test fixture shapes are known
+		m["bools"].(map[string]bool)["x"] = false //nolint:forcetypeassert // test fixture shapes are known
+		m["raw"].(json.RawMessage)[2] = 'Z'       //nolint:forcetypeassert // test fixture shapes are known
+		m["ptr"].(*knob).Tags[0] = "MUT"          //nolint:forcetypeassert // test fixture shapes are known
+		m["struct"].(knob).Tags[0] = "MUT"        //nolint:forcetypeassert // test fixture shapes are known
+		arr := m["array"].([1][]int)              //nolint:forcetypeassert // test fixture shapes are known
+		arr[0][0] = 99
+	}
+	mutate(params)                                         // the caller's request after the call
+	mutate(c.Calls()[0].ProviderParams[llms.ProviderVLLM]) // what Calls() returned
+
+	if got, want := c.Calls()[0].ProviderParams[llms.ProviderVLLM], newParams(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("recording changed by mutation:\n got %#v\nwant %#v", got, want)
 	}
 }

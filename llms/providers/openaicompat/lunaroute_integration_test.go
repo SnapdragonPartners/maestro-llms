@@ -1,6 +1,6 @@
 //go:build integration
 
-package vllm_test
+package openaicompat_test
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/internal/livetest"
 	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
-	"github.com/SnapdragonPartners/maestro-llms/llms/providers/vllm"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/openaicompat"
 	"github.com/SnapdragonPartners/maestro-llms/llms/toolloop"
 )
 
@@ -69,16 +69,16 @@ func lunaRouteIsReasoningModel(model string) bool {
 	return false
 }
 
-func newLunaRoute(t *testing.T, key, model string) *vllm.Client {
+func newLunaRoute(t *testing.T, key, model string) *openaicompat.Client {
 	t.Helper()
-	c, err := vllm.New(
-		vllm.WithBaseURL(lunaRouteBaseURL()),
-		vllm.WithAPIKey(key),
-		vllm.WithModel(model),
-		vllm.WithHTTPClient(hclient()),
+	c, err := openaicompat.New(
+		openaicompat.WithBaseURL(lunaRouteBaseURL()),
+		openaicompat.WithAPIKey(key),
+		openaicompat.WithModel(model),
+		openaicompat.WithHTTPClient(hclient()),
 	)
 	if err != nil {
-		t.Fatalf("vllm.New: %v", err)
+		t.Fatalf("openaicompat.New: %v", err)
 	}
 	return c
 }
@@ -118,7 +118,7 @@ var lunaRouteWeather = llms.ToolDefinition{
 	InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`),
 }
 
-func lunaRouteToolRoundTrip(t *testing.T, c *vllm.Client) {
+func lunaRouteToolRoundTrip(t *testing.T, c *openaicompat.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	user := llms.UserText("Use the get_weather tool to look up the weather in Paris.")
@@ -160,7 +160,7 @@ func lunaRouteToolRoundTrip(t *testing.T, c *vllm.Client) {
 	}
 }
 
-func lunaRouteToolChoiceRequired(t *testing.T, c *vllm.Client) {
+func lunaRouteToolChoiceRequired(t *testing.T, c *openaicompat.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	resp, err := c.Complete(ctx, llms.ChatRequest{
@@ -183,7 +183,7 @@ func lunaRouteToolChoiceRequired(t *testing.T, c *vllm.Client) {
 // ReasoningTokens must be positive: OutputTokens is derived by subtracting
 // reasoning from the billable total, so the Billable identity alone would
 // stay green if reasoning-token details were dropped.
-func lunaRouteReasoning(t *testing.T, c *vllm.Client, reasoningModel bool) {
+func lunaRouteReasoning(t *testing.T, c *openaicompat.Client, reasoningModel bool) {
 	// GLM on LunaRoute intermittently takes over a minute even on this
 	// one-line prompt.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -223,7 +223,7 @@ func TestIntegrationLunaRouteErrors(t *testing.T) {
 
 	cases := []struct {
 		name string
-		c    *vllm.Client
+		c    *openaicompat.Client
 		want llms.ErrorKind
 	}{
 		{"BadKey", newLunaRoute(t, "lr-invalid-key", models[0]), llms.ErrorKindAuth},
@@ -247,7 +247,7 @@ func TestIntegrationLunaRouteErrors(t *testing.T) {
 // output budget spends it all on reasoning and returns no text and no tool
 // calls. toolloop must return OutcomeEmptyResponse with a transcript that
 // the Validation middleware accepts once a nudge is appended.
-func lunaRouteEmptyResponse(t *testing.T, c *vllm.Client) {
+func lunaRouteEmptyResponse(t *testing.T, c *openaicompat.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	out := toolloop.Run(ctx, toolloop.Config{

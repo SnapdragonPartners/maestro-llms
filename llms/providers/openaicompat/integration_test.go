@@ -1,6 +1,6 @@
 //go:build integration
 
-package vllm_test
+package openaicompat_test
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
-	"github.com/SnapdragonPartners/maestro-llms/llms/providers/vllm"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/openaicompat"
 )
 
 // envBase returns the vLLM base URL from MAESTRO_VLLM, or "" to signal
@@ -34,7 +34,7 @@ func envAPIKey() string { return os.Getenv("MAESTRO_VLLM_API_KEY") }
 // minutes), or it silently cuts them short.
 func hclient() *http.Client { return &http.Client{Timeout: 3 * time.Minute} }
 
-func newVLLMOrSkip(t *testing.T) (*vllm.Client, string) {
+func newVLLMOrSkip(t *testing.T) (*openaicompat.Client, string) {
 	t.Helper()
 	base := envBase()
 	if base == "" {
@@ -43,11 +43,11 @@ func newVLLMOrSkip(t *testing.T) (*vllm.Client, string) {
 	model := envModel()
 	if model == "" {
 		// Auto-detect: ask the server what it's serving and pick the first.
-		probe, err := vllm.New(
-			vllm.WithBaseURL(base),
-			vllm.WithModel("placeholder"), // mandatory at construction; replaced after autodetect
-			vllm.WithAPIKey(envAPIKey()),
-			vllm.WithHTTPClient(hclient()),
+		probe, err := openaicompat.New(
+			openaicompat.WithBaseURL(base),
+			openaicompat.WithModel("placeholder"), // mandatory at construction; replaced after autodetect
+			openaicompat.WithAPIKey(envAPIKey()),
+			openaicompat.WithHTTPClient(hclient()),
 		)
 		if err != nil {
 			t.Skipf("vLLM not constructable for autodetect: %v", err)
@@ -63,14 +63,14 @@ func newVLLMOrSkip(t *testing.T) (*vllm.Client, string) {
 		}
 		model = models[0].ID
 	}
-	c, err := vllm.New(
-		vllm.WithBaseURL(base),
-		vllm.WithModel(model),
-		vllm.WithAPIKey(envAPIKey()),
-		vllm.WithHTTPClient(hclient()),
+	c, err := openaicompat.New(
+		openaicompat.WithBaseURL(base),
+		openaicompat.WithModel(model),
+		openaicompat.WithAPIKey(envAPIKey()),
+		openaicompat.WithHTTPClient(hclient()),
 	)
 	if err != nil {
-		t.Fatalf("vllm.New: %v", err)
+		t.Fatalf("openaicompat.New: %v", err)
 	}
 	return c, model
 }

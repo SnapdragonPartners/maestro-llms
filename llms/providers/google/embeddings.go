@@ -4,68 +4,12 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"net/http"
 	"strings"
 
-	"cloud.google.com/go/auth"
 	"google.golang.org/genai"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
-
-// EmbeddingConfig configures an EmbeddingClient. Backend is selected by which
-// fields are set: APIKey -> the direct Gemini API; otherwise Project (+
-// Location + Credentials) -> Vertex AI. Morris's supported path is Vertex.
-// The zero value is invalid (Model is required).
-//
-//nolint:govet // fieldalignment: caller-facing config; logical field grouping over 8 bytes.
-type EmbeddingConfig struct {
-	// Model is required, e.g. "gemini-embedding-001".
-	Model string
-
-	// APIKey selects the direct Gemini API backend.
-	APIKey string
-
-	// Project / Location / Credentials select the Vertex AI backend.
-	// Credentials is app-supplied; this package does NO ADC discovery.
-	Project     string
-	Location    string
-	Credentials *auth.Credentials
-
-	// Endpoint overrides the base URL (Private Service Connect). The
-	// HTTPClient is the network transport (PSC dialer / custom CA). Both are
-	// the application's / OpenTofu's concern (ADR-0009).
-	Endpoint   string
-	HTTPClient *http.Client
-
-	// Dimensions is the default output dimensionality (0 = model default);
-	// EmbeddingRequest.Dimensions overrides it per call.
-	Dimensions int
-
-	// MaxInputBytes is the no-silent-truncation guard: when AutoTruncate is
-	// false, an input whose Text exceeds this many UTF-8 bytes is rejected
-	// with a typed bad_request before the provider call. It is a literal
-	// byte count (not tokens — conservative, mechanical, auditable). The
-	// application sets it from its model/chunking policy. Required when
-	// AutoTruncate is false.
-	MaxInputBytes int
-
-	// AutoTruncate controls oversized-input handling. genai's
-	// EmbedContentConfig.AutoTruncate is `bool,omitempty`, so a false value
-	// is UNREPRESENTABLE on the wire — genai cannot send autoTruncate:false,
-	// and Vertex then applies its server default (silently truncate). So:
-	//
-	//   - AutoTruncate=true: opt into provider/server truncation. Vertex-only
-	//     (the Gemini API rejects the parameter); construction fails on the
-	//     Gemini-API backend.
-	//   - AutoTruncate=false (default) + MaxInputBytes>0: this package
-	//     enforces no-silent-truncation itself by rejecting oversized input
-	//     up front (see MaxInputBytes).
-	//   - AutoTruncate=false + MaxInputBytes<=0: NO guarantee is possible
-	//     through genai, so NewEmbeddings FAILS rather than look safe while
-	//     Vertex silently truncates (ADR-0009 refinement).
-	AutoTruncate bool
-}
 
 // EmbeddingClient is an llms.EmbeddingClient backed by genai (Gemini /
 // Vertex). Its size is dominated by the embedded SDK client.
@@ -106,75 +50,89 @@ func batchLimit(model string) int {
 	}
 }
 
-// validate checks backend-independent constraints (model, dimensions, and
-// the fail-closed ambiguous-backend rule).
-func (cfg EmbeddingConfig) validate() error {
+// embedConfig validates the options for NewEmbeddings and builds the genai
+// client config: backend selection (fail closed on ambiguity), the
+// fail-closed truncation contract, and endpoint/transport injection.
+func embedConfig(s *settings) (*genai.ClientConfig, error) {
+	if err := s.commonErr(); err != nil {
+		return nil, err
+	}
+	vertex := len(s.vertexOpts) > 0
 	switch {
-	case cfg.Model == "":
-		return configErr("missing model")
-	case cfg.Dimensions < 0 || cfg.Dimensions > math.MaxInt32:
-		return configErr("Dimensions must be >= 0 and fit int32 (0 = model default)")
-	case cfg.APIKey != "" && (cfg.Project != "" || cfg.Location != "" || cfg.Credentials != nil):
+	case s.dims < 0 || s.dims > math.MaxInt32:
+		return nil, configErr("WithDimensions must be >= 0 and fit int32 (0 = model default)")
+	case s.apiKey != "" && vertex:
 		// genai treats API key and Vertex (project/location/credentials) as
 		// mutually exclusive. Fail closed rather than silently pick the
 		// public API-key backend and bypass Vertex/PSC.
-		return configErr("ambiguous backend: set APIKey (Gemini API) OR Project/Location/Credentials (Vertex), not both")
+		return nil, configErr("ambiguous backend: set WithAPIKey (Gemini API) OR WithVertex+WithCredentials (Vertex), not both")
 	}
-	return nil
-}
 
-// backendConfig selects the genai backend and applies the fail-closed
-// truncation contract + endpoint/transport injection.
-func backendConfig(cfg EmbeddingConfig) (*genai.ClientConfig, error) {
-	cc := &genai.ClientConfig{}
-	switch {
-	case cfg.APIKey != "":
-		cc.Backend = genai.BackendGeminiAPI
-		cc.APIKey = cfg.APIKey
-	case cfg.Project != "":
-		cc.Backend = genai.BackendVertexAI
-		cc.Project = cfg.Project
-		if cfg.Location == "" {
-			return nil, configErr("Vertex backend requires a location")
-		}
-		cc.Location = cfg.Location
-		if cfg.Credentials == nil {
-			return nil, configErr("Vertex backend requires Credentials (this package does no ADC discovery)")
-		}
-		cc.Credentials = cfg.Credentials
-	default:
-		return nil, configErr("missing credentials: set APIKey (Gemini API) or Project+Location+Credentials (Vertex)")
+	cc, err := embedBackend(s, vertex)
+	if err != nil {
+		return nil, err
 	}
 
 	// Fail-closed truncation contract (ADR-0009 refinement): genai cannot
 	// send autoTruncate:false, so AutoTruncate=true is Vertex-only, and
 	// AutoTruncate=false needs a client-side guard (MaxInputBytes>0) — else
 	// the API would look safe while Vertex silently truncates.
-	if cfg.AutoTruncate {
+	if s.autoTruncate {
 		if cc.Backend == genai.BackendGeminiAPI {
-			return nil, configErr("AutoTruncate is Vertex-only; the Gemini API backend does not support it")
+			return nil, configErr("WithAutoTruncate is Vertex-only; the Gemini API backend does not support it")
 		}
-	} else if cfg.MaxInputBytes <= 0 {
-		return nil, configErr("set MaxInputBytes (no-silent-truncation guard) or AutoTruncate=true: " +
+	} else if s.maxInputBytes <= 0 {
+		return nil, configErr("set WithMaxInputBytes (no-silent-truncation guard) or WithAutoTruncate(true): " +
 			"genai cannot send autoTruncate:false, so without a client-side guard Vertex would silently truncate")
 	}
 
-	if cfg.Endpoint != "" {
-		cc.HTTPOptions.BaseURL = cfg.Endpoint
+	if s.baseURL != "" {
+		cc.HTTPOptions.BaseURL = s.baseURL
 	}
-	if cfg.HTTPClient != nil {
-		cc.HTTPClient = cfg.HTTPClient
+	if s.httpClient != nil {
+		cc.HTTPClient = s.httpClient
 	}
 	return cc, nil
 }
 
-// NewEmbeddings builds a Gemini/Vertex embedding client. It returns a
-// *llms.ProviderError of kind config when required values are missing.
-func NewEmbeddings(cfg EmbeddingConfig) (*EmbeddingClient, error) {
-	if err := cfg.validate(); err != nil {
-		return nil, err
+// embedBackend selects the genai backend: the Gemini API by key, or Vertex
+// with app-supplied credentials.
+func embedBackend(s *settings, vertex bool) (*genai.ClientConfig, error) {
+	cc := &genai.ClientConfig{}
+	switch {
+	case s.apiKey != "":
+		cc.Backend = genai.BackendGeminiAPI
+		cc.APIKey = s.apiKey
+	case vertex:
+		switch {
+		case s.project == "" || s.location == "":
+			return nil, configErr("Vertex backend requires WithVertex with a non-empty project and location")
+		case s.creds == nil:
+			return nil, configErr("Vertex backend requires WithCredentials (this package does no ADC discovery)")
+		case s.creds.TokenProvider == nil:
+			// Credentials that cannot mint tokens fail every call; reject
+			// them up front, as anthropicvertex does.
+			return nil, configErr("Google credentials have no TokenProvider (refusing to fall back to ADC)")
+		}
+		cc.Backend = genai.BackendVertexAI
+		cc.Project, cc.Location, cc.Credentials = s.project, s.location, s.creds
+	default:
+		return nil, configErr("missing credentials: set WithAPIKey (Gemini API) or WithVertex+WithCredentials (Vertex)")
 	}
-	cc, err := backendConfig(cfg)
+	return cc, nil
+}
+
+// NewEmbeddings builds a Gemini/Vertex embedding client. The backend is
+// selected by the options: WithAPIKey -> the direct Gemini API;
+// WithVertex + WithCredentials -> Vertex AI (Morris's supported path).
+// WithModel is required, and so is WithMaxInputBytes unless
+// WithAutoTruncate(true) on Vertex. WithBaseURL / WithHTTPClient are the
+// Private Service Connect injection points, the application's / OpenTofu's
+// concern (ADR-0009). It returns a *llms.ProviderError of kind config when
+// required values are missing or inconsistent.
+func NewEmbeddings(opts ...Option) (*EmbeddingClient, error) {
+	s := applyOptions(opts)
+	cc, err := embedConfig(&s)
 	if err != nil {
 		return nil, err
 	}
@@ -187,8 +145,8 @@ func NewEmbeddings(cfg EmbeddingConfig) (*EmbeddingClient, error) {
 		}
 	}
 	return &EmbeddingClient{
-		api: api, model: cfg.Model, dims: cfg.Dimensions,
-		autoTruncate: cfg.AutoTruncate, maxInputBytes: cfg.MaxInputBytes,
+		api: api, model: s.model, dims: s.dims,
+		autoTruncate: s.autoTruncate, maxInputBytes: s.maxInputBytes,
 	}, nil
 }
 

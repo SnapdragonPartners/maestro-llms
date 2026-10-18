@@ -10,8 +10,8 @@
 // auth, and endpoint differ.
 //
 // Auth and endpoint are app-supplied. The package performs no ADC discovery:
-// the caller passes *google.Credentials, and for Private Service Connect a
-// custom endpoint and *http.Client.
+// the caller passes *auth.Credentials (cloud.google.com/go/auth), and for
+// Private Service Connect a custom endpoint and *http.Client.
 //
 // Precedence (the sharp edge — see ADR-0009): vertex.WithCredentials installs
 // the Vertex request middleware (path rewrite to the rawPredict shape +
@@ -32,9 +32,10 @@ import (
 	"context"
 	"net/http"
 
+	"cloud.google.com/go/auth"
+	"cloud.google.com/go/auth/oauth2adapt"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/vertex"
-	"golang.org/x/oauth2/google"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic"
@@ -52,7 +53,7 @@ type settings struct {
 	region     string
 	projectID  string
 	model      string
-	creds      *google.Credentials
+	creds      *auth.Credentials
 	endpoint   string
 	httpClient *http.Client
 }
@@ -71,11 +72,14 @@ func WithProjectID(p string) Option { return func(s *settings) { s.projectID = p
 // "claude-sonnet-4@20250514"). Required.
 func WithModel(m string) Option { return func(s *settings) { s.model = m } }
 
-// WithCredentials supplies the Google credentials. Required: the package does
-// no ADC discovery. Used to install the official Vertex middleware; for PSC
-// (see WithHTTPClient) the network client is replaced, so the credentials'
-// token source must also be carried by that client.
-func WithCredentials(c *google.Credentials) Option { return func(s *settings) { s.creds = c } }
+// WithCredentials supplies the Google credentials, as the
+// cloud.google.com/go/auth type that google.WithCredentials also takes
+// (ADR-0027; e.g. from credentials.DetectDefault). Required: the package does
+// no ADC discovery. The adapter converts them for the Anthropic Vertex SDK
+// and uses them to install the official Vertex middleware; for PSC (see
+// WithHTTPClient) the network client is replaced, so the credentials' token
+// provider must also be carried by that client.
+func WithCredentials(c *auth.Credentials) Option { return func(s *settings) { s.creds = c } }
 
 // WithEndpoint overrides the base URL (Private Service Connect endpoint).
 // Applied after the Vertex option so it wins over the regional URL.
@@ -112,18 +116,23 @@ func New(opts ...Option) (*anthropic.Client, error) {
 		return nil, cfgErr("missing model")
 	case s.creds == nil:
 		return nil, cfgErr("missing Google credentials (this package does no ADC discovery)")
-	case s.creds.TokenSource == nil:
-		// A non-nil Credentials with a nil TokenSource makes Google's
-		// transport fall back to ambient ADC — silently violating the
-		// app-supplied-credentials-only contract. Reject it explicitly.
-		return nil, cfgErr("Google credentials have no TokenSource (refusing to fall back to ADC)")
+	case s.creds.TokenProvider == nil:
+		// A Credentials with no TokenProvider converts to an oauth2
+		// Credentials whose token source cannot mint tokens, so every call
+		// would fail (or, with a nil TokenSource, Google's transport would
+		// fall back to ambient ADC, violating the app-supplied-credentials
+		// contract). Reject it up front.
+		return nil, cfgErr("Google credentials have no TokenProvider (refusing to fall back to ADC)")
 	}
+	// The Anthropic Vertex SDK takes the older golang.org/x/oauth2 type; the
+	// conversion is internal so the public API names one credential type.
+	creds := oauth2adapt.Oauth2CredentialsFromAuthCredentials(s.creds)
 
 	// Order is load-bearing (ADR-0009): Vertex option first (middleware +
 	// auth client + regional URL), then the caller's PSC endpoint/client
 	// LAST so they override the transport/URL while the middleware stays.
 	reqOpts := []option.RequestOption{
-		vertex.WithCredentials(s.ctx, s.region, s.projectID, s.creds),
+		vertex.WithCredentials(s.ctx, s.region, s.projectID, creds),
 	}
 	if s.endpoint != "" {
 		reqOpts = append(reqOpts, option.WithBaseURL(s.endpoint))

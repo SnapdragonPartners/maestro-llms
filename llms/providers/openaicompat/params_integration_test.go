@@ -1,6 +1,6 @@
 //go:build integration
 
-package vllm_test
+package openaicompat_test
 
 import (
 	"context"
@@ -25,7 +25,7 @@ func TestIntegrationLunaRouteProviderParams(t *testing.T) {
 			Messages:       []llms.Message{llms.UserText("What is 17*23? Reply with just the number.")},
 			MaxTokens:      2048,
 			Reasoning:      &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh},
-			ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderVLLM: {"reasoning_effort": "none"}},
+			ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderOpenAICompat: {"reasoning_effort": "none"}},
 		})
 		if err != nil {
 			t.Fatalf("Complete: %v", err)

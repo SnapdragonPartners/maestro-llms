@@ -1,6 +1,6 @@
 //go:build integration
 
-package vllm_test
+package openaicompat_test
 
 import (
 	"strings"

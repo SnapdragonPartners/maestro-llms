@@ -11,8 +11,9 @@ import (
 	"os"
 	"testing"
 
+	"cloud.google.com/go/auth/credentials"
+	"cloud.google.com/go/auth/oauth2adapt"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms/internal/livetest"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic/anthropicvertex"
@@ -61,11 +62,13 @@ func TestIntegrationVertexAnthropicReasoningReplay(t *testing.T) {
 	region := envOr("VERTEX_REGION", "global")
 	model := envOr("VERTEX_ANTHROPIC_REASONING_MODEL", "claude-opus-5-5")
 	ctx := context.Background()
-	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	creds, err := credentials.DetectDefault(&credentials.DetectOptions{
+		Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+	})
 	if err != nil {
 		t.Skipf("no Google credentials (run `gcloud auth application-default login`): %v", err)
 	}
-	hc := oauth2.NewClient(ctx, creds.TokenSource)
+	hc := oauth2.NewClient(ctx, oauth2adapt.TokenSourceFromTokenProvider(creds.TokenProvider))
 	hc.Transport = enforceThinkingBinding{base: hc.Transport}
 	c, err := anthropicvertex.New(
 		anthropicvertex.WithContext(ctx),

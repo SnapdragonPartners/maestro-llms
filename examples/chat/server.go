@@ -25,7 +25,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/google"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/ollama"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/openai"
-	"github.com/SnapdragonPartners/maestro-llms/llms/providers/vllm"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/openaicompat"
 )
 
 //go:embed ui/index.html ui/styles.css ui/app.js
@@ -77,7 +77,7 @@ func serveStatic() http.Handler {
 // dropdown's value (e.g. "anthropic/claude-opus-4-7-20251015"); History
 // is the running conversation including the latest user message.
 type chatRequest struct {
-	ModelID string `json:"modelId"`
+	ModelID string       `json:"modelId"`
 	History []apiMessage `json:"history"`
 }
 
@@ -88,8 +88,8 @@ type apiMessage struct {
 
 type chatResponse struct {
 	Text                 string `json:"text"`
-	Model                string `json:"model"`                // raw model ID from the response; shown in the UI footer
-	StopReason           string `json:"stopReason"`           // RAW provider finish reason (cross-provider variance is intentional; UI normalizes for display)
+	Model                string `json:"model"`      // raw model ID from the response; shown in the UI footer
+	StopReason           string `json:"stopReason"` // RAW provider finish reason (cross-provider variance is intentional; UI normalizes for display)
 	InputTokens          int    `json:"inputTokens"`
 	OutputTokens         int    `json:"outputTokens"`         // visible only (ADR-0016 normalization)
 	ReasoningTokens      int    `json:"reasoningTokens"`      // ADR-0016 — non-visible thinking budget, zero for non-reasoning models
@@ -207,7 +207,7 @@ func buildClient(opt ModelOption) (llms.ChatClient, error) {
 		}
 		return ollama.New(ollama.WithBaseURL(host), ollama.WithModel(opt.Model))
 	case "vllm":
-		return vllm.New(vllm.WithBaseURL(envFirst("MAESTRO_VLLM")), vllm.WithModel(opt.Model))
+		return openaicompat.New(openaicompat.WithBaseURL(envFirst("MAESTRO_VLLM")), openaicompat.WithModel(opt.Model))
 	default:
 		return nil, fmt.Errorf("unknown provider %q", opt.ProviderName)
 	}

@@ -31,7 +31,7 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/google"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/ollama"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/openai"
-	"github.com/SnapdragonPartners/maestro-llms/llms/providers/vllm"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/openaicompat"
 )
 
 // ModelOption is one entry in the dropdown the UI presents to the user.
@@ -236,9 +236,9 @@ func vllmOption(ctx context.Context, logf func(string, ...any)) (ModelOption, bo
 	if base == "" {
 		return ModelOption{}, false
 	}
-	c, err := vllm.New(
-		vllm.WithBaseURL(base),
-		vllm.WithModel("placeholder"),
+	c, err := openaicompat.New(
+		openaicompat.WithBaseURL(base),
+		openaicompat.WithModel("placeholder"),
 	)
 	if err != nil {
 		logf("vllm: construct failed: %v", err)

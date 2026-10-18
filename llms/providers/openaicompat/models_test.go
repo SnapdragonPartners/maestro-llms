@@ -1,4 +1,4 @@
-package vllm
+package openaicompat
 
 import (
 	"context"

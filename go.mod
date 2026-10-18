@@ -4,6 +4,7 @@ go 1.26.9
 
 require (
 	cloud.google.com/go/auth v0.24.1
+	cloud.google.com/go/auth/oauth2adapt v0.2.8
 	github.com/anthropics/anthropic-sdk-go v1.82.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/openai/openai-go/v3 v3.78.0
@@ -13,7 +14,6 @@ require (
 
 require (
 	cloud.google.com/go v0.116.0 // indirect
-	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect

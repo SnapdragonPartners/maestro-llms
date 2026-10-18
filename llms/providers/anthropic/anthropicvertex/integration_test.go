@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/oauth2/google"
+	"cloud.google.com/go/auth/credentials"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/internal/livetest"
@@ -35,7 +35,9 @@ func newVertexClient(t *testing.T) llms.ChatClient {
 	region := envOr("VERTEX_REGION", "global")
 	model := envOr("VERTEX_ANTHROPIC_MODEL", "claude-opus-4-6")
 	ctx := context.Background()
-	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	creds, err := credentials.DetectDefault(&credentials.DetectOptions{
+		Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+	})
 	if err != nil {
 		t.Skipf("no Google credentials (run `gcloud auth application-default login`): %v", err)
 	}

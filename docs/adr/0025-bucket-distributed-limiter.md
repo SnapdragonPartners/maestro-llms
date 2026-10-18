@@ -159,14 +159,15 @@ change. `InMemoryLimiter` stays as it is; reimplementing it on
 `bucket/postgres.New(db *sql.DB, cfg)` takes an app-supplied `*sql.DB` and
 imports no database driver. pgx users pass `stdlib.OpenDBFromPool(pool)`.
 
-Two tables:
+Two tables, in the dedicated `bucket` Postgres schema (see "Schema delivery
+and versioning" below), plus its version table:
 
-- `bucket`: one row per key, holding both its limits and its state:
+- `bucket.bucket`: one row per key, holding both its limits and its state:
   `id` (bigint identity primary key), `name` (unique),
   `tokens_per_minute`, `max_concurrency`, `buffer_factor`, `token_balance`
   and `last_refill`;
-- `bucket_lease`: one row per held slot, holding the lease ID, a
-  `bucket_id` that references `bucket(id)` with `ON DELETE CASCADE`,
+- `bucket.lease`: one row per held slot, holding the lease ID, a
+  `bucket_id` that references `bucket.bucket(id)` with `ON DELETE CASCADE`,
   `expires_at` and `acquired_at`.
 
 **The database owns the limits.** Every acquire reads them from the row it
@@ -244,9 +245,60 @@ the lease lost, which is the correct outcome.
 A request larger than the key's capacity fails immediately with
 `LimitError`, since it can never fit.
 
-The schema ships as SQL text (`postgres.Schema`) for the app to apply with
-its own migration tool. The package never runs DDL. The table-name prefix is
-configurable and validated as an identifier.
+#### Schema delivery and versioning
+
+**The package never runs DDL.** The app applies the schema with its own
+migration tool and its own migration credentials, so a least-privilege app
+role keeps working and the app's tooling sees every table. Creating tables
+on the fly, and shipping a `postgres.Migrate` runner, were both considered
+and set aside for now; see the alternatives.
+
+- **The schema has its own version, separate from the app's.** The bucket
+  schema lives in a dedicated Postgres schema, `bucket`: `bucket.bucket`,
+  `bucket.lease` and `bucket.schema_version`. Its names can't collide with
+  app tables, and an app upgrading its own schema never touches it. The
+  name `bucket` is fixed, not configurable. A configurable name would mean
+  templated SQL, and the files could no longer be copied verbatim into a
+  migration tool.
+- **Versioned migration files, no runner.** `postgres.Migrations()` returns
+  an embedded `fs.FS` of numbered files in golang-migrate naming
+  (`000001_init.up.sql` / `.down.sql`). Apps copy them into their own
+  migrations or read them from the `fs.FS`. Each file's last statement
+  records its version in `bucket.schema_version`, so the version a database
+  reports is whatever was actually applied, whichever tool applied it.
+- **The code declares the version it needs:** `postgres.SchemaVersion`, a
+  constant. A unit test fails if it isn't equal to the highest migration
+  file number, so the constant and the files can't drift apart.
+- **Fail fast on a schema that's behind.** `postgres.New` reads
+  `bucket.schema_version`. If the table is missing or its version is below
+  `SchemaVersion`, `New` returns `*postgres.SchemaError`, naming the
+  required and found versions and the migration files to apply, and no
+  limiter is built. The app finds out at startup, not on its first provider
+  call.
+  - The same check is exported as `postgres.CheckSchema(ctx, db)` for
+    readiness probes and integration tests. That matters because unit tests
+    that use fakes or the in-memory backend pass whether or not the
+    migration was applied.
+  - Acquire also re-checks lazily: if a statement fails because a table or
+    column is missing (SQLSTATE `42P01` / `42703`), it returns the same
+    `SchemaError` instead of a raw driver error. That covers a database
+    restored or rolled back underneath a running instance.
+  - Until the migration is applied, every attempt keeps failing closed with
+    that error. Nothing degrades silently.
+- **A newer schema is accepted.** A version above `SchemaVersion` is fine.
+  The migrations are expand-only: they add tables and columns, and never
+  rename or drop anything an older release reads. So during a rolling
+  deploy an old binary keeps working against a migrated database. The
+  rollout order is therefore: apply the migration first, then deploy. A
+  migration that has to contract (drop or rename) is a breaking release, and
+  its notes say so.
+- **Release notes are loud.** Any release that raises `SchemaVersion` opens
+  its notes with a **"Database migration required"** section: the new
+  version, the files to apply, the rollout order above, and the
+  `SchemaError` an upgrader will see if they skip the migration. The
+  GitHub release title carries the same flag. This rule is also recorded in
+  the CLAUDE.md "Versioning" section, so it doesn't depend on someone
+  remembering this ADR.
 
 ### 4. Slot leases: renewal, lost leases and a hard cap
 
@@ -345,7 +397,9 @@ change.
   (lock contention held open by a second transaction); `OpTimeout` firing
   on a blocked `Adjust`, renewal and `Release`; `Ensure` with and without
   overwrite, including a rate change over existing debt (the -600 example
-  in Decision 3); the adapter rejecting `Slots() > 1` before acquiring; a limit change seen by every handle on its next acquire;
+  in Decision 3); the adapter rejecting `Slots() > 1` before acquiring; a limit change seen by every handle on its next acquire; `New` and `CheckSchema` returning `SchemaError` on a missing or older
+  schema and accepting a newer one; `SchemaVersion` equal to the highest
+  migration file;
   delete-cascade while leases are held; and refill and
   `Adjust` arithmetic using database time.
 - pgx is a test-only dependency (its stdlib driver). Consumers that don't
@@ -363,6 +417,10 @@ change.
   single row. At LLM call rates (tens per second per key) that is
   negligible. The per-key row lock serializes acquirers for that key, and
   that is the intended behavior.
+- **Some upgrades need a database migration.** It is the app's job to apply
+  it, before deploying. A missed migration fails fast at `New` with
+  `SchemaError`, never silently. Release notes flag every one (see "Schema
+  delivery and versioning").
 - **Fail closed.** If Postgres is unreachable, admission fails and no
   provider call is made.
 - **A lost lease can briefly exceed the limit**, by at most one call, bounded
@@ -405,6 +463,22 @@ change.
 - **Generic SQL dialects (SQLite, MySQL) or Redis.** Deferred: every current
   consumer is on Postgres. Each would be a new `bucket/<backend>` package
   behind the same interface.
+- **Creating the tables on the fly** (`CREATE TABLE IF NOT EXISTS` from
+  `New`). Rejected:
+  - production app roles often have no DDL privilege;
+  - concurrent `IF NOT EXISTS` across instances can still fail on a
+    catalog unique violation;
+  - it never alters an existing table, so the first schema change (the
+    FIFO queue's waiter table) would need hidden versioned migrations
+    anyway;
+  - the app's migration tool never sees the tables.
+- **A `postgres.Migrate(ctx, db)` runner** (advisory-locked, idempotent).
+  Deferred: the migration files plus `SchemaError` cover the need, and
+  every consumer already has a migration tool. Adding a runner later is
+  additive.
+- **A configurable table prefix or schema name.** Rejected: it forces
+  templated SQL, and the files can no longer be copied verbatim into a
+  migration tool.
 - **Building the FIFO queue in the MVP.** Deferred, see Decision 5: about
   30–40% more backend work, and the queue-jumping rule is still open.
 

@@ -784,9 +784,8 @@ Consumers discover it with a type assertion. Core `Limiter` stays minimal so dis
 
 Distributed limiter implementation:
 
-- not required in this package initially
-- Morris can implement it in its own repo using PostgreSQL
-- later, a generic SQL/Redis implementation can be added if it remains app-neutral
+- **Amended by ADR-0025 (2026-10-18):** the shared limiter ships here, not in Morris first, because Maestro, Morris and buggrit all need it at once. It is the generic top-level `bucket` package (which does not import `llms`) with `bucket/memory` and `bucket/postgres` backends; `ratelimit.FromBucket` adapts it to `Limiter`, so the middleware is unchanged.
+- PostgreSQL only for now; other SQL dialects or Redis would be further `bucket/<backend>` packages behind the same interface.
 
 ## Token Estimation
 
@@ -1014,7 +1013,7 @@ middleware).
 ### v0.4
 
 - optional streaming interfaces (`StreamingChatClient`)
-- optional generic Redis/Postgres limiter if it can stay app-neutral
+- optional generic Redis/Postgres limiter if it can stay app-neutral (delivered for Postgres as `bucket/postgres`, ADR-0025)
 
 ## Roadmap Update — 2026-05-15
 
@@ -1094,4 +1093,4 @@ Proceed with a small extraction focused on what Morris and Maestro both need imm
 - in-memory limiter for Maestro
 - fakes for tests
 
-Do not include streaming in v0.1. Do not include Morris distributed rate limiting in the shared package yet; Morris should implement the `Limiter` interface with PostgreSQL in its own codebase first. If that implementation later proves app-neutral, promote it into `maestro-llms`.
+Do not include streaming in v0.1. Do not include Morris distributed rate limiting in the shared package yet; Morris should implement the `Limiter` interface with PostgreSQL in its own codebase first. If that implementation later proves app-neutral, promote it into `maestro-llms`. (Superseded by ADR-0025: the shared limiter was built here directly as the generic `bucket` package.)

@@ -1,6 +1,6 @@
 # 0025. Generic `bucket` limiter with a Postgres backend (lease rows, renewal, FIFO queue planned)
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-18
 
 ## Context
@@ -156,8 +156,10 @@ change. `InMemoryLimiter` stays as it is; reimplementing it on
 
 ### 3. Postgres backend: token bucket and slots in one transaction
 
-`bucket/postgres.New(db *sql.DB, cfg)` takes an app-supplied `*sql.DB` and
-imports no database driver. pgx users pass `stdlib.OpenDBFromPool(pool)`.
+`bucket/postgres.New(ctx, db *sql.DB, cfg)` takes an app-supplied `*sql.DB`
+and imports no database driver. pgx users pass
+`stdlib.OpenDBFromPool(pool)`. It requires PostgreSQL 13 or later, for
+`gen_random_uuid()`.
 
 Two tables, in the dedicated `bucket` Postgres schema (see "Schema delivery
 and versioning" below), plus its version table:
@@ -221,7 +223,8 @@ Each attempt to acquire is one short transaction:
 3. Delete that key's expired leases.
 4. Count the leases still live.
 5. If the tokens and a slot both fit, debit the tokens, insert the lease,
-   and commit. Otherwise roll back and return the `RetryAfter` hint.
+   and commit. Otherwise commit only the reap and the refill, and return
+   the `RetryAfter` hint.
 
 **All time comes from the database, sampled after the lock is acquired.**
 No instance's clock enters the calculation, so clock skew across instances
@@ -327,13 +330,16 @@ and set aside for now; see the alternatives.
 - **A hard cap: `MaxLeaseDuration`,** default 15 minutes. Renewal turns a
   leaked `Release` (a holder that never releases) into a slot held forever,
   where TTL alone would have recovered it. After `MaxLeaseDuration` from
-  acquire, renewal stops and the slot is reclaimed one TTL later. The cap
-  must exceed the longest legitimate call; the per-attempt Timeout
+  acquire, renewal stops and the slot is reclaimed one TTL later. The
+  database enforces the same cap: renewal sets `expires_at` to the earlier
+  of `clock_timestamp() + LeaseTTL` and `acquired_at + MaxLeaseDuration`.
+  The cap must exceed the longest legitimate call; the per-attempt Timeout
   middleware normally bounds that.
 - **Every database operation has an internal deadline.** That covers each
   acquire attempt, `Adjust`, each renewal, `Release` and `Ensure`. The
-  deadline is `OpTimeout`, 5 seconds by default, and the operation stops at
-  whichever comes first, it or the caller's context. Inside each
+  deadline is `OpTimeout`, 5 seconds by default. Acquire attempts and
+  `Ensure` also stop if the caller's context ends first. `Adjust`, renewal
+  and `Release` ignore the caller's cancellation (see below). Inside each
   transaction, `SET LOCAL lock_timeout` stops a lock wait from outlasting
   it. The middleware calls `Commit` (so `Adjust`) and `Release` on
   `context.WithoutCancel(ctx)`, which has no deadline. Without these limits

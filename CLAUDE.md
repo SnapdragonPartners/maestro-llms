@@ -30,6 +30,7 @@ llms/middleware/     provider-neutral middleware (timeout, retry, circuit, ratel
 llms/ratelimit/      Limiter/Reservation interfaces + optional in-memory limiter
 llms/providers/{anthropic,openai,google,ollama,vllm}/   one package per provider, imported only if used
 llms/testllm/        deterministic FakeChatClient / FakeEmbeddingClient
+bucket/              generic per-key token/concurrency limiter (no llms import); bucket/memory, bucket/postgres (ADR-0025)
 ```
 
 Load-bearing structural decisions:

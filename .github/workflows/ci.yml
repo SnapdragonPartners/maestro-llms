@@ -26,6 +26,22 @@ jobs:
   build-lint-test:
     runs-on: ubuntu-latest
 
+    # Postgres for the bucket/postgres tests (ADR-0025). They skip when
+    # BUCKET_POSTGRES_DSN is unset; here it points at this container, and
+    # each run creates and drops its own databases.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: bucket
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       # actions/* are first-party GitHub-owned, pinned by major tag.
       # Linting and govulncheck are installed via `go install @<pinned
@@ -83,4 +99,7 @@ jobs:
           done
 
       - name: Test
+        env:
+          BUCKET_POSTGRES_DSN: postgres://postgres:bucket@localhost:5432/postgres?sslmode=disable
+          BUCKET_POSTGRES_REQUIRED: "1"
         run: go test -cover ./...

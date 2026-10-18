@@ -37,6 +37,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   thinking budget) maps 1:1 to each provider's control or is omitted, and
   `ChatResponse.AppliedReasoning` reports what was sent. See
   [ADR-0022](docs/adr/0022-reasoning-effort.md).
+- **Per-request provider fields.** `ChatRequest.ProviderParams` deep-merges
+  raw body fields into a specific provider's wire request when you know
+  more about a model than the neutral API covers. See
+  [ADR-0024](docs/adr/0024-provider-params.md).
 - **Five chat providers**: Anthropic (Messages), OpenAI (Responses API),
   Google (Gemini via genai), Ollama (hand-rolled `/api/chat`, no SDK),
   vLLM (OpenAI Chat Completions surface via openai-go; ADR-0015).
@@ -249,6 +253,27 @@ Gemini takes `thinkingLevel` on Gemini 3 and `thinkingBudget` on 2.5. Set the
 field that fits your model. OpenAI-compatible servers vary: on LunaRoute,
 GLM-5.3 treats effort as a soft bound and DeepSeek turns reasoning off at
 `None`.
+
+#### Provider-specific fields (`ProviderParams`)
+
+```go
+resp, err := client.Complete(ctx, llms.ChatRequest{
+	Messages: msgs,
+	ProviderParams: map[llms.ProviderID]map[string]any{
+		llms.ProviderVLLM:   {"chat_template_kwargs": map[string]any{"enable_thinking": false}},
+		llms.ProviderGoogle: {"generationConfig": map[string]any{"candidateCount": 1}},
+	},
+})
+```
+
+Each adapter merges only its own entry, after mapping everything else, so a
+request can carry fields for several providers. Objects merge recursively,
+so the Gemini entry above keeps the adapter's temperature and max tokens.
+Any other value replaces what the adapter mapped. Values must marshal to
+JSON, or the call fails as `bad_request`. Overrides are outside the
+stability contract, and estimation and rate-limiting middleware don't see
+them. If an override replaces a mapped reasoning field, that field drops out
+of `AppliedReasoning`.
 
 ### Tool loop (`llms/toolloop`)
 

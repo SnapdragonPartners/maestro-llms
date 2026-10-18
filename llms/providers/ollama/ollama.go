@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
 const providerName = llms.ProviderOllama
@@ -101,15 +102,23 @@ func (c *Client) Model() llms.ModelRef {
 
 // Complete sends a synchronous (non-streaming) chat completion.
 func (c *Client) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+	extra, _, xerr := extraparams.For(&req, providerName)
+	if xerr != nil {
+		return llms.ChatResponse{}, badRequest(c.model, xerr.Error())
+	}
 	wireReq, perr := c.toWire(req)
 	if perr != nil {
 		return llms.ChatResponse{}, perr
 	}
-	resp, err := c.do(ctx, wireReq)
+	resp, err := c.do(ctx, wireReq, extra)
 	if err != nil {
 		return llms.ChatResponse{}, err
 	}
 	out := toChatResponse(resp)
-	_, out.AppliedReasoning = mapReasoning(req.Reasoning)
+	_, applied := mapReasoning(req.Reasoning)
+	if extraparams.Overrides(extra, "think") {
+		applied = nil // ProviderParams replaced the mapped think (ADR-0024)
+	}
+	out.AppliedReasoning = applied
 	return out, nil
 }

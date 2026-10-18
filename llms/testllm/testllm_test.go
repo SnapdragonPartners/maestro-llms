@@ -229,3 +229,28 @@ func TestFakeChatRecordingIsolatesReasoningConfig(t *testing.T) {
 		t.Fatalf("ReasoningConfig recording not isolated: %+v", rec)
 	}
 }
+
+func TestFakeChatRecordingIsolatesProviderParams(t *testing.T) {
+	c := &FakeChatClient{Text: "ok"}
+	req := llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("q")},
+		ProviderParams: map[llms.ProviderID]map[string]any{
+			llms.ProviderVLLM: {"chat_template_kwargs": map[string]any{"enable_thinking": false}, "stop": []any{"x"}},
+		},
+	}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	in := req.ProviderParams[llms.ProviderVLLM]
+	kw, _ := in["chat_template_kwargs"].(map[string]any)
+	kw["enable_thinking"] = true
+	stop, _ := in["stop"].([]any)
+	stop[0] = "y"
+	c.Calls()[0].ProviderParams[llms.ProviderVLLM]["new"] = 1
+	rec := c.Calls()[0].ProviderParams[llms.ProviderVLLM]
+	recKW, _ := rec["chat_template_kwargs"].(map[string]any)
+	recStop, _ := rec["stop"].([]any)
+	if recKW["enable_thinking"] != false || len(recStop) != 1 || recStop[0] != "x" || rec["new"] != nil {
+		t.Fatalf("ProviderParams recording not isolated: %+v", rec)
+	}
+}

@@ -197,6 +197,9 @@ type ChatRequest struct {
     Temperature *float32
     Metadata    map[string]string
     Reasoning   *ReasoningConfig
+    // Raw provider body fields, deep-merged into the wire request after
+    // mapping (objects merge, anything else replaces). ADR-0024.
+    ProviderParams map[ProviderID]map[string]any
 }
 
 type ReasoningEffort string // none, minimal, low, medium, high, xhigh, max

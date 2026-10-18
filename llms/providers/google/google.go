@@ -7,6 +7,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
 const providerName = llms.ProviderGoogle
@@ -101,15 +102,28 @@ func (c *Client) Model() llms.ModelRef {
 
 // Complete sends a synchronous chat completion via the Gemini API.
 func (c *Client) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+	extra, _, xerr := extraparams.For(&req, providerName)
+	if xerr != nil {
+		return llms.ChatResponse{}, badRequest(c.model, xerr.Error())
+	}
 	contents, cfg, perr := c.toParams(req)
 	if perr != nil {
 		return llms.ChatResponse{}, perr
+	}
+	if extra != nil {
+		// The same deep merge every adapter uses (ADR-0024), not genai's
+		// ExtraBody merge, which logs on type mismatches.
+		cfg.HTTPOptions = &genai.HTTPOptions{ExtrasRequestProvider: func(body map[string]any) map[string]any {
+			extraparams.Merge(body, extra)
+			return body
+		}}
 	}
 	result, err := c.api.Models.GenerateContent(ctx, c.model, contents, cfg)
 	if err != nil {
 		return llms.ChatResponse{}, classifyError(c.model, err)
 	}
 	out := toChatResponse(result)
-	_, out.AppliedReasoning = mapReasoning(req.Reasoning)
+	_, applied := mapReasoning(req.Reasoning)
+	out.AppliedReasoning = withoutOverridden(applied, extra)
 	return out, nil
 }

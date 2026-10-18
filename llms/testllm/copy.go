@@ -69,7 +69,41 @@ func copyChatRequest(r llms.ChatRequest) llms.ChatRequest {
 		r.Reasoning = &rc
 	}
 	r.Metadata = maps.Clone(r.Metadata)
+	if r.ProviderParams != nil {
+		pp := make(map[llms.ProviderID]map[string]any, len(r.ProviderParams))
+		for k, v := range r.ProviderParams {
+			pp[k], _ = deepCopyJSON(v).(map[string]any)
+		}
+		r.ProviderParams = pp
+	}
 	return r
+}
+
+// deepCopyJSON copies the nested maps and slices of a JSON-shaped value;
+// other values are copied as-is.
+func deepCopyJSON(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		if t == nil {
+			return nil
+		}
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = deepCopyJSON(e)
+		}
+		return out
+	case []any:
+		if t == nil {
+			return nil
+		}
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = deepCopyJSON(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func copyEmbeddingRequest(r llms.EmbeddingRequest) llms.EmbeddingRequest {

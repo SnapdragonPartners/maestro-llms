@@ -840,11 +840,19 @@ environment defaults; live toolloop and Vertex integration tests),
 `/v1`), **v0.9.0** (openai-go v3; Anthropic thinking tokens reported
 as `ReasoningTokens` — see
 [ADR-0018](docs/adr/0018-anthropic-thinking-tokens.md); toolloop
-preallocation no longer scales with `MaxIterations`), and **v0.10.0**
+preallocation no longer scales with `MaxIterations`), **v0.10.0**
 (toolloop `OutcomeDeadline` and `NoIterationLimit` — see
 [ADR-0019](docs/adr/0019-toolloop-deadline-and-no-iteration-limit.md);
 `OutcomeEmptyResponse` — see
 [ADR-0020](docs/adr/0020-toolloop-empty-response.md); adapters omit
-`tool_choice` when no tools are offered).
+`tool_choice` when no tools are offered), and **v0.11.0** (Anthropic
+thinking blocks round-trip as `ContentReasoning` parts, plus a typed
+`llms.ProviderID` — see
+[ADR-0021](docs/adr/0021-reasoning-content-part.md); reasoning control via
+`ChatRequest.Reasoning` and `ChatResponse.AppliedReasoning` — see
+[ADR-0022](docs/adr/0022-reasoning-effort.md); `InputTokens` includes
+cached input on every provider — see
+[ADR-0023](docs/adr/0023-usage-input-includes-cache.md); per-request
+`ProviderParams` — see [ADR-0024](docs/adr/0024-provider-params.md)).
 
 MIT — see [`LICENSE`](LICENSE).

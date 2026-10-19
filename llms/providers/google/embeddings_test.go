@@ -18,18 +18,15 @@ var _ llms.EmbeddingClient = (*EmbeddingClient)(nil)
 
 // newEmbed builds an embedding client on the Gemini-API backend pointed at a
 // test server (the request/response mapping is backend-agnostic).
-func newEmbed(t *testing.T, model string, h http.HandlerFunc, mut func(*EmbeddingConfig)) *EmbeddingClient {
+func newEmbed(t *testing.T, model string, h http.HandlerFunc, extra ...Option) *EmbeddingClient {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	cfg := EmbeddingConfig{
-		Model: model, APIKey: "k", Endpoint: srv.URL, HTTPClient: srv.Client(),
-		MaxInputBytes: 1 << 20, // guard configured (effectively off for tiny test inputs)
-	}
-	if mut != nil {
-		mut(&cfg)
-	}
-	c, err := NewEmbeddings(cfg)
+	opts := append([]Option{
+		WithModel(model), WithAPIKey("k"), WithBaseURL(srv.URL), WithHTTPClient(srv.Client()),
+		WithMaxInputBytes(1 << 20), // guard configured (effectively off for tiny test inputs)
+	}, extra...) // later options win
+	c, err := NewEmbeddings(opts...)
 	if err != nil {
 		t.Fatalf("NewEmbeddings: %v", err)
 	}
@@ -50,7 +47,7 @@ func TestEmbedMapsTaskTitleDimsAndPreservesID(t *testing.T) {
 		body = string(b)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"embeddings":[{"values":[0.5,0.6]}]}`)
-	}, nil)
+	})
 
 	resp, err := c.Embed(context.Background(), llms.EmbeddingRequest{
 		Task:       llms.EmbeddingTaskRetrievalDocument,
@@ -79,7 +76,7 @@ func TestGeminiEmbedding001RejectsMultiInput(t *testing.T) {
 	c := newEmbed(t, "gemini-embedding-001", func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		_, _ = io.WriteString(w, "{}")
-	}, nil)
+	})
 	_, err := c.Embed(context.Background(), llms.EmbeddingRequest{
 		Inputs: []llms.EmbeddingInput{{ID: "1", Text: "a"}, {ID: "2", Text: "b"}},
 	})
@@ -97,7 +94,7 @@ func TestEmbedEmptyInputsRejected(t *testing.T) {
 	c := newEmbed(t, "gemini-embedding-001", func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		_, _ = io.WriteString(w, "{}")
-	}, nil)
+	})
 	_, err := c.Embed(context.Background(), llms.EmbeddingRequest{})
 	var pe *llms.ProviderError
 	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {
@@ -113,7 +110,7 @@ func TestMaxInputBytesGuardRejectsOversized(t *testing.T) {
 	c := newEmbed(t, "gemini-embedding-001", func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		_, _ = io.WriteString(w, `{"embeddings":[{"values":[1]}]}`)
-	}, func(cfg *EmbeddingConfig) { cfg.MaxInputBytes = 4 })
+	}, WithMaxInputBytes(4))
 
 	_, err := c.Embed(context.Background(), llms.EmbeddingRequest{
 		Inputs: []llms.EmbeddingInput{{ID: "1", Text: "toolong"}}, // 7 bytes > 4
@@ -134,8 +131,8 @@ func TestMaxInputBytesGuardRejectsOversized(t *testing.T) {
 }
 
 func TestAutoTruncateConstructionRules(t *testing.T) {
-	cfgErr := func(cfg EmbeddingConfig, what string) {
-		_, err := NewEmbeddings(cfg)
+	cfgErr := func(what string, opts ...Option) {
+		_, err := NewEmbeddings(opts...)
 		var pe *llms.ProviderError
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
 			t.Fatalf("%s: want config error, got %v", what, err)
@@ -144,23 +141,22 @@ func TestAutoTruncateConstructionRules(t *testing.T) {
 	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
 
 	// false + no guard => must fail (no genai-representable autoTruncate:false).
-	cfgErr(EmbeddingConfig{Model: "m", APIKey: "k"}, "false + no MaxInputBytes")
+	cfgErr("false + no MaxInputBytes", WithModel("m"), WithAPIKey("k"))
 	// true on the Gemini-API backend => Vertex-only, must fail.
-	cfgErr(EmbeddingConfig{Model: "m", APIKey: "k", AutoTruncate: true}, "AutoTruncate on Gemini API")
+	cfgErr("AutoTruncate on Gemini API", WithModel("m"), WithAPIKey("k"), WithAutoTruncate(true))
 
 	// false + guard => ok.
-	if _, err := NewEmbeddings(EmbeddingConfig{Model: "m", APIKey: "k", MaxInputBytes: 10}); err != nil {
+	if _, err := NewEmbeddings(WithModel("m"), WithAPIKey("k"), WithMaxInputBytes(10)); err != nil {
 		t.Fatalf("false + MaxInputBytes must construct: %v", err)
 	}
 	// true on Vertex => ok.
-	if _, err := NewEmbeddings(EmbeddingConfig{
-		Model: "m", Project: "p", Location: "us", Credentials: creds, AutoTruncate: true,
-	}); err != nil {
+	if _, err := NewEmbeddings(
+		WithModel("m"), WithVertex("p", "us"), WithCredentials(creds), WithAutoTruncate(true),
+	); err != nil {
 		t.Fatalf("AutoTruncate=true on Vertex must construct: %v", err)
 	}
 	// Vertex, false, no guard => fail.
-	cfgErr(EmbeddingConfig{Model: "m", Project: "p", Location: "us", Credentials: creds},
-		"Vertex false + no MaxInputBytes")
+	cfgErr("Vertex false + no MaxInputBytes", WithModel("m"), WithVertex("p", "us"), WithCredentials(creds))
 }
 
 func TestAutoTruncateTrueVertexPassesThrough(t *testing.T) {
@@ -173,10 +169,10 @@ func TestAutoTruncateTrueVertexPassesThrough(t *testing.T) {
 	}))
 	defer srv.Close()
 	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
-	c, err := NewEmbeddings(EmbeddingConfig{
-		Model: "gemini-embedding-001", Project: "p", Location: "us-central1",
-		Credentials: creds, Endpoint: srv.URL, HTTPClient: srv.Client(), AutoTruncate: true,
-	})
+	c, err := NewEmbeddings(
+		WithModel("gemini-embedding-001"), WithVertex("p", "us-central1"), WithCredentials(creds),
+		WithBaseURL(srv.URL), WithHTTPClient(srv.Client()), WithAutoTruncate(true),
+	)
 	if err != nil {
 		t.Fatalf("NewEmbeddings: %v", err)
 	}
@@ -197,7 +193,7 @@ func TestAutoTruncateTrueVertexPassesThrough(t *testing.T) {
 
 func TestEmbedOrderIDsAndCountMismatch(t *testing.T) {
 	c := newEmbed(t, "text-embedding-004",
-		embedOK(`{"values":[1,1]},{"values":[2,2]}`), nil)
+		embedOK(`{"values":[1,1]},{"values":[2,2]}`))
 	resp, err := c.Embed(context.Background(), llms.EmbeddingRequest{
 		Inputs: []llms.EmbeddingInput{{ID: "x", Text: "a"}, {ID: "y", Text: "b"}},
 	})
@@ -210,7 +206,7 @@ func TestEmbedOrderIDsAndCountMismatch(t *testing.T) {
 	}
 
 	// Provider returns fewer vectors than inputs -> typed error.
-	c2 := newEmbed(t, "text-embedding-004", embedOK(`{"values":[1]}`), nil)
+	c2 := newEmbed(t, "text-embedding-004", embedOK(`{"values":[1]}`))
 	_, err = c2.Embed(context.Background(), llms.EmbeddingRequest{
 		Inputs: []llms.EmbeddingInput{{ID: "x", Text: "a"}, {ID: "y", Text: "b"}},
 	})
@@ -221,12 +217,14 @@ func TestEmbedOrderIDsAndCountMismatch(t *testing.T) {
 }
 
 func TestMixedBackendConfigRejected(t *testing.T) {
-	for _, cfg := range []EmbeddingConfig{
-		{Model: "m", APIKey: "k", Project: "p", MaxInputBytes: 10},
-		{Model: "m", APIKey: "k", Location: "us", MaxInputBytes: 10},
-		{Model: "m", APIKey: "k", Credentials: auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}}), MaxInputBytes: 10},
+	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+	for _, vertexOpt := range []Option{
+		WithVertex("p", "us"),
+		WithVertex("", ""), // setting the option at all selects Vertex
+		WithCredentials(creds),
+		WithCredentials(nil),
 	} {
-		_, err := NewEmbeddings(cfg)
+		_, err := NewEmbeddings(WithModel("m"), WithAPIKey("k"), WithMaxInputBytes(10), vertexOpt)
 		var pe *llms.ProviderError
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
 			t.Fatalf("mixed API-key + Vertex config must fail closed, got %v", err)
@@ -244,7 +242,7 @@ func TestSingleInputRuleNormalizesModelName(t *testing.T) {
 		c := newEmbed(t, model, func(w http.ResponseWriter, _ *http.Request) {
 			called = true
 			_, _ = io.WriteString(w, `{"embeddings":[{"values":[1]}]}`)
-		}, nil)
+		})
 		_, err := c.Embed(context.Background(), llms.EmbeddingRequest{
 			Inputs: []llms.EmbeddingInput{{ID: "1", Text: "a"}, {ID: "2", Text: "b"}},
 		})
@@ -259,12 +257,12 @@ func TestSingleInputRuleNormalizesModelName(t *testing.T) {
 }
 
 func TestNegativeDimensionsRejected(t *testing.T) {
-	_, err := NewEmbeddings(EmbeddingConfig{Model: "m", APIKey: "k", MaxInputBytes: 10, Dimensions: -1})
+	_, err := NewEmbeddings(WithModel("m"), WithAPIKey("k"), WithMaxInputBytes(10), WithDimensions(-1))
 	var pe *llms.ProviderError
 	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
 		t.Fatalf("negative config Dimensions must be a config error, got %v", err)
 	}
-	c := newEmbed(t, "gemini-embedding-001", embedOK(`{"values":[1]}`), nil)
+	c := newEmbed(t, "gemini-embedding-001", embedOK(`{"values":[1]}`))
 	_, err = c.Embed(context.Background(), llms.EmbeddingRequest{
 		Dimensions: -5, Inputs: []llms.EmbeddingInput{{ID: "1", Text: "x"}},
 	})
@@ -280,27 +278,32 @@ func (stubTokenProvider) Token(context.Context) (*auth.Token, error) {
 }
 
 func TestNewEmbeddingsConfigValidation(t *testing.T) {
-	bad := func(cfg EmbeddingConfig, what string) {
-		_, err := NewEmbeddings(cfg)
+	bad := func(what string, opts ...Option) {
+		_, err := NewEmbeddings(opts...)
 		var pe *llms.ProviderError
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
 			t.Fatalf("%s: want config *ProviderError, got %v", what, err)
 		}
 	}
-	bad(EmbeddingConfig{}, "missing model")
-	bad(EmbeddingConfig{Model: "m"}, "no backend")
-	bad(EmbeddingConfig{Model: "m", Project: "p"}, "vertex missing location")
-	bad(EmbeddingConfig{Model: "m", Project: "p", Location: "us"}, "vertex missing credentials")
+	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+	bad("missing model")
+	bad("no backend", WithModel("m"), WithMaxInputBytes(10))
+	bad("vertex missing location", WithModel("m"), WithVertex("p", ""), WithCredentials(creds), WithMaxInputBytes(10))
+	bad("vertex missing project", WithModel("m"), WithVertex("", "us"), WithCredentials(creds), WithMaxInputBytes(10))
+	bad("vertex missing credentials", WithModel("m"), WithVertex("p", "us"), WithMaxInputBytes(10))
+	bad("credentials without WithVertex", WithModel("m"), WithCredentials(creds), WithMaxInputBytes(10))
+	bad("credentials with no TokenProvider", WithModel("m"), WithVertex("p", "us"),
+		WithCredentials(&auth.Credentials{}), WithMaxInputBytes(10))
+	bad("negative max retries", WithModel("m"), WithAPIKey("k"), WithMaxInputBytes(10), WithMaxRetries(-1))
 
 	// Valid backends construct (truncation contract satisfied via a guard).
-	if _, err := NewEmbeddings(EmbeddingConfig{Model: "m", APIKey: "k", MaxInputBytes: 8000}); err != nil {
+	if _, err := NewEmbeddings(WithModel("m"), WithAPIKey("k"), WithMaxInputBytes(8000)); err != nil {
 		t.Fatalf("Gemini-API config must construct: %v", err)
 	}
-	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
-	if _, err := NewEmbeddings(EmbeddingConfig{
-		Model: "gemini-embedding-001", Project: "p", Location: "us-central1",
-		Credentials: creds, MaxInputBytes: 8000,
-	}); err != nil {
+	if _, err := NewEmbeddings(
+		WithModel("gemini-embedding-001"), WithVertex("p", "us-central1"),
+		WithCredentials(creds), WithMaxInputBytes(8000),
+	); err != nil {
 		t.Fatalf("Vertex config must construct: %v", err)
 	}
 }

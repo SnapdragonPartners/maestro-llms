@@ -40,13 +40,12 @@ func TestIntegrationVertexGeminiEmbeddings(t *testing.T) {
 	if err != nil {
 		t.Skipf("no Google credentials (run `gcloud auth application-default login`): %v", err)
 	}
-	c, err := google.NewEmbeddings(google.EmbeddingConfig{
-		Model:         model,
-		Project:       project,
-		Location:      location,
-		Credentials:   creds,
-		MaxInputBytes: 8192,
-	})
+	c, err := google.NewEmbeddings(
+		google.WithModel(model),
+		google.WithVertex(project, location),
+		google.WithCredentials(creds),
+		google.WithMaxInputBytes(8192),
+	)
 	if err != nil {
 		t.Fatalf("NewEmbeddings: %v", err)
 	}

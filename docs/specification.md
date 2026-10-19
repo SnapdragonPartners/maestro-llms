@@ -176,11 +176,12 @@ type ModelRef struct {
 type ProviderID string
 
 const (
-    ProviderAnthropic ProviderID = "anthropic"
-    ProviderOpenAI    ProviderID = "openai"
-    ProviderGoogle    ProviderID = "google"
-    ProviderOllama    ProviderID = "ollama"
-    ProviderVLLM      ProviderID = "vllm"
+    ProviderAnthropic    ProviderID = "anthropic"
+    ProviderOpenAI       ProviderID = "openai"
+    ProviderGoogle       ProviderID = "google"
+    ProviderOllama       ProviderID = "ollama"
+    ProviderOpenAICompat ProviderID = "openaicompat"
+    ProviderVLLM         = ProviderOpenAICompat // Deprecated alias (ADR-0027)
 )
 ```
 
@@ -571,6 +572,12 @@ Credentials and the endpoint (for PSC) are **app-supplied** — the package
 exposes endpoint/base-URL override and HTTP-client/transport injection; it
 performs no ADC discovery. Networking (PSC, DNS, VPC-SC, IAM) is the
 application's infrastructure concern, not this package's. See ADR-0009.
+
+Both Vertex entry points take the same credential type,
+`*cloud.google.com/go/auth.Credentials` (ADR-0027); `anthropicvertex`
+converts it internally. The Google chat and embeddings constructors share
+one functional-option type, and an option a constructor does not accept is
+a config error, never ignored.
 
 ## Usage Metadata
 

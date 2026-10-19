@@ -9,8 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
+	"cloud.google.com/go/auth"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic/anthropicvertex"
@@ -31,10 +30,14 @@ func (m markerRT) RoundTrip(r *http.Request) (*http.Response, error) {
 	return m.base.RoundTrip(r)
 }
 
-func staticCreds() *google.Credentials {
-	return &google.Credentials{
-		TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test-token"}),
-	}
+type staticToken struct{}
+
+func (staticToken) Token(context.Context) (*auth.Token, error) {
+	return &auth.Token{Value: "test-token"}, nil
+}
+
+func staticCreds() *auth.Credentials {
+	return auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: staticToken{}})
 }
 
 // Covers all four required properties in one round trip:
@@ -118,17 +121,48 @@ func TestNewConfigValidation(t *testing.T) {
 		}
 	}
 
-	// Non-nil Credentials with a nil TokenSource must be rejected: otherwise
-	// Google's transport silently falls back to ambient ADC, violating the
-	// app-supplied-credentials-only contract.
+	// Non-nil Credentials with a nil TokenProvider must be rejected: they
+	// cannot mint tokens, and must never fall back to ambient ADC.
 	_, err := anthropicvertex.New(
 		anthropicvertex.WithRegion("us-central1"),
 		anthropicvertex.WithProjectID("p"),
 		anthropicvertex.WithModel("m"),
-		anthropicvertex.WithCredentials(&google.Credentials{}),
+		anthropicvertex.WithCredentials(&auth.Credentials{}),
 	)
 	var pe *llms.ProviderError
 	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
-		t.Fatalf("empty credentials (nil TokenSource): want a config *ProviderError, got %v", err)
+		t.Fatalf("empty credentials (nil TokenProvider): want a config *ProviderError, got %v", err)
+	}
+}
+
+// The app-supplied *auth.Credentials must be what signs requests: the
+// adapter converts them for the Anthropic Vertex SDK (ADR-0027), so with no
+// PSC client the SDK's own oauth2 client sends the caller's token.
+func TestAuthCredentialsSignRequests(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, msgRespJSON)
+	}))
+	defer srv.Close()
+
+	c, err := anthropicvertex.New(
+		anthropicvertex.WithRegion("us-central1"),
+		anthropicvertex.WithProjectID("proj-1"),
+		anthropicvertex.WithModel("claude-x"),
+		anthropicvertex.WithCredentials(staticCreds()),
+		anthropicvertex.WithEndpoint(srv.URL),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if gotAuth != "Bearer test-token" {
+		t.Fatalf("Authorization = %q, want the caller's token", gotAuth)
 	}
 }

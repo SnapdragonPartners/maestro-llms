@@ -18,11 +18,19 @@ type ProviderID string
 
 // ProviderIDs of the adapters in this module.
 const (
-	ProviderAnthropic ProviderID = "anthropic"
-	ProviderOpenAI    ProviderID = "openai"
-	ProviderGoogle    ProviderID = "google"
-	ProviderOllama    ProviderID = "ollama"
-	ProviderVLLM      ProviderID = "vllm"
+	ProviderAnthropic    ProviderID = "anthropic"
+	ProviderOpenAI       ProviderID = "openai"
+	ProviderGoogle       ProviderID = "google"
+	ProviderOllama       ProviderID = "ollama"
+	ProviderOpenAICompat ProviderID = "openaicompat"
+
+	// ProviderVLLM is the former name of ProviderOpenAICompat and has the
+	// same value, so code using the constant keeps matching; code comparing
+	// against the literal "vllm" must change.
+	//
+	// Deprecated: use ProviderOpenAICompat (the vllm package was renamed
+	// openaicompat, ADR-0027).
+	ProviderVLLM = ProviderOpenAICompat
 )
 
 // Purpose is an application-supplied label describing why a call is happening.

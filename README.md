@@ -151,9 +151,9 @@ Every provider is constructed the same way and returns an `llms.ChatClient`:
 |---|---|---|
 | Anthropic | `anthropic.New(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithHTTPClient` |
 | OpenAI (chat) | `openai.NewChat(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithHTTPClient` |
-| Google | `google.New(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries` |
+| Google | `google.New(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithBaseURL`, `WithHTTPClient` |
 | Ollama | `ollama.New(...)` | `WithBaseURL`, `WithModel`, `WithHTTPClient` |
-| vLLM | `vllm.New(...)` | `WithBaseURL` (required), `WithModel` (required), `WithAPIKey` (optional — vLLM defaults to no auth), `WithHTTPClient` |
+| OpenAI-compatible (vLLM, LunaRoute, …) | `openaicompat.New(...)` | `WithBaseURL` (required), `WithModel` (required), `WithAPIKey` (optional — vLLM defaults to no auth), `WithHTTPClient` |
 
 `WithMaxRetries` controls *SDK-level* retries; the toolkit defaults provider
 SDK retries to 0 and expects you to use the retry middleware (below) for one
@@ -241,7 +241,7 @@ supports but the model rejects comes back as the provider's error. For
 example, Opus 5.5 can't disable thinking, so `ReasoningEffortNone` (sent as
 `thinking: disabled`) gets a 400.
 
-| Neutral | Anthropic | OpenAI / vllm | Google | Ollama |
+| Neutral | Anthropic | OpenAI / openaicompat | Google | Ollama |
 |---|---|---|---|---|
 | `None` | `thinking: disabled` | `none` | — | `think: false` |
 | `Minimal` | — | `minimal` | `MINIMAL` | — |
@@ -447,19 +447,22 @@ Non-goals (binding, ADR-0012): not auto-update, not toolkit-side caching,
 not a stable-vs-preview filter, not a cross-provider abstraction over
 model identity. Apps build those on top.
 
-### vLLM (self-hosted)
+### OpenAI-compatible servers (vLLM, LunaRoute)
 
-For self-hosted GPU inference via [vLLM](https://docs.vllm.ai). vLLM
-speaks the OpenAI-compatible **Chat Completions** surface — not the
-Responses API that the `openai` package uses — so it lives in its own
-leaf package ([ADR-0015](docs/adr/0015-vllm-provider.md)).
+The `openaicompat` package speaks the OpenAI **Chat Completions** surface,
+not the Responses API that the `openai` package uses. It is the client for
+self-hosted GPU inference via [vLLM](https://docs.vllm.ai) and for hosted
+OpenAI-compatible gateways ([ADR-0015](docs/adr/0015-vllm-provider.md)). It
+was originally called `vllm`. That package remains as a permanent
+deprecated alias, and the provider ID is now `"openaicompat"`
+([ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md)).
 
 ```go
-import "github.com/SnapdragonPartners/maestro-llms/llms/providers/vllm"
+import "github.com/SnapdragonPartners/maestro-llms/llms/providers/openaicompat"
 
-client, err := vllm.New(
-    vllm.WithBaseURL("http://my-vllm.internal:8000/v1"), // include /v1
-    vllm.WithModel("mistralai/Ministral-3-14B-Instruct-2512"),
+client, err := openaicompat.New(
+    openaicompat.WithBaseURL("http://my-vllm.internal:8000/v1"), // include /v1
+    openaicompat.WithModel("mistralai/Ministral-3-14B-Instruct-2512"),
     // WithAPIKey is OPTIONAL: vLLM's default deployment has no auth.
     // Set it only if your operator configured VLLM_API_KEY.
 )
@@ -484,17 +487,17 @@ Notes:
 
 #### Other OpenAI-compatible gateways (LunaRoute)
 
-The `vllm` package is a generic OpenAI Chat Completions client, so hosted
-routers that speak that wire shape work through it unchanged. Verified
+Hosted routers that speak the Chat Completions wire shape work through
+`openaicompat` unchanged. Verified
 live against LunaRoute with `glm-5.3` and
 `deepseek-4.1-flash`, covering forced and required tool choice, parallel
 tool calls, multi-turn `toolloop` runs, and reasoning usage (#54):
 
 ```go
-client, err := vllm.New(
-    vllm.WithBaseURL("https://gw.lunaroute.com/v1"),
-    vllm.WithAPIKey(lunaRouteKey), // sent as Authorization: Bearer
-    vllm.WithModel("glm-5.3"),     // IDs as listed by ListModels
+client, err := openaicompat.New(
+    openaicompat.WithBaseURL("https://gw.lunaroute.com/v1"),
+    openaicompat.WithAPIKey(lunaRouteKey), // sent as Authorization: Bearer
+    openaicompat.WithModel("glm-5.3"),     // IDs as listed by ListModels
 )
 ```
 
@@ -543,56 +546,55 @@ endpoint are **app-supplied** — the toolkit does no ADC discovery. Anthropic
 on Vertex lives in a separate leaf package so the base `anthropic` package
 stays Google-dependency-free.
 
-The two Vertex entry points take **different Google credential types** (they
-come from their respective vendor SDKs — the toolkit deliberately does not
-wrap/unify them): `anthropicvertex` takes
-`*golang.org/x/oauth2/google.Credentials`, while `google.NewEmbeddings`
-takes `*cloud.google.com/go/auth.Credentials`. Both are derived by your app
-from the same GCP identity (service account / Workload Identity); you build
-each from its token source.
+Both Vertex entry points take the same credential type,
+`*cloud.google.com/go/auth.Credentials`. Your app builds it once from its GCP
+identity (service account / Workload Identity), for example with
+`credentials.DetectDefault` ([ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md)).
 
 ```go
 import (
-	cloudauth "cloud.google.com/go/auth"
-	oauth2google "golang.org/x/oauth2/google"
+	"cloud.google.com/go/auth/credentials"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic/anthropicvertex"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/google"
 )
 
-// Claude via Vertex. anthCreds is *oauth2google.Credentials YOU built. For
-// PSC also pass WithEndpoint + a WithHTTPClient whose transport reaches the
-// PSC endpoint AND carries Google auth (overriding the SDK's client discards
-// its auth — ADR-0009).
-var anthCreds *oauth2google.Credentials // = your service-account/WIF creds
+creds, err := credentials.DetectDefault(&credentials.DetectOptions{
+	Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+}) // or any *auth.Credentials your app builds; the toolkit never discovers them
+
+// Claude via Vertex. For PSC also pass WithEndpoint + a WithHTTPClient whose
+// transport reaches the PSC endpoint AND carries Google auth (overriding the
+// SDK's client discards its auth — ADR-0009).
 chat, err := anthropicvertex.New(
 	anthropicvertex.WithRegion("us-central1"),
 	anthropicvertex.WithProjectID("my-proj"),
 	anthropicvertex.WithModel("claude-sonnet-4@20250514"),
-	anthropicvertex.WithCredentials(anthCreds),
+	anthropicvertex.WithCredentials(creds),
 	// anthropicvertex.WithEndpoint(pscURL), anthropicvertex.WithHTTPClient(pscClient),
 ) // returns the same *anthropic.Client (all translation/middleware reused)
 
-// gemini-embedding-001 via Vertex. embCreds is the *cloud.google.com/go/auth
-// Credentials type (note: different from anthCreds above). AutoTruncate=false
-// is fail-closed: MaxInputBytes is REQUIRED (genai cannot send
-// autoTruncate:false, so an oversized input is rejected client-side rather
-// than silently truncated).
-var embCreds *cloudauth.Credentials // = same GCP identity, genai's cred type
-emb, err := google.NewEmbeddings(google.EmbeddingConfig{
-	Model:         "gemini-embedding-001",
-	Project:       "my-proj",
-	Location:      "us-central1",
-	Credentials:   embCreds,
-	MaxInputBytes: 8000, // required unless AutoTruncate=true
-	// Endpoint: pscURL, HTTPClient: pscClient,
-})
+// gemini-embedding-001 via Vertex, same creds. Truncation is fail-closed:
+// WithMaxInputBytes is REQUIRED unless WithAutoTruncate(true) (genai cannot
+// send autoTruncate:false, so an oversized input is rejected client-side
+// rather than silently truncated).
+emb, err := google.NewEmbeddings(
+	google.WithModel("gemini-embedding-001"),
+	google.WithVertex("my-proj", "us-central1"),
+	google.WithCredentials(creds),
+	google.WithMaxInputBytes(8000),
+	// google.WithBaseURL(pscURL), google.WithHTTPClient(pscClient),
+)
 ```
 
 `gemini-embedding-001` is single-input: a multi-input request is rejected with
 a typed `bad_request` (the toolkit never fans out — the app owns chunking).
-Setting `EmbeddingConfig.APIKey` instead selects the direct Gemini API rather
-than Vertex; mixing the API key with Vertex fields fails closed.
+`google.WithAPIKey` instead selects the direct Gemini API rather than Vertex;
+mixing the API key with `WithVertex`/`WithCredentials` fails closed.
+`google.New` (chat) and `NewEmbeddings` share one option type; an option a
+constructor does not accept (`WithDimensions` on `New`, or the Vertex
+options on `New` until Gemini chat on Vertex lands in #104) is a config
+error, never ignored.
 PSC/DNS/VPC-SC/IAM is your infrastructure's concern, not the toolkit's.
 
 ### Middleware
@@ -857,7 +859,7 @@ credentials/host are present (so any subset works).
 | Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`) |
 | Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`) |
 | vLLM | `MAESTRO_VLLM` (full base URL incl. `/v1`, e.g. `http://my-vllm:8000/v1`); optional `MAESTRO_VLLM_API_KEY` | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
-| LunaRoute (via `vllm`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`glm-5.3,deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`) |
+| LunaRoute (via `openaicompat`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`glm-5.3,deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`) |
 
 ```sh
 MAESTRO_ANTHROPIC_API_KEY=sk-ant-… OPENAI_API_KEY=sk-… GEMINI_API_KEY=… make test-integration

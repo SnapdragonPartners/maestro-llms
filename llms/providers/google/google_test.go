@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"cloud.google.com/go/auth"
+
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
@@ -374,6 +376,29 @@ func TestNewConfigErrors(t *testing.T) {
 		var pe *llms.ProviderError
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
 			t.Fatalf("opts %v: want config ProviderError, got %v", opts, err)
+		}
+	}
+}
+
+// New and NewEmbeddings share one Option type (ADR-0027), so an option that
+// only NewEmbeddings accepts must fail New loudly, never be ignored. The
+// Vertex options are rejected separately until #104 lifts that one check.
+func TestNewRejectsEmbeddingAndVertexOptions(t *testing.T) {
+	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+	for _, tc := range []struct {
+		opt  Option
+		want string
+	}{
+		{WithDimensions(0), "WithDimensions applies only to NewEmbeddings"},
+		{WithMaxInputBytes(10), "WithMaxInputBytes applies only to NewEmbeddings"},
+		{WithAutoTruncate(false), "WithAutoTruncate applies only to NewEmbeddings"},
+		{WithVertex("p", "us"), "WithVertex: the Vertex backend is not yet supported for chat"},
+		{WithCredentials(creds), "WithCredentials: the Vertex backend is not yet supported for chat"},
+	} {
+		_, err := New(WithAPIKey("k"), WithModel("m"), tc.opt)
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig || !strings.HasPrefix(pe.Message, tc.want) {
+			t.Fatalf("want config error %q, got %v", tc.want, err)
 		}
 	}
 }

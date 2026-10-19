@@ -1,4 +1,4 @@
-package vllm
+package openaicompat
 
 import (
 	"context"
@@ -27,8 +27,8 @@ func TestProviderParams(t *testing.T) {
 		Temperature: &temp,
 		Reasoning:   &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh},
 		ProviderParams: map[llms.ProviderID]map[string]any{
-			llms.ProviderVLLM:      {"max_tokens": 50, "reasoning_effort": "none", "chat_template_kwargs": map[string]any{"enable_thinking": false}},
-			llms.ProviderAnthropic: {"zzz": 1},
+			llms.ProviderOpenAICompat: {"max_tokens": 50, "reasoning_effort": "none", "chat_template_kwargs": map[string]any{"enable_thinking": false}},
+			llms.ProviderAnthropic:    {"zzz": 1},
 		},
 	})
 	if err != nil {
@@ -50,7 +50,7 @@ func TestProviderParams(t *testing.T) {
 	bad := newClient(t, func(http.ResponseWriter, *http.Request) { t.Fatal("must fail before any HTTP call") })
 	_, err = bad.Complete(context.Background(), llms.ChatRequest{
 		Messages:       []llms.Message{llms.UserText("q")},
-		ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderVLLM: {"bad": make(chan int)}},
+		ProviderParams: map[llms.ProviderID]map[string]any{llms.ProviderOpenAICompat: {"bad": make(chan int)}},
 	})
 	var pe *llms.ProviderError
 	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindBadRequest {

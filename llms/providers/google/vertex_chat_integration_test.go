@@ -5,8 +5,10 @@ package google_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,7 +29,7 @@ import (
 //	VERTEX_GEMINI_LOCATION       default "global"
 //	VERTEX_GEMINI_MODEL          default "gemini-2.5-flash"
 //	VERTEX_GEMINI_LEVEL_MODEL    default "gemini-3-flash-preview"
-func newVertexGemini(t *testing.T, model string) *google.Client {
+func newVertexGemini(t *testing.T, model string, extra ...google.Option) *google.Client {
 	t.Helper()
 	project := os.Getenv("VERTEX_PROJECT")
 	if project == "" {
@@ -43,11 +45,11 @@ func newVertexGemini(t *testing.T, model string) *google.Client {
 	if err != nil {
 		t.Skipf("no Google credentials (run `gcloud auth application-default login`): %v", err)
 	}
-	c, err := google.New(
+	c, err := google.New(append([]google.Option{
 		google.WithModel(model),
 		google.WithVertex(project, location),
 		google.WithCredentials(creds),
-	)
+	}, extra...)...)
 	if err != nil {
 		t.Fatalf("New (Vertex): %v", err)
 	}
@@ -80,6 +82,29 @@ func TestIntegrationVertexGeminiChat(t *testing.T) {
 	t.Logf("OK Vertex chat: text=%q stop=%q in=%d out=%d",
 		resp.Text, resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens)
 }
+
+// ADR-0029: an injected client with no Google auth of its own (as a PSC
+// client would be) is authenticated with WithCredentials.
+func TestIntegrationVertexGeminiInjectedClient(t *testing.T) {
+	var used atomic.Bool
+	hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		used.Store(true)
+		return http.DefaultTransport.RoundTrip(r)
+	})}
+	c := newVertexGemini(t, vertexModel(), google.WithHTTPClient(hc))
+	resp := complete(t, c, llms.ChatRequest{
+		Messages:  []llms.Message{llms.UserText("Reply with the single word: pong")},
+		MaxTokens: 256,
+	})
+	if !used.Load() {
+		t.Fatal("the injected client was not used")
+	}
+	t.Logf("OK Vertex chat via an injected unauthenticated client: %q", resp.Text)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // The tool round trip on Vertex, including the thought-signature replay
 // (ADR-0010): gemini-2.5-flash thinks by default, so the function call

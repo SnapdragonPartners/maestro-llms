@@ -565,8 +565,8 @@ creds, err := credentials.DetectDefault(&credentials.DetectOptions{
 }) // or any *auth.Credentials your app builds; the toolkit never discovers them
 
 // Claude via Vertex. For PSC also pass WithEndpoint + a WithHTTPClient whose
-// transport reaches the PSC endpoint AND carries Google auth (overriding the
-// SDK's client discards its auth — ADR-0009).
+// transport reaches the PSC endpoint; WithCredentials authenticates it
+// (ADR-0029).
 chat, err := anthropicvertex.New(
 	anthropicvertex.WithRegion("us-central1"),
 	anthropicvertex.WithProjectID("my-proj"),
@@ -596,11 +596,11 @@ gemini, err := google.New(
 )
 ```
 
-For PSC on either google constructor, the same rule as Claude applies: an
-injected `WithHTTPClient` replaces the client genai would build from the
-credentials, so it must carry Google auth itself (for example via
-`httptransport.AddAuthorizationMiddleware`). `WithCredentials` is still
-required, so nothing falls back to ambient ADC.
+For PSC, `WithHTTPClient` supplies only the network layer (dialer, CA,
+proxy) on all three Vertex constructors: the toolkit authenticates a copy of
+it with `WithCredentials` and never mutates your client
+([ADR-0029](docs/adr/0029-vertex-injected-client-auth.md)). That matches every
+direct provider, where an injected client never removes auth.
 
 `gemini-embedding-001` is single-input: a multi-input request is rejected with
 a typed `bad_request` (the toolkit never fans out — the app owns chunking).

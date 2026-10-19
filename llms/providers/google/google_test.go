@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"cloud.google.com/go/auth"
-	"cloud.google.com/go/auth/httptransport"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
@@ -434,23 +434,27 @@ func TestNewVertexBackendConfig(t *testing.T) {
 // A Vertex chat request goes to the Vertex publisher path under the
 // injected (PSC) base URL, and a ProviderParams override's per-request
 // HTTPOptions keeps that base URL (genai merges request options over client
-// options field by field). An injected client replaces genai's
-// authenticated one, so per ADR-0009 it must carry Google auth itself; this
-// test builds it the way an application would.
+// options field by field). The injected client carries no auth of its own:
+// the package authenticates a copy of it with WithCredentials (ADR-0029),
+// adds the quota project, and leaves the caller's client untouched.
 func TestVertexChatRoutingAndAuth(t *testing.T) {
-	var path, authz, body string
+	var path, authz, quota, body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		path, authz, body = r.URL.Path, r.Header.Get("Authorization"), string(b)
+		quota = r.Header.Get("X-Goog-User-Project")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, respTextJSON)
 	}))
 	defer srv.Close()
-	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+	creds := auth.NewCredentials(&auth.CredentialsOptions{
+		TokenProvider: stubTokenProvider{},
+		QuotaProjectIDProvider: auth.CredentialsPropertyFunc(func(context.Context) (string, error) {
+			return "quota-proj", nil
+		}),
+	})
 	pscClient := srv.Client()
-	if err := httptransport.AddAuthorizationMiddleware(pscClient, creds); err != nil {
-		t.Fatal(err)
-	}
+	origTransport := pscClient.Transport
 	c, err := New(WithModel("gemini-test"), WithVertex("proj", "global"), WithCredentials(creds),
 		WithBaseURL(srv.URL), WithHTTPClient(pscClient))
 	if err != nil {
@@ -473,10 +477,82 @@ func TestVertexChatRoutingAndAuth(t *testing.T) {
 		t.Fatalf("path %q, want suffix %q", path, wantPath)
 	}
 	if authz != "Bearer stub" {
-		t.Fatalf("Authorization %q, want the PSC client's token", authz)
+		t.Fatalf("Authorization %q, want the WithCredentials token on the injected client", authz)
+	}
+	if quota != "quota-proj" {
+		t.Fatalf("X-Goog-User-Project %q, want the credentials' quota project", quota)
 	}
 	if !strings.Contains(body, `"maxOutputTokens":7`) {
 		t.Fatalf("ProviderParams override missing from the Vertex body: %s", body)
+	}
+	if pscClient.Transport != origTransport {
+		t.Fatal("the caller's HTTP client was mutated")
+	}
+}
+
+// ADR-0029: an application may share one *auth.Credentials across
+// constructors and goroutines. httptransport replaces TokenProvider in
+// place, both in genai's own client (no injected client) and in
+// authorizeClient, so every constructor must hand it a private copy. Run
+// under -race; the TokenProvider check also catches it without -race.
+func TestVertexConstructorsDoNotMutateCredentials(t *testing.T) {
+	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+	build := []func() error{
+		func() error {
+			_, err := New(WithModel("m"), WithVertex("p", "global"), WithCredentials(creds))
+			return err
+		},
+		func() error {
+			_, err := New(WithModel("m"), WithVertex("p", "global"), WithCredentials(creds),
+				WithHTTPClient(&http.Client{}))
+			return err
+		},
+		func() error {
+			_, err := NewEmbeddings(WithModel("m"), WithVertex("p", "us"), WithCredentials(creds),
+				WithMaxInputBytes(10))
+			return err
+		},
+		func() error {
+			_, err := NewEmbeddings(WithModel("m"), WithVertex("p", "us"), WithCredentials(creds),
+				WithMaxInputBytes(10), WithHTTPClient(&http.Client{}))
+			return err
+		},
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 4*len(build))
+	for range 4 {
+		for _, b := range build {
+			wg.Go(func() { errs <- b() })
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("construct: %v", err)
+		}
+	}
+	if _, ok := creds.TokenProvider.(stubTokenProvider); !ok {
+		t.Fatalf("the caller's credentials were mutated: TokenProvider is now %T", creds.TokenProvider)
+	}
+}
+
+// The Gemini API key backend authenticates by header on any client: an
+// injected client is used as given, with no OAuth layered on.
+func TestGeminiAPIInjectedClientNotWrapped(t *testing.T) {
+	var authz, key string
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		authz, key = r.Header.Get("Authorization"), r.Header.Get("X-Goog-Api-Key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, respTextJSON)
+	})
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if authz != "" || key != "k" {
+		t.Fatalf("Authorization %q / x-goog-api-key %q, want none / the API key", authz, key)
 	}
 }
 

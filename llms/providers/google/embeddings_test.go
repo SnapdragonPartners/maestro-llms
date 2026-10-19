@@ -159,11 +159,13 @@ func TestAutoTruncateConstructionRules(t *testing.T) {
 	cfgErr("Vertex false + no MaxInputBytes", WithModel("m"), WithVertex("p", "us"), WithCredentials(creds))
 }
 
+// Also pins ADR-0029 for embeddings: the plain injected client is
+// authenticated with WithCredentials through the shared clientConfig.
 func TestAutoTruncateTrueVertexPassesThrough(t *testing.T) {
-	var body string
+	var body, authz string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		body = string(b)
+		body, authz = string(b), r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"predictions":[{"embeddings":{"values":[0.1,0.2]}}]}`)
 	}))
@@ -182,6 +184,9 @@ func TestAutoTruncateTrueVertexPassesThrough(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Embed (Vertex, autoTruncate): %v", err)
+	}
+	if authz != "Bearer stub" {
+		t.Fatalf("Authorization %q, want the WithCredentials token on the injected client", authz)
 	}
 	if !strings.Contains(body, `"autoTruncate":true`) {
 		t.Fatalf("AutoTruncate=true must reach Vertex: %s", body)

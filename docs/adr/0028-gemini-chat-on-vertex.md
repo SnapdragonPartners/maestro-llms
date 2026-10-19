@@ -76,3 +76,10 @@ Checked against genai v1.75 and live on Vertex (`morris-qa`, location
 - Issue #104; ADR-0009, ADR-0010, ADR-0012, ADR-0022, ADR-0023, ADR-0024,
   ADR-0026, ADR-0027
 - `docs/MAESTRO_DIVERGENCES.md` G4
+
+## Amendments
+
+- **ADR-0029 (#108):** the PSC precedence bullet above no longer holds. On
+  the Vertex backend, an injected `WithHTTPClient` is authenticated with
+  `WithCredentials` (a shallow copy; the caller's client is not mutated), so
+  it needs no Google auth of its own.

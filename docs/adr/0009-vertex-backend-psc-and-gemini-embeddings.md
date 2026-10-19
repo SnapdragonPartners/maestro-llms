@@ -168,3 +168,9 @@ Appended as PRs land (this ADR's prose above is unchanged — append-only).
   auth-vs-PSC precedence above applies to genai too: an injected
   `WithHTTPClient` replaces genai's credential-built client and must carry
   Google auth itself.
+- **PSC precedence superseded (#108, ADR-0029).** An injected
+  `WithHTTPClient` no longer has to carry Google auth: on every Vertex
+  constructor it is authenticated with `WithCredentials` on a shallow copy
+  (for `anthropicvertex`, by passing it before `vertex.WithCredentials`, the
+  SDK's documented mechanism). The rule above that the PSC client "MUST
+  carry Google auth itself" no longer applies.

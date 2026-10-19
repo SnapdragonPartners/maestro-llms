@@ -12,8 +12,6 @@ import (
 	"testing"
 
 	"cloud.google.com/go/auth/credentials"
-	"cloud.google.com/go/auth/oauth2adapt"
-	"golang.org/x/oauth2"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms/internal/livetest"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic/anthropicvertex"
@@ -23,7 +21,8 @@ import (
 // the toolkit: it adds the preserved-thinking beta header and sets thinking
 // with prefix_mismatch_behavior "error" on every request. anthropicvertex has
 // no request-options hook, so this wraps the transport the test passes to
-// WithHTTPClient (which must carry Google auth itself).
+// WithHTTPClient. That client carries no Google auth: WithCredentials
+// authenticates it (ADR-0029), so this test is also the live proof of that.
 type enforceThinkingBinding struct{ base http.RoundTripper }
 
 func (e enforceThinkingBinding) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -68,8 +67,7 @@ func TestIntegrationVertexAnthropicReasoningReplay(t *testing.T) {
 	if err != nil {
 		t.Skipf("no Google credentials (run `gcloud auth application-default login`): %v", err)
 	}
-	hc := oauth2.NewClient(ctx, oauth2adapt.TokenSourceFromTokenProvider(creds.TokenProvider))
-	hc.Transport = enforceThinkingBinding{base: hc.Transport}
+	hc := &http.Client{Transport: enforceThinkingBinding{base: http.DefaultTransport}}
 	c, err := anthropicvertex.New(
 		anthropicvertex.WithContext(ctx),
 		anthropicvertex.WithProjectID(project),

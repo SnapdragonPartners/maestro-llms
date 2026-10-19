@@ -182,7 +182,12 @@ func (s *settings) clientConfig() (*genai.ClientConfig, error) {
 			return nil, configErr("Google credentials have no TokenProvider (refusing to fall back to ADC)")
 		}
 		cc.Backend = genai.BackendVertexAI
-		cc.Project, cc.Location, cc.Credentials = s.project, s.location, s.creds
+		// A private shallow copy: httptransport.NewClient (called by genai
+		// for the client it builds, and by authorizeClient) replaces
+		// TokenProvider in place, and the application may share one
+		// *auth.Credentials across constructors and goroutines (ADR-0029).
+		own := *s.creds
+		cc.Project, cc.Location, cc.Credentials = s.project, s.location, &own
 	default:
 		return nil, configErr("missing credentials: set WithAPIKey (Gemini API) or WithVertex+WithCredentials (Vertex)")
 	}
@@ -205,7 +210,7 @@ func (s *settings) applyTransport(cc *genai.ClientConfig) error {
 	}
 	cc.HTTPClient = s.httpClient
 	if cc.Backend == genai.BackendVertexAI {
-		hc, err := authorizeClient(s.httpClient, s.creds)
+		hc, err := authorizeClient(s.httpClient, cc.Credentials)
 		if err != nil {
 			return err
 		}
@@ -215,14 +220,17 @@ func (s *settings) applyTransport(cc *genai.ClientConfig) error {
 }
 
 // authorizeClient returns a shallow copy of c whose transport attaches
-// creds' token (and quota project, if any) over c's own transport, the way
-// genai authorizes the client it builds when none is injected. c keeps its
-// Timeout, Jar and CheckRedirect and is not mutated.
+// creds' token (and quota project, if any) over c's own transport, as genai
+// does for the client it builds when none is injected. c keeps its Timeout,
+// Jar and CheckRedirect and is not mutated. creds must be the constructor's
+// private copy: httptransport replaces its TokenProvider in place.
 func authorizeClient(c *http.Client, creds *auth.Credentials) (*http.Client, error) {
 	base := c.Transport
 	if base == nil {
 		base = http.DefaultTransport
 	}
+	// The quota header is passed explicitly, as genai does: httptransport
+	// adds it on its own only when Options.Headers is already non-nil.
 	quota, err := creds.QuotaProjectID(context.Background())
 	if err != nil {
 		return nil, &llms.ProviderError{

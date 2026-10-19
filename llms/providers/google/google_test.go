@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"cloud.google.com/go/auth"
@@ -486,6 +487,53 @@ func TestVertexChatRoutingAndAuth(t *testing.T) {
 	}
 	if pscClient.Transport != origTransport {
 		t.Fatal("the caller's HTTP client was mutated")
+	}
+}
+
+// ADR-0029: an application may share one *auth.Credentials across
+// constructors and goroutines. httptransport replaces TokenProvider in
+// place, both in genai's own client (no injected client) and in
+// authorizeClient, so every constructor must hand it a private copy. Run
+// under -race; the TokenProvider check also catches it without -race.
+func TestVertexConstructorsDoNotMutateCredentials(t *testing.T) {
+	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+	build := []func() error{
+		func() error {
+			_, err := New(WithModel("m"), WithVertex("p", "global"), WithCredentials(creds))
+			return err
+		},
+		func() error {
+			_, err := New(WithModel("m"), WithVertex("p", "global"), WithCredentials(creds),
+				WithHTTPClient(&http.Client{}))
+			return err
+		},
+		func() error {
+			_, err := NewEmbeddings(WithModel("m"), WithVertex("p", "us"), WithCredentials(creds),
+				WithMaxInputBytes(10))
+			return err
+		},
+		func() error {
+			_, err := NewEmbeddings(WithModel("m"), WithVertex("p", "us"), WithCredentials(creds),
+				WithMaxInputBytes(10), WithHTTPClient(&http.Client{}))
+			return err
+		},
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 4*len(build))
+	for range 4 {
+		for _, b := range build {
+			wg.Go(func() { errs <- b() })
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("construct: %v", err)
+		}
+	}
+	if _, ok := creds.TokenProvider.(stubTokenProvider); !ok {
+		t.Fatalf("the caller's credentials were mutated: TokenProvider is now %T", creds.TokenProvider)
 	}
 }
 

@@ -177,3 +177,52 @@ func TestAuthCredentialsSignRequests(t *testing.T) {
 		t.Fatalf("Authorization = %q, want the caller's token", gotAuth)
 	}
 }
+
+// An app may configure http.DefaultClient as its PSC client and inject it.
+// The SDK treats that pointer as "no client" and would substitute its own,
+// so the adapter passes a copy: the app's transport must still be used, and
+// authenticated (ADR-0029). The credentials are not mutated either.
+func TestInjectedDefaultClientHonored(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, msgRespJSON)
+	}))
+	defer srv.Close()
+
+	var used bool
+	orig := http.DefaultClient.Transport
+	http.DefaultClient.Transport = markerRT{used: &used, base: http.DefaultTransport}
+	defer func() { http.DefaultClient.Transport = orig }()
+
+	creds := staticCreds()
+	c, err := anthropicvertex.New(
+		anthropicvertex.WithRegion("us-central1"),
+		anthropicvertex.WithProjectID("proj-1"),
+		anthropicvertex.WithModel("claude-x"),
+		anthropicvertex.WithCredentials(creds),
+		anthropicvertex.WithEndpoint(srv.URL),
+		anthropicvertex.WithHTTPClient(http.DefaultClient),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if !used {
+		t.Fatal("the injected http.DefaultClient's transport was not used")
+	}
+	if gotAuth != "Bearer test-token" {
+		t.Fatalf("Authorization = %q, want the WithCredentials token", gotAuth)
+	}
+	if _, ok := http.DefaultClient.Transport.(markerRT); !ok {
+		t.Fatal("http.DefaultClient was mutated")
+	}
+	if _, ok := creds.TokenProvider.(staticToken); !ok {
+		t.Fatalf("the caller's credentials were mutated: TokenProvider is now %T", creds.TokenProvider)
+	}
+}

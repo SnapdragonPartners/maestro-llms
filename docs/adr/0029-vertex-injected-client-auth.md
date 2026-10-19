@@ -48,7 +48,19 @@ observability).
   what genai does for the client it builds when none is injected. The Gemini
   API key backend is unchanged: an injected client is used as given.
 - **The caller's client is never mutated.** Its `Timeout`, `Jar` and
-  `CheckRedirect` carry over to the copy.
+  `CheckRedirect` carry over to the copy. `anthropicvertex` always passes
+  the SDK a shallow copy, because the SDK treats the pointer
+  `http.DefaultClient` as "no client" and would otherwise substitute its own,
+  dropping an app's PSC transport set on `DefaultClient`.
+- **The caller's credentials are never mutated.** `httptransport.NewClient`
+  replaces `Credentials.TokenProvider` in place (with a caching wrapper).
+  genai calls it with the app's credentials for the client it builds itself,
+  so through v0.12 even a plain Vertex `google.New` / `NewEmbeddings`
+  mutated them, which races when an app shares one `*auth.Credentials`
+  across goroutines. `clientConfig` now gives genai and `authorizeClient` a
+  private shallow copy (the struct holds only provider fields and the JSON
+  bytes). `anthropicvertex` converts the credentials with `oauth2adapt` and
+  never passes them to `httptransport`.
 - `WithCredentials` stays required, so no configuration falls back to
   ambient ADC.
 
@@ -73,6 +85,12 @@ observability).
   - `TestVertexPSCPrecedenceAndMiddleware`
   - `TestVertexChatRoutingAndAuth`
   - `TestAutoTruncateTrueVertexPassesThrough`
+  - `TestInjectedDefaultClientHonored` (`http.DefaultClient` injected)
+
+  `TestVertexConstructorsDoNotMutateCredentials` builds every google Vertex
+  constructor concurrently from one credentials value, with and without an
+  injected client. It fails under `-race` and on the `TokenProvider` check
+  without the private copy.
 
   The Gemini API key backend is pinned as not wrapped
   (`TestGeminiAPIInjectedClientNotWrapped`).

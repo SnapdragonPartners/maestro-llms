@@ -133,9 +133,13 @@ func New(opts ...Option) (*anthropic.Client, error) {
 	// documented behavior; passed after, it would replace the authenticated
 	// client and drop auth). The PSC endpoint AFTER it, so it wins over the
 	// regional URL. The Vertex middleware applies either way.
+	// The client is passed as a shallow copy because the SDK treats the
+	// pointer http.DefaultClient as "no client" and would substitute its
+	// own, silently dropping an app's PSC transport set on DefaultClient.
 	var reqOpts []option.RequestOption
 	if s.httpClient != nil {
-		reqOpts = append(reqOpts, option.WithHTTPClient(s.httpClient))
+		hc := *s.httpClient
+		reqOpts = append(reqOpts, option.WithHTTPClient(&hc))
 	}
 	reqOpts = append(reqOpts, vertex.WithCredentials(s.ctx, s.region, s.projectID, creds))
 	if s.endpoint != "" {

@@ -129,3 +129,9 @@ history (#82):
 - ADR-0015 (`vllm` provider), ADR-0021 (`ProviderID` names the wire
   protocol)
 - `docs/MAESTRO_DIVERGENCES.md` V7
+
+## Amendments
+
+- **ADR-0028 (#104):** `New`'s temporary rejection of `WithVertex` /
+  `WithCredentials` is lifted; `New` and `NewEmbeddings` now select their
+  backend through one shared function.

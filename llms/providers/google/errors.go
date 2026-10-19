@@ -32,9 +32,9 @@ func classifyError(model string, err error) error {
 //	Gemini API: "The input token count exceeds the maximum number of tokens allowed (1048576)."
 //	Vertex AI:  "The input token count exceeds the maximum number of tokens allowed 1048576."
 //
-// The Vertex wording was captured from generateContent on Vertex; Client
-// speaks only the Gemini API today, but the Vertex EmbeddingClient shares
-// this classifier. Older documented wording, "The input token count (N) exceeds the maximum
+// The Vertex wording was captured from generateContent on Vertex, which
+// Client speaks too since ADR-0028 (live-verified there). Older documented
+// wording, "The input token count (N) exceeds the maximum
 // number of tokens allowed (M).", also matches. An oversized
 // maxOutputTokens is not an error: the API clamps it.
 const (

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"cloud.google.com/go/auth"
+	"cloud.google.com/go/auth/httptransport"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
@@ -381,10 +382,8 @@ func TestNewConfigErrors(t *testing.T) {
 }
 
 // New and NewEmbeddings share one Option type (ADR-0027), so an option that
-// only NewEmbeddings accepts must fail New loudly, never be ignored. The
-// Vertex options are rejected separately until #104 lifts that one check.
-func TestNewRejectsEmbeddingAndVertexOptions(t *testing.T) {
-	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+// only NewEmbeddings accepts must fail New loudly, never be ignored.
+func TestNewRejectsEmbeddingOptions(t *testing.T) {
 	for _, tc := range []struct {
 		opt  Option
 		want string
@@ -392,14 +391,92 @@ func TestNewRejectsEmbeddingAndVertexOptions(t *testing.T) {
 		{WithDimensions(0), "WithDimensions applies only to NewEmbeddings"},
 		{WithMaxInputBytes(10), "WithMaxInputBytes applies only to NewEmbeddings"},
 		{WithAutoTruncate(false), "WithAutoTruncate applies only to NewEmbeddings"},
-		{WithVertex("p", "us"), "WithVertex: the Vertex backend is not yet supported for chat"},
-		{WithCredentials(creds), "WithCredentials: the Vertex backend is not yet supported for chat"},
 	} {
 		_, err := New(WithAPIKey("k"), WithModel("m"), tc.opt)
 		var pe *llms.ProviderError
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig || !strings.HasPrefix(pe.Message, tc.want) {
 			t.Fatalf("want config error %q, got %v", tc.want, err)
 		}
+	}
+}
+
+// ADR-0028: New selects its backend through the same clientConfig as
+// NewEmbeddings, so every backend rule holds for chat too.
+func TestNewVertexBackendConfig(t *testing.T) {
+	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+	for _, tc := range []struct {
+		name string
+		opts []Option
+		want string
+	}{
+		{"no backend", nil, "missing credentials"},
+		{"vertex missing location", []Option{WithVertex("p", ""), WithCredentials(creds)}, "Vertex backend requires WithVertex"},
+		{"vertex missing project", []Option{WithVertex("", "us"), WithCredentials(creds)}, "Vertex backend requires WithVertex"},
+		{"vertex missing credentials", []Option{WithVertex("p", "us")}, "Vertex backend requires WithCredentials"},
+		{"credentials without WithVertex", []Option{WithCredentials(creds)}, "Vertex backend requires WithVertex"},
+		{"credentials with no TokenProvider", []Option{WithVertex("p", "us"), WithCredentials(&auth.Credentials{})}, "Google credentials have no TokenProvider"},
+		{"api key + WithVertex", []Option{WithAPIKey("k"), WithVertex("p", "us")}, "ambiguous backend"},
+		{"api key + empty WithVertex", []Option{WithAPIKey("k"), WithVertex("", "")}, "ambiguous backend"},
+		{"api key + WithCredentials", []Option{WithAPIKey("k"), WithCredentials(creds)}, "ambiguous backend"},
+		{"api key + nil WithCredentials", []Option{WithAPIKey("k"), WithCredentials(nil)}, "ambiguous backend"},
+	} {
+		_, err := New(append([]Option{WithModel("m")}, tc.opts...)...)
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig || !strings.HasPrefix(pe.Message, tc.want) {
+			t.Fatalf("%s: want config error %q, got %v", tc.name, tc.want, err)
+		}
+	}
+	if _, err := New(WithModel("gemini-2.5-flash"), WithVertex("p", "global"), WithCredentials(creds)); err != nil {
+		t.Fatalf("Vertex chat config must construct: %v", err)
+	}
+}
+
+// A Vertex chat request goes to the Vertex publisher path under the
+// injected (PSC) base URL, and a ProviderParams override's per-request
+// HTTPOptions keeps that base URL (genai merges request options over client
+// options field by field). An injected client replaces genai's
+// authenticated one, so per ADR-0009 it must carry Google auth itself; this
+// test builds it the way an application would.
+func TestVertexChatRoutingAndAuth(t *testing.T) {
+	var path, authz, body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		path, authz, body = r.URL.Path, r.Header.Get("Authorization"), string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, respTextJSON)
+	}))
+	defer srv.Close()
+	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+	pscClient := srv.Client()
+	if err := httptransport.AddAuthorizationMiddleware(pscClient, creds); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(WithModel("gemini-test"), WithVertex("proj", "global"), WithCredentials(creds),
+		WithBaseURL(srv.URL), WithHTTPClient(pscClient))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+		ProviderParams: map[llms.ProviderID]map[string]any{
+			llms.ProviderGoogle: {"generationConfig": map[string]any{"maxOutputTokens": 7}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Text == "" {
+		t.Fatalf("empty response text: %+v", resp)
+	}
+	const wantPath = "/projects/proj/locations/global/publishers/google/models/gemini-test:generateContent"
+	if !strings.HasSuffix(path, wantPath) {
+		t.Fatalf("path %q, want suffix %q", path, wantPath)
+	}
+	if authz != "Bearer stub" {
+		t.Fatalf("Authorization %q, want the PSC client's token", authz)
+	}
+	if !strings.Contains(body, `"maxOutputTokens":7`) {
+		t.Fatalf("ProviderParams override missing from the Vertex body: %s", body)
 	}
 }
 

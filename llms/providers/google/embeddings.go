@@ -51,24 +51,13 @@ func batchLimit(model string) int {
 }
 
 // embedConfig validates the options for NewEmbeddings and builds the genai
-// client config: backend selection (fail closed on ambiguity), the
-// fail-closed truncation contract, and endpoint/transport injection.
+// client config: the shared backend selection (clientConfig) plus the
+// fail-closed truncation contract.
 func embedConfig(s *settings) (*genai.ClientConfig, error) {
-	if err := s.commonErr(); err != nil {
-		return nil, err
-	}
-	vertex := len(s.vertexOpts) > 0
-	switch {
-	case s.dims < 0 || s.dims > math.MaxInt32:
+	if s.dims < 0 || s.dims > math.MaxInt32 {
 		return nil, configErr("WithDimensions must be >= 0 and fit int32 (0 = model default)")
-	case s.apiKey != "" && vertex:
-		// genai treats API key and Vertex (project/location/credentials) as
-		// mutually exclusive. Fail closed rather than silently pick the
-		// public API-key backend and bypass Vertex/PSC.
-		return nil, configErr("ambiguous backend: set WithAPIKey (Gemini API) OR WithVertex+WithCredentials (Vertex), not both")
 	}
-
-	cc, err := embedBackend(s, vertex)
+	cc, err := s.clientConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -84,40 +73,6 @@ func embedConfig(s *settings) (*genai.ClientConfig, error) {
 	} else if s.maxInputBytes <= 0 {
 		return nil, configErr("set WithMaxInputBytes (no-silent-truncation guard) or WithAutoTruncate(true): " +
 			"genai cannot send autoTruncate:false, so without a client-side guard Vertex would silently truncate")
-	}
-
-	if s.baseURL != "" {
-		cc.HTTPOptions.BaseURL = s.baseURL
-	}
-	if s.httpClient != nil {
-		cc.HTTPClient = s.httpClient
-	}
-	return cc, nil
-}
-
-// embedBackend selects the genai backend: the Gemini API by key, or Vertex
-// with app-supplied credentials.
-func embedBackend(s *settings, vertex bool) (*genai.ClientConfig, error) {
-	cc := &genai.ClientConfig{}
-	switch {
-	case s.apiKey != "":
-		cc.Backend = genai.BackendGeminiAPI
-		cc.APIKey = s.apiKey
-	case vertex:
-		switch {
-		case s.project == "" || s.location == "":
-			return nil, configErr("Vertex backend requires WithVertex with a non-empty project and location")
-		case s.creds == nil:
-			return nil, configErr("Vertex backend requires WithCredentials (this package does no ADC discovery)")
-		case s.creds.TokenProvider == nil:
-			// Credentials that cannot mint tokens fail every call; reject
-			// them up front, as anthropicvertex does.
-			return nil, configErr("Google credentials have no TokenProvider (refusing to fall back to ADC)")
-		}
-		cc.Backend = genai.BackendVertexAI
-		cc.Project, cc.Location, cc.Credentials = s.project, s.location, s.creds
-	default:
-		return nil, configErr("missing credentials: set WithAPIKey (Gemini API) or WithVertex+WithCredentials (Vertex)")
 	}
 	return cc, nil
 }

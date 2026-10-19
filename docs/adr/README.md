@@ -43,7 +43,7 @@ Copy `0001`'s structure as the template.
 | [0006](0006-validation-error.md) | Validation middleware: distinct non-retryable `ValidationError`, structural scope only | Accepted |
 | [0007](0007-toolchoice-required.md) | `ToolChoiceRequired` — force a tool call without naming one | Accepted |
 | [0008](0008-prompt-cache-hint.md) | Provider-neutral prompt-cache hint (`ContentPart.CacheBreakpoint`) | Accepted |
-| [0009](0009-vertex-backend-psc-and-gemini-embeddings.md) | Vertex backend (Anthropic + Gemini embeddings), PSC injection, task-typed embeddings — design of record; v0.4 implementation | Accepted; amended by 0027 |
+| [0009](0009-vertex-backend-psc-and-gemini-embeddings.md) | Vertex backend (Anthropic + Gemini embeddings), PSC injection, task-typed embeddings — design of record; v0.4 implementation | Accepted; amended by 0027, 0028 |
 | [0010](0010-toolcall-provider-signature.md) | Round-trip opaque provider state via `ToolCall.ProviderSignature` (Gemini 3 thought_signature) | Accepted |
 | [0011](0011-toolloop-helper.md) | Tool loop helper — scope, API, and non-goals | Accepted; partially superseded by 0017; amended by 0019, 0020, 0026 |
 | [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted |
@@ -60,4 +60,5 @@ Copy `0001`'s structure as the template.
 | [0024](0024-provider-params.md) | Per-request `ProviderParams`: raw provider body fields keyed by `ProviderID`, deep-merged after mapping | Accepted |
 | [0025](0025-bucket-distributed-limiter.md) | Generic `bucket` limiter with a Postgres backend (lease rows + renewal for slots; FIFO queue planned, not MVP) | Accepted |
 | [0026](0026-context-length-error-kind.md) | Context-window overflow: `ErrorKindContextLength` (deterministic provider signals only) and toolloop `OutcomeContextExceeded` | Accepted |
-| [0027](0027-pre-v1-api-cleanup.md) | Pre-v1 API cleanup: `openaicompat` package (`vllm` a permanent alias), `*auth.Credentials` for both Vertex entry points, one `google.Option` for chat and embeddings | Accepted |
+| [0027](0027-pre-v1-api-cleanup.md) | Pre-v1 API cleanup: `openaicompat` package (`vllm` a permanent alias), `*auth.Credentials` for both Vertex entry points, one `google.Option` for chat and embeddings | Accepted; amended by 0028 |
+| [0028](0028-gemini-chat-on-vertex.md) | Gemini chat on Vertex AI: `google.New` accepts `WithVertex`/`WithCredentials`, one backend selector for chat and embeddings, Vertex model-listing prefix | Accepted |

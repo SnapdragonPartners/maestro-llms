@@ -162,3 +162,9 @@ Appended as PRs land (this ADR's prose above is unchanged — append-only).
   auth-vs-PSC-transport precedence, single-input rejection, and the
   fail-closed `MaxInputBytes` guard. No code change resulted — the design
   was validated as built. v0.4 is implemented *and* live-proven.
+- **Gemini chat on Vertex (#104, ADR-0028).** `google.New` now accepts the
+  Vertex options, so Gemini chat joins Claude and Gemini embeddings on the
+  Vertex backend. Both google constructors share one backend selector. The
+  auth-vs-PSC precedence above applies to genai too: an injected
+  `WithHTTPClient` replaces genai's credential-built client and must carry
+  Google auth itself.

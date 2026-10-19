@@ -42,10 +42,11 @@ type settings struct {
 	autoTruncate  bool
 
 	// Names of the options set that only NewEmbeddings accepts, in order,
-	// for New's error message. vertexOpts is a separate list because it is
-	// the one #104 (Gemini chat on Vertex) will lift.
-	embedOnly  []string
-	vertexOpts []string
+	// for New's error message.
+	embedOnly []string
+	// vertex records that WithVertex or WithCredentials was set at all:
+	// either one selects the Vertex backend (ADR-0027).
+	vertex bool
 }
 
 // WithAPIKey sets the Gemini API key and selects the Gemini API backend.
@@ -60,7 +61,12 @@ func WithModel(model string) Option { return func(s *settings) { s.model = model
 func WithBaseURL(u string) Option { return func(s *settings) { s.baseURL = u } }
 
 // WithHTTPClient injects the HTTP client (PSC dialer / custom CA, timeouts,
-// proxies, observability, test transports).
+// proxies, observability, test transports). On the Vertex backend it
+// REPLACES the authenticated client genai would build from WithCredentials,
+// so it MUST carry Google auth itself (e.g. via
+// httptransport.AddAuthorizationMiddleware); this is the same precedence
+// rule as anthropicvertex.WithHTTPClient (ADR-0009). WithCredentials is
+// still required, so no path falls back to ambient ADC.
 func WithHTTPClient(c *http.Client) Option { return func(s *settings) { s.httpClient = c } }
 
 // WithMaxRetries is accepted for cross-provider symmetry and validated, but
@@ -72,12 +78,12 @@ func WithMaxRetries(n int) Option {
 
 // WithVertex selects the Vertex AI backend in the given GCP project and
 // location (e.g. "us-central1", "global"). It requires WithCredentials and
-// is mutually exclusive with WithAPIKey. NewEmbeddings only, for now: New
-// rejects it until Gemini chat on Vertex lands (#104).
+// is mutually exclusive with WithAPIKey. It applies to both New (Gemini chat
+// on Vertex, ADR-0028) and NewEmbeddings.
 func WithVertex(project, location string) Option {
 	return func(s *settings) {
 		s.project, s.location = project, location
-		s.vertexOpts = append(s.vertexOpts, "WithVertex")
+		s.vertex = true
 	}
 }
 
@@ -88,7 +94,7 @@ func WithVertex(project, location string) Option {
 func WithCredentials(c *auth.Credentials) Option {
 	return func(s *settings) {
 		s.creds = c
-		s.vertexOpts = append(s.vertexOpts, "WithCredentials")
+		s.vertex = true
 	}
 }
 
@@ -143,15 +149,51 @@ func applyOptions(opts []Option) settings {
 	return s
 }
 
-// commonErr checks the constraints both constructors share.
-func (s *settings) commonErr() error {
+// clientConfig checks the constraints both constructors share and builds
+// the genai client config: the backend (the Gemini API by key, or Vertex
+// with app-supplied credentials; ambiguity fails closed) plus the endpoint
+// and transport injection. It is the one place a backend is selected, so
+// chat and embeddings cannot drift apart (ADR-0028).
+func (s *settings) clientConfig() (*genai.ClientConfig, error) {
 	switch {
 	case s.model == "":
-		return configErr("missing model")
+		return nil, configErr("missing model")
 	case s.hasRetries && s.maxRetries < 0:
-		return configErr("max retries must be >= 0")
+		return nil, configErr("max retries must be >= 0")
+	case s.apiKey != "" && s.vertex:
+		// genai treats API key and Vertex (project/location/credentials) as
+		// mutually exclusive. Fail closed rather than silently pick the
+		// public API-key backend and bypass Vertex/PSC.
+		return nil, configErr("ambiguous backend: set WithAPIKey (Gemini API) OR WithVertex+WithCredentials (Vertex), not both")
 	}
-	return nil
+	cc := &genai.ClientConfig{}
+	switch {
+	case s.apiKey != "":
+		cc.Backend = genai.BackendGeminiAPI
+		cc.APIKey = s.apiKey
+	case s.vertex:
+		switch {
+		case s.project == "" || s.location == "":
+			return nil, configErr("Vertex backend requires WithVertex with a non-empty project and location")
+		case s.creds == nil:
+			return nil, configErr("Vertex backend requires WithCredentials (this package does no ADC discovery)")
+		case s.creds.TokenProvider == nil:
+			// Credentials that cannot mint tokens fail every call; reject
+			// them up front, as anthropicvertex does.
+			return nil, configErr("Google credentials have no TokenProvider (refusing to fall back to ADC)")
+		}
+		cc.Backend = genai.BackendVertexAI
+		cc.Project, cc.Location, cc.Credentials = s.project, s.location, s.creds
+	default:
+		return nil, configErr("missing credentials: set WithAPIKey (Gemini API) or WithVertex+WithCredentials (Vertex)")
+	}
+	if s.baseURL != "" {
+		cc.HTTPOptions.BaseURL = s.baseURL
+	}
+	if s.httpClient != nil {
+		cc.HTTPClient = s.httpClient
+	}
+	return cc, nil
 }
 
 // Client is an llms.ChatClient backed by the Google genai SDK.
@@ -168,32 +210,24 @@ func configErr(msg string) error {
 	return &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: msg}
 }
 
-// New builds a Client. It returns a *llms.ProviderError of kind config when
-// required values are missing/invalid or the SDK client cannot be created.
+// New builds a Client. The backend is selected by the options, as for
+// NewEmbeddings: WithAPIKey -> the direct Gemini API; WithVertex +
+// WithCredentials -> Gemini on Vertex AI (ADR-0028). WithBaseURL /
+// WithHTTPClient are the Private Service Connect injection points. It
+// returns a *llms.ProviderError of kind config when required values are
+// missing/invalid or the SDK client cannot be created.
 func New(opts ...Option) (*Client, error) {
 	s := applyOptions(opts)
-	switch {
-	case len(s.embedOnly) > 0:
+	if len(s.embedOnly) > 0 {
 		return nil, configErr(strings.Join(s.embedOnly, ", ") + " applies only to NewEmbeddings")
-	case len(s.vertexOpts) > 0:
-		return nil, configErr(strings.Join(s.vertexOpts, ", ") +
-			": the Vertex backend is not yet supported for chat (use the Gemini API key backend)")
-	case s.apiKey == "":
-		return nil, configErr("missing API key")
 	}
-	if err := s.commonErr(); err != nil {
+	cfg, err := s.clientConfig()
+	if err != nil {
 		return nil, err
 	}
-
-	cfg := &genai.ClientConfig{APIKey: s.apiKey, Backend: genai.BackendGeminiAPI}
-	if s.baseURL != "" {
-		cfg.HTTPOptions.BaseURL = s.baseURL
-	}
-	if s.httpClient != nil {
-		cfg.HTTPClient = s.httpClient
-	}
-	// genai.NewClient builds transport/config only (no network call for the
-	// Gemini API key backend); a non-nil error here is a config problem.
+	// genai.NewClient builds transport/config only (no network call: the
+	// credentials are app-supplied, never discovered); a non-nil error here
+	// is a config problem.
 	api, err := genai.NewClient(context.Background(), cfg)
 	if err != nil {
 		return nil, &llms.ProviderError{
@@ -209,7 +243,8 @@ func (c *Client) Model() llms.ModelRef {
 	return llms.ModelRef{Provider: providerName, Name: c.model}
 }
 
-// Complete sends a synchronous chat completion via the Gemini API.
+// Complete sends a synchronous chat completion via the configured backend
+// (the Gemini API or Vertex AI; the wire mapping is the same for both).
 func (c *Client) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
 	extra, _, xerr := extraparams.For(&req, providerName)
 	if xerr != nil {

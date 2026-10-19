@@ -41,6 +41,8 @@ func TestFamilyOf(t *testing.T) {
 		{"gemini-nano", "gemini-nano"},
 		// Resource-path-prefixed inputs still classify (familyOf strips).
 		{"models/gemini-1.5-pro-001", "gemini-pro"},
+		// The Vertex publisher prefix strips too (ADR-0028).
+		{"publishers/google/models/gemini-2.5-flash", "gemini-flash"},
 		// Non-Gemini IDs / non-role IDs → "".
 		{"text-embedding-004", ""},
 		{"gpt-5", ""},
@@ -191,4 +193,18 @@ func idsOf(ms []llms.ModelInfo) []string {
 		out[i] = m.ID
 	}
 	return out
+}
+
+// ADR-0028: Vertex lists "publishers/google/models/<id>"; both backends'
+// prefixes strip to a bare ID usable as WithModel.
+func TestStripPrefixBothBackends(t *testing.T) {
+	for in, want := range map[string]string{
+		"models/gemini-2.5-flash":                   "gemini-2.5-flash",
+		"publishers/google/models/gemini-2.5-flash": "gemini-2.5-flash",
+		"gemini-2.5-flash":                          "gemini-2.5-flash",
+	} {
+		if got := stripPrefix(in); got != want {
+			t.Errorf("stripPrefix(%q) = %q, want %q", in, got, want)
+		}
+	}
 }

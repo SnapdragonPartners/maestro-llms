@@ -13,19 +13,20 @@
 // the caller passes *auth.Credentials (cloud.google.com/go/auth), and for
 // Private Service Connect a custom endpoint and *http.Client.
 //
-// Precedence (the sharp edge — see ADR-0009): vertex.WithCredentials installs
+// Precedence (ADR-0029, amending ADR-0009): vertex.WithCredentials installs
 // the Vertex request middleware (path rewrite to the rawPredict shape +
-// anthropic_version injection) AND its own oauth2 HTTP client + regional base
-// URL. We apply the caller's PSC endpoint/client AFTER it, so:
+// anthropic_version injection), its own oauth2 HTTP client and the regional
+// base URL. The caller's PSC client is applied BEFORE it, so the SDK wraps
+// that client's transport with the credentials (on a shallow copy; the
+// caller's client is not mutated); the caller's endpoint is applied AFTER
+// it, so it wins over the regional URL. So:
 //
-//   - the Vertex path/version middleware ALWAYS applies (it is independent of
-//     the HTTP client);
-//   - the network transport and base URL are whatever is applied LAST.
+//   - the Vertex path/version middleware ALWAYS applies;
+//   - WithCredentials ALWAYS authenticates, with or without a PSC client;
+//   - the PSC client supplies only the network layer (dialer, CA, proxy).
 //
-// Therefore a PSC *http.Client overrides Vertex's self-built client, which
-// discards Vertex's auth layer: the caller's PSC client MUST itself carry
-// Google auth (oauth2 over the PSC transport). That is the application's /
-// OpenTofu infrastructure concern, not this package's.
+// This matches every other provider, where WithHTTPClient never removes
+// auth.
 package anthropicvertex
 
 import (
@@ -76,19 +77,18 @@ func WithModel(m string) Option { return func(s *settings) { s.model = m } }
 // cloud.google.com/go/auth type that google.WithCredentials also takes
 // (ADR-0027; e.g. from credentials.DetectDefault). Required: the package does
 // no ADC discovery. The adapter converts them for the Anthropic Vertex SDK
-// and uses them to install the official Vertex middleware; for PSC (see
-// WithHTTPClient) the network client is replaced, so the credentials' token
-// provider must also be carried by that client.
+// and uses them to install the official Vertex middleware. They also
+// authenticate requests sent through a WithHTTPClient client (ADR-0029).
 func WithCredentials(c *auth.Credentials) Option { return func(s *settings) { s.creds = c } }
 
 // WithEndpoint overrides the base URL (Private Service Connect endpoint).
 // Applied after the Vertex option so it wins over the regional URL.
 func WithEndpoint(url string) Option { return func(s *settings) { s.endpoint = url } }
 
-// WithHTTPClient injects the network client for PSC. It is applied after the
-// Vertex option, so it REPLACES Vertex's self-built oauth2 client: this
-// client MUST carry Google auth itself (oauth2 layered over the PSC
-// transport). Building that client is the application's concern.
+// WithHTTPClient injects the network client for PSC (dialer, custom CA,
+// proxy, observability). It needs no Google auth of its own: the SDK wraps a
+// shallow copy of it with WithCredentials (ADR-0029). The caller's client is
+// not mutated.
 func WithHTTPClient(c *http.Client) Option { return func(s *settings) { s.httpClient = c } }
 
 func cfgErr(msg string) error {
@@ -128,17 +128,18 @@ func New(opts ...Option) (*anthropic.Client, error) {
 	// conversion is internal so the public API names one credential type.
 	creds := oauth2adapt.Oauth2CredentialsFromAuthCredentials(s.creds)
 
-	// Order is load-bearing (ADR-0009): Vertex option first (middleware +
-	// auth client + regional URL), then the caller's PSC endpoint/client
-	// LAST so they override the transport/URL while the middleware stays.
-	reqOpts := []option.RequestOption{
-		vertex.WithCredentials(s.ctx, s.region, s.projectID, creds),
-	}
-	if s.endpoint != "" {
-		reqOpts = append(reqOpts, option.WithBaseURL(s.endpoint))
-	}
+	// Order is load-bearing (ADR-0029): the caller's PSC client BEFORE the
+	// Vertex option, which wraps it with the credentials (the SDK's
+	// documented behavior; passed after, it would replace the authenticated
+	// client and drop auth). The PSC endpoint AFTER it, so it wins over the
+	// regional URL. The Vertex middleware applies either way.
+	var reqOpts []option.RequestOption
 	if s.httpClient != nil {
 		reqOpts = append(reqOpts, option.WithHTTPClient(s.httpClient))
+	}
+	reqOpts = append(reqOpts, vertex.WithCredentials(s.ctx, s.region, s.projectID, creds))
+	if s.endpoint != "" {
+		reqOpts = append(reqOpts, option.WithBaseURL(s.endpoint))
 	}
 
 	c, err := anthropic.New(anthropic.WithModel(s.model), anthropic.WithRequestOptions(reqOpts...))

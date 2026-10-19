@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"cloud.google.com/go/auth"
+	"cloud.google.com/go/auth/httptransport"
 	"google.golang.org/genai"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -61,12 +62,10 @@ func WithModel(model string) Option { return func(s *settings) { s.model = model
 func WithBaseURL(u string) Option { return func(s *settings) { s.baseURL = u } }
 
 // WithHTTPClient injects the HTTP client (PSC dialer / custom CA, timeouts,
-// proxies, observability, test transports). On the Vertex backend it
-// REPLACES the authenticated client genai would build from WithCredentials,
-// so it MUST carry Google auth itself (e.g. via
-// httptransport.AddAuthorizationMiddleware); this is the same precedence
-// rule as anthropicvertex.WithHTTPClient (ADR-0009). WithCredentials is
-// still required, so no path falls back to ambient ADC.
+// proxies, observability, test transports). It needs no Google auth of its
+// own: on the Vertex backend the package authenticates a shallow copy of it
+// with WithCredentials, as anthropicvertex does (ADR-0029). The caller's
+// client is not mutated.
 func WithHTTPClient(c *http.Client) Option { return func(s *settings) { s.httpClient = c } }
 
 // WithMaxRetries is accepted for cross-provider symmetry and validated, but
@@ -187,13 +186,64 @@ func (s *settings) clientConfig() (*genai.ClientConfig, error) {
 	default:
 		return nil, configErr("missing credentials: set WithAPIKey (Gemini API) or WithVertex+WithCredentials (Vertex)")
 	}
+	if err := s.applyTransport(cc); err != nil {
+		return nil, err
+	}
+	return cc, nil
+}
+
+// applyTransport applies WithBaseURL and WithHTTPClient to cc. On Vertex the
+// injected client is authenticated with the credentials: genai uses
+// Credentials only for a client it builds itself, so the client would
+// otherwise send no auth (ADR-0029).
+func (s *settings) applyTransport(cc *genai.ClientConfig) error {
 	if s.baseURL != "" {
 		cc.HTTPOptions.BaseURL = s.baseURL
 	}
-	if s.httpClient != nil {
-		cc.HTTPClient = s.httpClient
+	if s.httpClient == nil {
+		return nil
 	}
-	return cc, nil
+	cc.HTTPClient = s.httpClient
+	if cc.Backend == genai.BackendVertexAI {
+		hc, err := authorizeClient(s.httpClient, s.creds)
+		if err != nil {
+			return err
+		}
+		cc.HTTPClient = hc
+	}
+	return nil
+}
+
+// authorizeClient returns a shallow copy of c whose transport attaches
+// creds' token (and quota project, if any) over c's own transport, the way
+// genai authorizes the client it builds when none is injected. c keeps its
+// Timeout, Jar and CheckRedirect and is not mutated.
+func authorizeClient(c *http.Client, creds *auth.Credentials) (*http.Client, error) {
+	base := c.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	quota, err := creds.QuotaProjectID(context.Background())
+	if err != nil {
+		return nil, &llms.ProviderError{
+			Provider: providerName, Kind: llms.ErrorKindConfig,
+			Message: "reading the credentials' quota project failed", Cause: err,
+		}
+	}
+	opts := &httptransport.Options{Credentials: creds, BaseRoundTripper: base}
+	if quota != "" {
+		opts.Headers = http.Header{"X-Goog-User-Project": []string{quota}}
+	}
+	authed, err := httptransport.NewClient(opts)
+	if err != nil {
+		return nil, &llms.ProviderError{
+			Provider: providerName, Kind: llms.ErrorKindConfig,
+			Message: "authorizing the injected HTTP client failed", Cause: err,
+		}
+	}
+	wrapped := *c
+	wrapped.Transport = authed.Transport
+	return &wrapped, nil
 }
 
 // Client is an llms.ChatClient backed by the Google genai SDK.

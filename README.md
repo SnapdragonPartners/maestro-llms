@@ -48,7 +48,8 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   order/ID-preserving, per-request dimension override, task-typed
   (`EmbeddingTask`/`Title`, advisory).
 - **Vertex AI backend**: Claude via `anthropicvertex` (separate leaf
-  package — base `anthropic` stays Google-dep-free) and Gemini embeddings;
+  package — base `anthropic` stays Google-dep-free), Gemini chat, and
+  Gemini embeddings;
   app-supplied auth + PSC endpoint/transport injection, no ADC discovery.
 - **One typed error model.** `*llms.ProviderError` (kind, HTTP status,
   `Retry-After`) and `*llms.LimitError`, both `errors.As`-able, with
@@ -539,7 +540,7 @@ Task-typed embeddings are provider-neutral and advisory: `EmbeddingRequest.Task`
 optional `EmbeddingInput.Title` are honored where supported (Gemini) and
 ignored where not (OpenAI).
 
-### Vertex AI (Anthropic & Gemini embeddings)
+### Vertex AI (Anthropic, Gemini chat & Gemini embeddings)
 
 For Google Vertex AI (e.g. behind Private Service Connect), auth and the
 endpoint are **app-supplied** — the toolkit does no ADC discovery. Anthropic
@@ -585,16 +586,29 @@ emb, err := google.NewEmbeddings(
 	google.WithMaxInputBytes(8000),
 	// google.WithBaseURL(pscURL), google.WithHTTPClient(pscClient),
 )
+
+// Gemini chat via Vertex, same creds and the same options (ADR-0028).
+gemini, err := google.New(
+	google.WithModel("gemini-2.5-flash"),
+	google.WithVertex("my-proj", "global"),
+	google.WithCredentials(creds),
+	// google.WithBaseURL(pscURL), google.WithHTTPClient(pscClient),
+)
 ```
+
+For PSC on either google constructor, the same rule as Claude applies: an
+injected `WithHTTPClient` replaces the client genai would build from the
+credentials, so it must carry Google auth itself (for example via
+`httptransport.AddAuthorizationMiddleware`). `WithCredentials` is still
+required, so nothing falls back to ambient ADC.
 
 `gemini-embedding-001` is single-input: a multi-input request is rejected with
 a typed `bad_request` (the toolkit never fans out — the app owns chunking).
 `google.WithAPIKey` instead selects the direct Gemini API rather than Vertex;
 mixing the API key with `WithVertex`/`WithCredentials` fails closed.
 `google.New` (chat) and `NewEmbeddings` share one option type; an option a
-constructor does not accept (`WithDimensions` on `New`, or the Vertex
-options on `New` until Gemini chat on Vertex lands in #104) is a config
-error, never ignored.
+constructor does not accept (`WithDimensions` on `New`, for example) is a
+config error, never ignored.
 PSC/DNS/VPC-SC/IAM is your infrastructure's concern, not the toolkit's.
 
 ### Middleware

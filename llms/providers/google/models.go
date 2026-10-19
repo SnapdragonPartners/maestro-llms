@@ -10,9 +10,15 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
-// resourcePrefix is the genai resource-path prefix on Model.Name. We strip
-// it so ModelInfo.ID is directly usable as WithModel(newer.ID).
-const resourcePrefix = "models/"
+// Resource-path prefixes on Model.Name, by backend. We strip them so
+// ModelInfo.ID is directly usable as WithModel(newer.ID). The Gemini API
+// lists "models/<id>"; Vertex lists the Google publisher catalog as
+// "publishers/google/models/<id>" (genai queries base models, never tuned
+// ones, ADR-0028).
+const (
+	resourcePrefix       = "models/"
+	vertexResourcePrefix = "publishers/google/models/"
+)
 
 // familyRe matches the Gemini role token (`pro`/`flash`/`nano`/`ultra`)
 // in a stripped model ID. The role rides at or near the end after the
@@ -27,8 +33,12 @@ var familyRe = regexp.MustCompile(`(?i)\bgemini-(?:[\d.]+-)?(pro|flash|nano|ultr
 // a created date, so "newer" must come from the ID itself.
 var versionRe = regexp.MustCompile(`(?i)gemini-(\d+(?:\.\d+)?)-`)
 
-// stripPrefix removes the resource-path prefix Gemini returns on list.
+// stripPrefix removes the resource-path prefix either backend returns on
+// list.
 func stripPrefix(name string) string {
+	if id, ok := strings.CutPrefix(name, vertexResourcePrefix); ok {
+		return id
+	}
 	return strings.TrimPrefix(name, resourcePrefix)
 }
 

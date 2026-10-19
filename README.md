@@ -43,7 +43,9 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   [ADR-0024](docs/adr/0024-provider-params.md).
 - **Five chat providers**: Anthropic (Messages), OpenAI (Responses API),
   Google (Gemini via genai), Ollama (hand-rolled `/api/chat`, no SDK),
-  vLLM (OpenAI Chat Completions surface via openai-go; ADR-0015).
+  OpenAI-compatible servers and gateways such as vLLM and LunaRoute
+  (`openaicompat`, OpenAI Chat Completions via openai-go; ADR-0015,
+  ADR-0027; `vllm` remains as an alias).
 - **Embeddings**: OpenAI and Gemini/Vertex (`gemini-embedding-001`),
   order/ID-preserving, per-request dimension override, task-typed
   (`EmbeddingTask`/`Title`, advisory).
@@ -941,6 +943,16 @@ cached input on every provider — see
 `bucket/memory` and shared `bucket/postgres` backends, adapted to the
 middleware by `ratelimit.FromBucket` — see
 [ADR-0025](docs/adr/0025-bucket-distributed-limiter.md); `bucket/postgres`
-needs its schema v1 migration applied before deploying).
+needs its schema v1 migration applied before deploying), and **v0.13.0**
+(`ErrorKindContextLength` for context-window overflow, plus toolloop
+`OutcomeContextExceeded` — see
+[ADR-0026](docs/adr/0026-context-length-error-kind.md); pre-v1 API cleanup:
+the `vllm` package is renamed `openaicompat` (with `vllm` kept as a
+permanent alias), `*auth.Credentials` on both Vertex entry points, and one
+`google.Option` for chat and embeddings — see
+[ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md); Gemini chat on Vertex AI
+— see [ADR-0028](docs/adr/0028-gemini-chat-on-vertex.md); on Vertex,
+`WithCredentials` authenticates an injected `WithHTTPClient` — see
+[ADR-0029](docs/adr/0029-vertex-injected-client-auth.md)).
 
 MIT — see [`LICENSE`](LICENSE).

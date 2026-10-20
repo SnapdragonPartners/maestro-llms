@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
@@ -355,6 +356,52 @@ func TestCompact_LoopContextDoneWins(t *testing.T) {
 	out := toolloop.Run(ctx, toolloop.Config{Client: scriptedResponses(testllm.TextResponse("x")), Request: userReq("go"), Compact: hook})
 	if out.Kind != toolloop.OutcomeCanceled || !errors.Is(out.Err, context.Canceled) {
 		t.Fatalf("kind = %q, err = %v; want canceled", out.Kind, out.Err)
+	}
+}
+
+// TestCompact_OverflowDeclined_LoopContextDoneWins: the loop's context
+// ending while the overflow hook runs wins over the overflow, whether the
+// hook declines, fails or compacts (Codex round 1).
+func TestCompact_OverflowDeclined_LoopContextDoneWins(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		res  toolloop.CompactResult
+		err  error
+	}{
+		{"declines", toolloop.CompactResult{}, nil},
+		{"fails", toolloop.CompactResult{}, errors.New("boom")},
+		{"compacts", toolloop.CompactResult{Messages: []llms.Message{llms.UserText("go")}}, nil},
+	} {
+		for _, deadline := range []bool{false, true} {
+			want, is := toolloop.OutcomeCanceled, context.Canceled
+			if deadline {
+				want, is = toolloop.OutcomeDeadline, context.DeadlineExceeded
+			}
+			t.Run(tc.name+"/"+string(want), func(t *testing.T) {
+				// end makes the loop's context done from inside the hook.
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				end := cancel
+				if deadline {
+					var c context.CancelFunc
+					ctx, c = context.WithDeadline(ctx, time.Now().Add(50*time.Millisecond))
+					defer c()
+					end = func() { <-ctx.Done() }
+				}
+				var calls atomic.Int32
+				hook := func(_ context.Context, in toolloop.CompactInput) (toolloop.CompactResult, error) {
+					if in.Reason != toolloop.CompactOverflow {
+						return toolloop.CompactResult{}, nil
+					}
+					end()
+					return tc.res, tc.err
+				}
+				out := toolloop.Run(ctx, toolloop.Config{Client: overflowAfter(&calls), Request: userReq("go"), Compact: hook})
+				if out.Kind != want || !errors.Is(out.Err, is) {
+					t.Fatalf("kind = %q, err = %v; want %s matching %v", out.Kind, out.Err, want, is)
+				}
+			})
+		}
 	}
 }
 

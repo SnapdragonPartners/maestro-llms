@@ -443,6 +443,9 @@ func (c *compaction) send(ctx context.Context, client llms.ChatClient, req llms.
 			return llms.ChatResponse{}, req.Messages, kind, err
 		}
 		if msgs == nil {
+			// Classify again: the loop's context may have ended while the
+			// hook ran, and it stays authoritative (ADR-0019).
+			kind, err = classifyStop(ctx, callErr, llmErrorKind(callErr))
 			return llms.ChatResponse{}, req.Messages, kind, err
 		}
 		req.Messages = msgs

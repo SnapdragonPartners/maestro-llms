@@ -220,3 +220,26 @@ func TestValidationErrorIsNotRetryable(t *testing.T) {
 		t.Fatal("ValidationError must be non-retryable")
 	}
 }
+
+// TestValidateMessages covers the exported transcript check toolloop uses
+// for compacted transcripts (ADR-0030): it applies ValidationChat's message
+// rules and returns a *ValidationError.
+func TestValidateMessages(t *testing.T) {
+	call := llms.Message{Role: llms.RoleAssistant, Content: []llms.ContentPart{{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{ID: "c1", Name: "t"}}}}
+	result := llms.ToolResultMessage(llms.ToolResult{ToolCallID: "c1", Content: "ok"})
+	if err := ValidateMessages([]llms.Message{llms.UserText("go"), call, result}); err != nil {
+		t.Fatalf("valid transcript rejected: %v", err)
+	}
+	for name, msgs := range map[string][]llms.Message{
+		"empty":      nil,
+		"unanswered": {llms.UserText("go"), call},
+		"orphan":     {llms.UserText("go"), result},
+		"empty text": {{Role: llms.RoleUser}},
+		"bad role":   {{Role: "system", Content: []llms.ContentPart{llms.Text("x")}}},
+	} {
+		var ve *ValidationError
+		if err := ValidateMessages(msgs); !errors.As(err, &ve) {
+			t.Errorf("%s: err = %v, want *ValidationError", name, err)
+		}
+	}
+}

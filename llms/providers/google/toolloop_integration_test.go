@@ -32,3 +32,8 @@ func TestIntegrationGoogleLongToolConversation(t *testing.T) {
 func TestIntegrationGoogleToolLoopNoTools(t *testing.T) {
 	livetest.ToolLoopNoTools(t, newGoogleToolLoopClient(t))
 }
+
+// ADR-0030: Summarize carries facts across compacted turns.
+func TestIntegrationGoogleCompactSummarize(t *testing.T) {
+	livetest.CompactSummarize(t, newGoogleToolLoopClient(t), nil)
+}

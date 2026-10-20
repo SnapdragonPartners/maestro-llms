@@ -19,3 +19,13 @@ func TestIntegrationAnthropicContextOverflow(t *testing.T) {
 	}
 	livetest.ContextOverflow(t, c, 260_000)
 }
+
+// TestIntegrationAnthropicCompactOnOverflow is the ADR-0030 live overflow
+// scenario, sized like the ADR-0026 trigger.
+func TestIntegrationAnthropicCompactOnOverflow(t *testing.T) {
+	c, err := anthropic.New(anthropic.WithAPIKey(anthropicAPIKey(t)), anthropic.WithModel("claude-haiku-4-5-20251001"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	livetest.CompactOnOverflow(t, c, 260_000)
+}

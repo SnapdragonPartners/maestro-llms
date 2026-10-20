@@ -24,3 +24,17 @@ func TestIntegrationOpenAIContextOverflow(t *testing.T) {
 	}
 	livetest.ContextOverflow(t, c, 140_000)
 }
+
+// TestIntegrationOpenAICompactOnOverflow is the ADR-0030 live overflow
+// scenario, sized like the ADR-0026 trigger.
+func TestIntegrationOpenAICompactOnOverflow(t *testing.T) {
+	key := os.Getenv("OPENAI_API_KEY")
+	if key == "" {
+		t.Skip("OPENAI_API_KEY not set")
+	}
+	c, err := openai.NewChat(openai.WithAPIKey(key), openai.WithModel("gpt-4o-mini"))
+	if err != nil {
+		t.Fatalf("NewChat: %v", err)
+	}
+	livetest.CompactOnOverflow(t, c, 140_000)
+}

@@ -19,3 +19,12 @@ func TestIntegrationVertexAnthropicContextOverflow(t *testing.T) {
 	}
 	livetest.ContextOverflow(t, newVertexClient(t), 1_100_000)
 }
+
+// TestIntegrationVertexAnthropicCompactOnOverflow is the ADR-0030 live
+// overflow scenario, sized and gated like the ADR-0026 trigger.
+func TestIntegrationVertexAnthropicCompactOnOverflow(t *testing.T) {
+	if m := envOr("VERTEX_ANTHROPIC_MODEL", "claude-opus-4-6"); m != "claude-opus-4-6" {
+		t.Skipf("prompt is sized for claude-opus-4-6, not %s", m)
+	}
+	livetest.CompactOnOverflow(t, newVertexClient(t), 1_100_000)
+}

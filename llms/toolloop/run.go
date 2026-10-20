@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
 )
 
 // defaultMaxIterations is the runaway bound applied when
@@ -45,8 +46,10 @@ func (e *ConfigError) Error() string { return "toolloop: " + e.Reason }
 // docs/toolloop-proposal.md / ADR-0011, with terminal tools and the
 // executed limit turn from ADR-0017. It always returns an Outcome, even
 // on validation or provider failure, so callers can inspect the partial
-// transcript without unwrapping a second error.
-func Run(ctx context.Context, cfg Config) Outcome {
+// transcript without unwrapping a second error. With Config.Compact set,
+// the transcript may be compacted before a turn or after an overflow
+// (ADR-0030).
+func Run(ctx context.Context, cfg Config) (out Outcome) {
 	// Step 1: validate config. Failure returns OutcomeToolError with no
 	// provider work done.
 	tools, choice, err := validateConfig(cfg)
@@ -75,12 +78,15 @@ func Run(ctx context.Context, cfg Config) Outcome {
 	transcript = append(transcript, cfg.Request.Messages...)
 
 	var (
-		usage         llms.Usage
-		usageContribs int               // number of provider responses whose Usage we summed
-		lastUsageID   string            // ProviderRequestID of the single contributor (or "" once >1)
-		lastResponse  llms.ChatResponse // most-recent successful response, for non-final Outcome.Response
-		iterIdx       int               // 0-based index of the current iteration; equals Outcome.Iterations on tool-calling stops
+		usage        usageSum          // loop model's calls -> TotalUsage
+		lastResponse llms.ChatResponse // most-recent successful response, for non-final Outcome.Response
+		iterIdx      int               // 0-based index of the current iteration; equals Outcome.Iterations on tool-calling stops
 	)
+	cp := &compaction{fn: cfg.Compact, headroom: 2 * prealloc}
+	defer func() {
+		out.CompactionUsage = cp.usage.total
+		out.Compactions = cp.count
+	}()
 
 	for {
 		// Step 3: build the per-attempt ChatRequest from the base request,
@@ -92,25 +98,27 @@ func Run(ctx context.Context, cfg Config) Outcome {
 		req.Tools = tools
 		req.ToolChoice = choice
 
-		// Step 4: call the provider.
-		resp, callErr := cfg.Client.Complete(ctx, req)
+		// Step 4: call the provider. With a Compactor, the transcript may be
+		// compacted before the call or after an overflow (ADR-0030);
+		// transcript becomes whatever was last sent.
+		resp, sent, kind, callErr := cp.send(ctx, cfg.Client, req, lastResponse.Usage)
+		transcript = sent
 
-		// Step 5: handle provider error before touching the transcript.
+		// Step 5: handle a stop before touching the transcript.
 		if callErr != nil {
-			kind, err := classifyStop(ctx, callErr, llmErrorKind(callErr))
 			return Outcome{
 				Kind:       kind,
 				Response:   lastResponse,
 				Messages:   transcript,
-				TotalUsage: usage,
+				TotalUsage: usage.total,
 				Iterations: iterIdx,
-				Err:        err,
+				Err:        callErr,
 			}
 		}
 
 		// Step 6: accumulate Usage. ProviderRequestID is collapsed to ""
 		// once more than one provider call has contributed.
-		addUsage(&usage, &usageContribs, &lastUsageID, resp.Usage)
+		addUsage(&usage, resp.Usage)
 
 		// Step 7: append the response message verbatim so any
 		// provider-owned metadata (e.g. ToolCall.ProviderSignature for
@@ -140,7 +148,7 @@ func Run(ctx context.Context, cfg Config) Outcome {
 				Kind:       OutcomeEmptyResponse,
 				Response:   resp,
 				Messages:   transcript,
-				TotalUsage: usage,
+				TotalUsage: usage.total,
 				Iterations: iterIdx,
 			}
 		}
@@ -151,7 +159,7 @@ func Run(ctx context.Context, cfg Config) Outcome {
 				Kind:       OutcomeFinalAnswer,
 				Response:   resp,
 				Messages:   transcript,
-				TotalUsage: usage,
+				TotalUsage: usage.total,
 				Iterations: iterIdx,
 			}
 		}
@@ -164,7 +172,7 @@ func Run(ctx context.Context, cfg Config) Outcome {
 		// the pairing deterministic for validation middleware. A Stop
 		// result ends the turn like a return statement (ADR-0017); any
 		// later calls get synthesized not-executed results.
-		results, terminal, execOutcome := executeCalls(ctx, &cfg, resp, iterIdx, toolByName, transcript, usage)
+		results, terminal, execOutcome := executeCalls(ctx, &cfg, resp, iterIdx, toolByName, transcript, usage.total)
 		if execOutcome != nil {
 			return *execOutcome
 		}
@@ -180,7 +188,7 @@ func Run(ctx context.Context, cfg Config) Outcome {
 				Kind:           OutcomeTerminalTool,
 				Response:       resp,
 				Messages:       transcript,
-				TotalUsage:     usage,
+				TotalUsage:     usage.total,
 				Iterations:     iterIdx,
 				TerminalCall:   terminal.call,
 				TerminalResult: terminal.result,
@@ -195,7 +203,7 @@ func Run(ctx context.Context, cfg Config) Outcome {
 				Kind:       OutcomeMaxIterations,
 				Response:   resp,
 				Messages:   transcript,
-				TotalUsage: usage,
+				TotalUsage: usage.total,
 				Iterations: iterIdx,
 			}
 		}
@@ -396,13 +404,92 @@ func llmErrorKind(err error) OutcomeKind {
 	return OutcomeLLMError
 }
 
+// compaction is Run's compaction state (ADR-0030). With a nil fn, send is a
+// plain Complete call.
+type compaction struct {
+	fn       Compactor
+	usage    usageSum // Compactor-reported usage -> Outcome.CompactionUsage
+	headroom int      // capacity added to a compacted copy for the loop's appends
+	count    int      // compacted transcripts adopted -> Outcome.Compactions
+}
+
+// send makes one provider call for the loop: the before-turn compaction, the
+// call, and on an overflow one compaction and retry. It returns the response
+// and the transcript last sent, or that transcript with the stop kind and
+// error. A failed compaction returns the transcript before it.
+func (c *compaction) send(ctx context.Context, client llms.ChatClient, req llms.ChatRequest, last llms.Usage) (llms.ChatResponse, []llms.Message, OutcomeKind, error) {
+	if c.fn != nil {
+		msgs, cerr := c.run(ctx, CompactInput{Reason: CompactBeforeTurn, Messages: req.Messages, LastUsage: last})
+		if cerr != nil {
+			kind, err := classifyStop(ctx, cerr, OutcomeCompactionError)
+			return llms.ChatResponse{}, req.Messages, kind, err
+		}
+		if msgs != nil {
+			req.Messages = msgs
+		}
+	}
+	for retried := false; ; retried = true {
+		resp, callErr := client.Complete(ctx, req)
+		if callErr == nil {
+			return resp, req.Messages, "", nil
+		}
+		kind, err := classifyStop(ctx, callErr, llmErrorKind(callErr))
+		if kind != OutcomeContextExceeded || c.fn == nil || retried {
+			return llms.ChatResponse{}, req.Messages, kind, err
+		}
+		msgs, cerr := c.run(ctx, CompactInput{Reason: CompactOverflow, Messages: req.Messages, LastUsage: last, Err: err})
+		if cerr != nil {
+			kind, err = classifyStop(ctx, cerr, OutcomeCompactionError)
+			return llms.ChatResponse{}, req.Messages, kind, err
+		}
+		if msgs == nil {
+			return llms.ChatResponse{}, req.Messages, kind, err
+		}
+		req.Messages = msgs
+	}
+}
+
+// run calls the Compactor and checks its result. It returns nil, nil for "no
+// change", a private copy of the compacted transcript with headroom for the
+// loop's appends, or a *CompactionError. Usage the hook reports is summed
+// even when it also fails, since the tokens were spent.
+func (c *compaction) run(ctx context.Context, in CompactInput) ([]llms.Message, error) {
+	res, err := c.fn(ctx, in)
+	if res.Usage != (llms.Usage{}) {
+		addUsage(&c.usage, res.Usage)
+	}
+	if err != nil {
+		return nil, &CompactionError{Reason: in.Reason, Err: err}
+	}
+	if res.Messages == nil {
+		return nil, nil
+	}
+	if err := middleware.ValidateMessages(res.Messages); err != nil {
+		return nil, &CompactionError{Reason: in.Reason, Err: err}
+	}
+	if res.Messages[len(res.Messages)-1].Role == llms.RoleAssistant {
+		return nil, &CompactionError{Reason: in.Reason, Err: errors.New("compacted transcript ends with an assistant message; the next call continues from it")}
+	}
+	out := make([]llms.Message, len(res.Messages), len(res.Messages)+c.headroom)
+	copy(out, res.Messages)
+	c.count++
+	return out, nil
+}
+
+// usageSum is a running Usage total plus the number of responses in it.
+type usageSum struct {
+	total    llms.Usage
+	contribs int
+}
+
 // addUsage sums every numeric token field (TestRun_TotalUsageSumsEveryIntField
 // fails if a new llms.Usage int field is added here without being summed) and
 // tracks the single-contributor
 // ProviderRequestID. Once more than one provider response has contributed,
 // the aggregate ProviderRequestID is cleared, since it cannot meaningfully
 // represent multiple requests.
-func addUsage(total *llms.Usage, contribs *int, lastID *string, add llms.Usage) {
+func addUsage(sum *usageSum, add llms.Usage) {
+	total := &sum.total
 	total.InputTokens += add.InputTokens
 	total.OutputTokens += add.OutputTokens
 	total.TotalTokens += add.TotalTokens
@@ -412,14 +499,11 @@ func addUsage(total *llms.Usage, contribs *int, lastID *string, add llms.Usage) 
 	total.CacheReadTokens += add.CacheReadTokens
 	total.CacheWriteTokens += add.CacheWriteTokens
 
-	*contribs++
-	switch *contribs {
-	case 1:
-		*lastID = add.ProviderRequestID
+	sum.contribs++
+	if sum.contribs == 1 {
 		total.ProviderRequestID = add.ProviderRequestID
-	default:
+	} else {
 		// More than one contributor — collapse to empty.
-		*lastID = ""
 		total.ProviderRequestID = ""
 	}
 }

@@ -133,3 +133,7 @@ func TestIntegrationVertexAnthropicToolUse(t *testing.T) {
 func TestIntegrationVertexAnthropicToolLoopConvergence(t *testing.T) {
 	livetest.ToolLoopConvergence(t, newVertexClient(t))
 }
+
+func TestIntegrationVertexAnthropicCompactSummarize(t *testing.T) {
+	livetest.CompactSummarize(t, newVertexClient(t), nil)
+}

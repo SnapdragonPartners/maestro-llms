@@ -19,3 +19,13 @@ func TestIntegrationGoogleContextOverflow(t *testing.T) {
 	}
 	livetest.ContextOverflow(t, c, 1_100_000)
 }
+
+// TestIntegrationGoogleCompactOnOverflow is the ADR-0030 live overflow
+// scenario, sized like the ADR-0026 trigger.
+func TestIntegrationGoogleCompactOnOverflow(t *testing.T) {
+	c, err := google.New(google.WithAPIKey(apiKey(t)), google.WithModel("gemini-2.5-flash"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	livetest.CompactOnOverflow(t, c, 1_100_000)
+}

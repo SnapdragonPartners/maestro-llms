@@ -14,6 +14,11 @@
 // schema-generation, or moderation hooks. Applications layer those around
 // the loop.
 //
+// The one transcript-shaping hook is Config.Compact (ADR-0030), which lets
+// the application compact the transcript before a turn or after a
+// context-window overflow; what to keep stays app policy, and
+// llms/toolloop/compact ships two ready-made policies.
+//
 // Streaming tool loops are deferred per ADR-0003 — Run is synchronous; a
 // streaming-aware tool loop requires a separate ADR before it can be added.
 package toolloop

@@ -22,3 +22,15 @@ func TestIntegrationLunaRouteContextOverflow(t *testing.T) {
 		})
 	}
 }
+
+// TestIntegrationLunaRouteCompactOnOverflow is the ADR-0030 live overflow
+// scenario on the same default models as the ADR-0026 trigger. Run with
+// -test.parallel=1.
+func TestIntegrationLunaRouteCompactOnOverflow(t *testing.T) {
+	key := lunaRouteKeyOrSkip(t)
+	for _, model := range strings.Split(lunaRouteDefaultModels, ",") {
+		t.Run(model, func(t *testing.T) {
+			livetest.CompactOnOverflow(t, newLunaRoute(t, key, model), 1_100_000)
+		})
+	}
+}

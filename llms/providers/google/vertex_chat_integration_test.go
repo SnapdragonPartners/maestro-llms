@@ -202,6 +202,15 @@ func TestIntegrationVertexGeminiContextOverflow(t *testing.T) {
 	livetest.ContextOverflow(t, newVertexGemini(t, "gemini-2.5-flash"), 1_100_000)
 }
 
+// ADR-0030 on Vertex: the overflow scenario, sized like the trigger above.
+func TestIntegrationVertexGeminiCompactOnOverflow(t *testing.T) {
+	livetest.CompactOnOverflow(t, newVertexGemini(t, "gemini-2.5-flash"), 1_100_000)
+}
+
+func TestIntegrationVertexGeminiCompactSummarize(t *testing.T) {
+	livetest.CompactSummarize(t, newVertexGemini(t, vertexModel()), nil)
+}
+
 // ADR-0012 on Vertex: the publisher catalog lists with stripped IDs that
 // round-trip into WithModel.
 func TestIntegrationVertexGeminiListModels(t *testing.T) {

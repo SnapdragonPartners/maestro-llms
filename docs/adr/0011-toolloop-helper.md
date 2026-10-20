@@ -1,6 +1,6 @@
 # 0011. Tool loop helper — scope, API, and non-goals
 
-- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed); amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (`OutcomeDeadline`; negative `MaxIterations` is unlimited), [ADR-0020](0020-toolloop-empty-response.md) (`OutcomeEmptyResponse`) and [ADR-0026](0026-context-length-error-kind.md) (`OutcomeContextExceeded`)
+- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed); amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (`OutcomeDeadline`; negative `MaxIterations` is unlimited), [ADR-0020](0020-toolloop-empty-response.md) (`OutcomeEmptyResponse`), [ADR-0026](0026-context-length-error-kind.md) (`OutcomeContextExceeded`) and [ADR-0030](0030-toolloop-compaction.md) (compaction hook; lifts the "no context compaction" non-goal)
 - **Date:** 2026-05-19
 
 ## Context
@@ -73,7 +73,8 @@ authorization, tenant isolation, or secret resolution; no built-in
 filesystem/shell/browser/retrieval/MCP tool adapters; no typed argument
 binding, schema-generation helper, or tool registry framework; no human
 escalation policy; no built-in moderation or "police output" hook; no
-automatic streaming; no prompt management or context compaction.
+automatic streaming; no prompt management or context compaction (the
+compaction entry is amended by ADR-0030).
 
 **Streaming is deferred per ADR-0003.** A streaming-aware tool loop needs
 streaming-aware retry/timeout/circuit/transcript semantics first and is a

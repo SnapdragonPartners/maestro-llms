@@ -56,12 +56,21 @@ func validateChatRequest(req llms.ChatRequest) error {
 			return &ValidationError{fmt.Sprintf("System part %d: only text is allowed in v0, got %q", i, t)}
 		}
 	}
-	if len(req.Messages) == 0 {
+	return ValidateMessages(req.Messages)
+}
+
+// ValidateMessages applies ValidationChat's structural message rules to a
+// transcript: at least one message, non-empty content, content parts legal
+// for their role, and tool-call <-> tool-result pairing with no calls left
+// unanswered at the end. It returns a *ValidationError, or nil. toolloop
+// uses it to check a compacted transcript before sending it (ADR-0030).
+func ValidateMessages(msgs []llms.Message) error {
+	if len(msgs) == 0 {
 		return &ValidationError{"at least one message is required"}
 	}
 	ps := &pairingState{pending: map[string]struct{}{}, resolved: map[string]struct{}{}}
-	for mi := range req.Messages {
-		m := &req.Messages[mi]
+	for mi := range msgs {
+		m := &msgs[mi]
 		if !hasNonReasoning(m) {
 			if m.Role == llms.RoleAssistant {
 				// The usual source is a caller appending a ChatResponse

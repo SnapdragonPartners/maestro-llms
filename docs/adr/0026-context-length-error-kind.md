@@ -1,6 +1,6 @@
 # 0026. Context-window overflow: `ErrorKindContextLength` and toolloop `OutcomeContextExceeded`
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0030](0030-toolloop-compaction.md) (with a `Compact` hook, overflow is offered to it and retried once)
 - **Date:** 2026-10-18
 
 ## Context

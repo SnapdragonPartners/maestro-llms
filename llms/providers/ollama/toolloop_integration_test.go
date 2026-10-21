@@ -33,3 +33,8 @@ func TestIntegrationOllamaLongToolConversation(t *testing.T) {
 func TestIntegrationOllamaToolLoopNoTools(t *testing.T) {
 	livetest.ToolLoopNoTools(t, newOllamaToolLoopClient(t))
 }
+
+// ADR-0030: Summarize carries facts across compacted turns.
+func TestIntegrationOllamaCompactSummarize(t *testing.T) {
+	livetest.CompactSummarize(t, newOllamaToolLoopClient(t), nil)
+}

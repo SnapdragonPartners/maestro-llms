@@ -60,7 +60,9 @@ model -> tool calls -> execute tools -> feed results back -> repeat
 - No human escalation policy.
 - No built-in moderation, policy enforcement, or "police output" hook.
 - No automatic streaming support in the initial version.
-- No prompt management or context compaction.
+- No prompt management or context compaction. (Amended by ADR-0030: an
+  optional `Config.Compact` hook plus convenience compactors in
+  `llms/toolloop/compact`; what to keep stays app policy.)
 
 Applications may build those behaviors around the tool loop, but they should
 not be part of the reusable package.

@@ -28,3 +28,8 @@ func TestIntegrationVLLMLongToolConversation(t *testing.T) {
 func TestIntegrationVLLMToolLoopNoTools(t *testing.T) {
 	livetest.ToolLoopNoTools(t, newVLLMToolLoopClient(t))
 }
+
+// ADR-0030: Summarize carries facts across compacted turns.
+func TestIntegrationVLLMCompactSummarize(t *testing.T) {
+	livetest.CompactSummarize(t, newVLLMToolLoopClient(t), nil)
+}

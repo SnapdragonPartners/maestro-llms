@@ -37,3 +37,21 @@ func TestIntegrationOpenAILongToolConversation(t *testing.T) {
 func TestIntegrationOpenAIToolLoopNoTools(t *testing.T) {
 	livetest.ToolLoopNoTools(t, newOpenAIToolLoopClient(t))
 }
+
+// ADR-0030: Summarize carries facts across compacted turns. The summarizer
+// is a separate, stronger model (OPENAI_SUMMARY_MODEL, default
+// gpt-4.1-mini): gpt-4o-mini's rolling summaries dropped an earlier value in
+// about one run in three, a model limit rather than a toolkit one. This
+// also exercises a summarizer that differs from the loop model.
+func TestIntegrationOpenAICompactSummarize(t *testing.T) {
+	loop := newOpenAIToolLoopClient(t)
+	model := os.Getenv("OPENAI_SUMMARY_MODEL")
+	if model == "" {
+		model = "gpt-4.1-mini"
+	}
+	summarizer, err := openai.NewChat(openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")), openai.WithModel(model))
+	if err != nil {
+		t.Fatalf("NewChat: %v", err)
+	}
+	livetest.CompactSummarize(t, loop, summarizer)
+}

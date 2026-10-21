@@ -309,8 +309,8 @@ case toolloop.OutcomeFinalAnswer:
 	fmt.Println(out.Response.Text)
 case toolloop.OutcomeTerminalTool, toolloop.OutcomeEmptyResponse,
 	toolloop.OutcomeMaxIterations, toolloop.OutcomeLLMError,
-	toolloop.OutcomeContextExceeded, toolloop.OutcomeToolError,
-	toolloop.OutcomeCanceled, toolloop.OutcomeDeadline:
+	toolloop.OutcomeContextExceeded, toolloop.OutcomeCompactionError,
+	toolloop.OutcomeToolError, toolloop.OutcomeCanceled, toolloop.OutcomeDeadline:
 	// inspect out.Err, out.Messages, out.TotalUsage
 }
 ```
@@ -344,6 +344,34 @@ run again with it as `Request.Messages`. It relies on the provider signalling
 overflow, which Ollama does not (it silently truncates to `num_ctx`); an
 overflow without a recognizable signal stays `OutcomeLLMError`.
 
+#### Compaction
+
+Set `Config.Compact` to let the loop shorten its own transcript and keep
+going ([ADR-0030](docs/adr/0030-toolloop-compaction.md)). The hook runs
+before every model call, with the last response's `Usage` so it can compare
+the transcript's size to the app's budget (the toolkit doesn't know the
+model's window), and again when the provider reports an overflow, after
+which the loop retries once with the compacted transcript. Returning nil
+`Messages` means "no change". `llms/toolloop/compact` ships two policies:
+
+```go
+// Drop all but the last 4 turns once the transcript reaches 150k tokens,
+// or whenever the provider reports an overflow.
+keep, _ := compact.KeepLast(compact.KeepLastConfig{Turns: 4, AtTokens: 150_000})
+
+// Or replace older turns with a summary written by a (possibly cheaper) model.
+sum, _ := compact.Summarize(compact.SummarizeConfig{Client: cheap, KeepTurns: 4, AtTokens: 150_000})
+
+out := toolloop.Run(ctx, toolloop.Config{Client: client, Request: req, Tools: tools, Compact: sum})
+// out.Compactions counts compactions; out.CompactionUsage is the
+// summarizer's usage, apart from out.TotalUsage.
+```
+
+Both keep the first user message (the task), cut only between turns so a
+tool call is never separated from its result, and strip reasoning
+(`llms.WithoutReasoning`). A hook error or an invalid compacted transcript
+ends the run with `OutcomeCompactionError`.
+
 #### Unbounded runs
 
 `NoIterationLimit` needs no context deadline. Two patterns suit a
@@ -351,8 +379,9 @@ long-running agent:
 
 - **One endless `Run`.** A tool blocks until the next event arrives and
   returns it as the tool result. Each turn is appended to the transcript,
-  so it grows until it reaches the model's context limit; plan for that
-  (context-length detection is tracked in [#79](https://github.com/SnapdragonPartners/maestro-llms/issues/79), a compaction hook in [#80](https://github.com/SnapdragonPartners/maestro-llms/issues/80)).
+  so it grows until it reaches the model's context limit; set
+  `Config.Compact` (see Compaction above) so the run can shorten it and
+  continue.
 - **One `Run` per event.** The app owns memory between events and builds
   each `Request` from it. Every run is bounded by its own work, and the
   transcript never outgrows what the app chooses to carry.

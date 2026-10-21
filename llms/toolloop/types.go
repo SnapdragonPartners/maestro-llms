@@ -64,6 +64,10 @@ type ToolResult struct {
 // ToolChoice.Type values, and ToolChoice.RequiresTools with no tools are
 // all rejected before any provider call.
 //
+// Compact is an optional transcript compaction hook (ADR-0030); see
+// Compactor for when it is called and what it must return. Nil means no
+// compaction, and Run behaves as if the hook did not exist.
+//
 // OnIteration and OnToolCall are optional observation hooks. They must
 // never be required for correctness, but they ARE invoked synchronously on
 // the loop's goroutine — a slow callback will block the next provider
@@ -72,12 +76,97 @@ type ToolResult struct {
 type Config struct {
 	Request       llms.ChatRequest
 	Client        llms.ChatClient
+	Compact       Compactor
 	OnIteration   func(IterationEvent)
 	OnToolCall    func(ToolCallEvent)
 	ToolChoice    llms.ToolChoice
 	Tools         []Tool
 	MaxIterations int
 }
+
+// Compactor shortens a transcript so the loop can keep going (ADR-0030).
+// What to keep is the application's policy; llms/toolloop/compact ships two
+// common ones (keep the last turns, summarize older turns).
+//
+// Run calls it at two points, distinguished by CompactInput.Reason:
+//   - CompactBeforeTurn: before every provider call except the retry after
+//     an overflow compaction. The hook decides whether the transcript is too
+//     large, typically by comparing LastUsage to its own budget, since the
+//     toolkit does not know the model's context window.
+//   - CompactOverflow: when the provider rejected the transcript as too long
+//     for the context window (llms.ErrorKindContextLength). If the hook
+//     returns a compacted transcript, Run retries the call once with it; a
+//     second overflow with no successful call in between returns
+//     OutcomeContextExceeded.
+//
+// A result with nil Messages means "no change": before a turn the
+// transcript is sent as is, and on overflow Run returns
+// OutcomeContextExceeded as it would without a hook. A non-nil result must
+// be a well-formed transcript (llms/middleware.ValidateMessages, and not
+// ending with an assistant message); Run validates and copies it, so it may
+// share memory with in.Messages, but the hook must not modify in.Messages
+// in place. A hook that removes or rewrites turns should also remove
+// reasoning (llms.WithoutReasoning, ADR-0021), since an edited history can
+// invalidate the reasoning after the edit; Run does not do it for the hook.
+//
+// An error, or an invalid result, stops the loop with
+// OutcomeCompactionError. Usage the hook reports is added to
+// Outcome.CompactionUsage either way.
+//
+// Like the observation hooks, Compact runs synchronously on the loop's
+// goroutine, and receives the loop's context.
+type Compactor func(ctx context.Context, in CompactInput) (CompactResult, error)
+
+// CompactReason says why Run called a Compactor.
+type CompactReason string
+
+const (
+	// CompactBeforeTurn is the check before a provider call.
+	CompactBeforeTurn CompactReason = "before_turn"
+	// CompactOverflow follows a context-window overflow
+	// (llms.ErrorKindContextLength).
+	CompactOverflow CompactReason = "overflow"
+)
+
+// CompactInput is what Run hands a Compactor. Messages is the transcript
+// about to be sent (CompactBeforeTurn) or the one the provider rejected
+// (CompactOverflow); the hook must not modify it. LastUsage is the Usage of
+// the most recent successful provider response in this Run, zero before the
+// first: its InputTokens + OutputTokens is the provider's own count of the
+// transcript up to and including that response (tool results appended
+// after it are not counted). Err is the overflow error for CompactOverflow
+// and nil otherwise. Same neutrality rule as the events: no app-specific
+// fields.
+type CompactInput struct {
+	Err       error
+	Reason    CompactReason
+	LastUsage llms.Usage
+	Messages  []llms.Message
+}
+
+// CompactResult is a Compactor's answer. Messages is the compacted
+// transcript, or nil for no change. Usage is any provider usage the
+// compaction itself spent (a summarizer's call), added to
+// Outcome.CompactionUsage; leave it zero when no provider call was made.
+type CompactResult struct {
+	Usage    llms.Usage
+	Messages []llms.Message
+}
+
+// CompactionError is the Outcome.Err type for OutcomeCompactionError: the
+// Compactor returned an error, or a transcript Run could not use. Err is
+// the cause; for an invalid transcript it is a
+// *middleware.ValidationError, or a description of the loop rule broken.
+type CompactionError struct {
+	Err    error
+	Reason CompactReason
+}
+
+func (e *CompactionError) Error() string {
+	return "toolloop: compaction (" + string(e.Reason) + ") failed: " + e.Err.Error()
+}
+
+func (e *CompactionError) Unwrap() error { return e.Err }
 
 // IterationEvent is emitted after each provider response is received and
 // appended to the transcript (an empty response, which is not appended,
@@ -108,7 +197,7 @@ type ToolCallEvent struct {
 // OutcomeKind discriminates Outcome. The set is closed; new kinds require
 // a superseding ADR (OutcomeTerminalTool was added by ADR-0017,
 // OutcomeDeadline by ADR-0019, OutcomeEmptyResponse by ADR-0020,
-// OutcomeContextExceeded by ADR-0026).
+// OutcomeContextExceeded by ADR-0026, OutcomeCompactionError by ADR-0030).
 type OutcomeKind string
 
 const (
@@ -153,7 +242,16 @@ const (
 	// again with it as Request.Messages. Err is the provider error;
 	// Response is the last successful provider response, if any. Overflow
 	// a provider does not signal deterministically stays OutcomeLLMError.
+	// With Config.Compact set, this is returned only when the hook declined
+	// to compact or the compacted transcript overflowed too (ADR-0030);
+	// Messages is then the compacted transcript that was sent.
 	OutcomeContextExceeded OutcomeKind = "context_exceeded"
+	// OutcomeCompactionError is returned when Config.Compact returned an
+	// error or a transcript the loop could not use (ADR-0030). Err is a
+	// *CompactionError wrapping the cause. Messages is the transcript before
+	// the failed compaction, well-formed; Response is the last successful
+	// provider response, if any.
+	OutcomeCompactionError OutcomeKind = "compaction_error"
 	// OutcomeToolError is returned for a loop-level execution failure:
 	// configuration validation, or an Execute that returned an error.
 	// Model-visible tool failures (ToolResult{IsError: true}) do NOT
@@ -181,7 +279,9 @@ const (
 //
 // Messages is the full transcript at the moment the loop stopped,
 // including the initial Request.Messages, every non-empty assistant
-// response received, and every tool result message the loop appended.
+// response received, and every tool result message the loop appended. After
+// a compaction (ADR-0030) it continues from the compacted transcript
+// instead, so earlier messages may be missing or rewritten.
 //
 // TotalUsage is the best-effort sum of every Usage observed during the
 // run, including the final response when present. Numeric token fields
@@ -193,6 +293,12 @@ const (
 // calls. A single response with no tool calls returns OutcomeFinalAnswer
 // with Iterations == 0.
 //
+// CompactionUsage is the sum of the Usage every Compactor call reported
+// (ADR-0030), with the same rules as TotalUsage. It is kept apart because a
+// summarizer may be a different model with different prices; the cost of
+// the whole run is TotalUsage plus CompactionUsage. Compactions is the
+// number of compacted transcripts the loop adopted.
+//
 // TerminalCall and TerminalResult are set only for OutcomeTerminalTool and
 // are zero otherwise.
 //
@@ -203,16 +309,19 @@ const (
 //   - OutcomeMaxIterations:   nil
 //   - OutcomeLLMError:        the error returned by ChatClient.Complete
 //   - OutcomeContextExceeded: the error returned by ChatClient.Complete, a *llms.ProviderError of Kind llms.ErrorKindContextLength
+//   - OutcomeCompactionError: a *CompactionError wrapping the hook's error or the validation failure
 //   - OutcomeToolError:       the configuration validation error or Execute error
 //   - OutcomeCanceled:        a cancellation error; use errors.Is(err, context.Canceled)
 //   - OutcomeDeadline:        the error that surfaced; errors.Is(err, context.DeadlineExceeded) holds
 type Outcome struct {
-	Response       llms.ChatResponse
-	Err            error
-	TerminalCall   llms.ToolCall
-	TotalUsage     llms.Usage
-	TerminalResult ToolResult
-	Kind           OutcomeKind
-	Messages       []llms.Message
-	Iterations     int
+	Response        llms.ChatResponse
+	Err             error
+	TerminalCall    llms.ToolCall
+	TotalUsage      llms.Usage
+	CompactionUsage llms.Usage
+	TerminalResult  ToolResult
+	Kind            OutcomeKind
+	Messages        []llms.Message
+	Iterations      int
+	Compactions     int
 }

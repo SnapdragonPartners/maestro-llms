@@ -15,8 +15,8 @@ type ChatClient interface {
 
 // StreamingChatClient is an optional capability a ChatClient may also implement.
 // Callers and middleware discover it with a type assertion. Streaming is not
-// implemented in v0; StreamChunk is a forward declaration so the contract is
-// fixed before any provider grows streaming support.
+// implemented yet; StreamChunk is a forward declaration. Both stay outside the
+// v1 stability contract until streaming is designed (ADR-0003).
 type StreamingChatClient interface {
 	Stream(ctx context.Context, req ChatRequest) (<-chan StreamChunk, error)
 }

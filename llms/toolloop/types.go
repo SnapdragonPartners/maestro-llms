@@ -194,10 +194,11 @@ type ToolCallEvent struct {
 	Iteration int
 }
 
-// OutcomeKind discriminates Outcome. The set is closed; new kinds require
-// a superseding ADR (OutcomeTerminalTool was added by ADR-0017,
+// OutcomeKind discriminates Outcome. New kinds may be added in minor
+// releases, each by its own ADR (ADR-0032), so a switch over Kind needs a
+// default case. OutcomeTerminalTool was added by ADR-0017,
 // OutcomeDeadline by ADR-0019, OutcomeEmptyResponse by ADR-0020,
-// OutcomeContextExceeded by ADR-0026, OutcomeCompactionError by ADR-0030).
+// OutcomeContextExceeded by ADR-0026, OutcomeCompactionError by ADR-0030.
 type OutcomeKind string
 
 const (

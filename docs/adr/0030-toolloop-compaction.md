@@ -1,6 +1,6 @@
 # 0030. Tool loop compaction: one `Compact` hook, `OutcomeCompactionError`, and a `compact` leaf
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0032](0032-outcome-kind-grows.md) (`OutcomeKind` may grow after v1; switches need a `default` case)
 - **Date:** 2026-10-20
 
 ## Context

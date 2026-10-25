@@ -86,8 +86,9 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 
 ### Not in scope (by design)
 
-- **Streaming.** `StreamingChatClient` is a fixed forward-declared interface
-  but is **not implemented**, and no middleware forwards it
+- **Streaming.** `StreamingChatClient` is a forward-declared interface
+  (outside the v1 contract until streaming is designed) and is **not
+  implemented**, and no middleware forwards it
   ([ADR-0003](docs/adr/0003-middleware-complete-only-defer-streaming.md)). All
   clients/middleware are `Complete`/`Embed`-only. Streaming is deferred until
   a real consumer needs it.
@@ -980,18 +981,20 @@ release notes.
 **Enum-like types grow.** New values of `llms.ErrorKind`,
 `ContentPartType`, `Role`, `ToolChoiceType`, `ReasoningEffort`,
 `EmbeddingTask`, `Purpose` and `ProviderID`, `ratelimit.Operation`, and
-`toolloop.OutcomeKind` and `CompactReason` may be added in minor releases. A switch over any of them needs a `default`
-case. A new value comes with a documented meaning and, where it changes what
-a caller sees, a release-notes entry.
+`toolloop.OutcomeKind` and `CompactReason` may be added in minor releases.
+A switch over any of them needs a `default` case. A new value comes with a
+documented meaning and, where it changes what a caller sees, a release-notes
+entry. A new `OutcomeKind` also needs its own ADR, and it doesn't silently
+take over stops that an existing kind reports
+([ADR-0032](docs/adr/0032-outcome-kind-grows.md)).
 
 **Interfaces are frozen.** Adding a method to an exported interface would
 break every implementation, including consumers' own fakes and wrappers.
-That applies to `ChatClient`, `EmbeddingClient`, `StreamingChatClient`,
-`ModelLister`, `ratelimit.Limiter`, `Reservation`, `LimiterStats`,
+That applies to `ChatClient`, `EmbeddingClient`, `ModelLister`, `ratelimit.Limiter`, `Reservation`, `LimiterStats`,
 `middleware.Observer`, `ContextObserver`, `TokenEstimator`,
 `bucket.Limiter` and `bucket.Lease`. So adding a method is a v2 change.
 Capabilities grow through new optional interfaces, which callers detect with
-a type assertion, as `StreamingChatClient` and `ContextObserver` already do.
+a type assertion, as `ModelLister` and `ContextObserver` already do.
 New fields on exported structs and new functional options are additive.
 Don't use unkeyed struct literals for this package's types. A struct that
 is comparable today stays comparable (for example `ModelRef`, often used as
@@ -1032,13 +1035,16 @@ its upgrades.
   new expand-only migrations. Its release notes open with **"Database
   migration required"**, and an unmigrated database gets
   `*postgres.SchemaError`, not wrong behavior.
-- Anything under an `internal/` directory, `examples/`, and test-only
-  helpers.
+- Streaming: `StreamingChatClient` and `StreamChunk` are forward
+  declarations, not covered until streaming is designed
+  ([ADR-0003](docs/adr/0003-middleware-complete-only-defer-streaming.md)).
+- Anything under an `internal/` directory, and `examples/`.
 
 **Go version policy.** The `go` directive in `go.mod` is the minimum
 language version (currently Go 1.26), not a patch pin. It is raised only when
-the code needs a newer release, never past the oldest Go release still
-supported upstream, and a raise is noted in the release notes. This module's
+this module's code or a dependency needs a newer release, and only to a Go
+release that is still supported upstream. A raise is noted in the release
+notes. This module's
 own CI and development builds run on a patched toolchain through the
 `toolchain` line, and `govulncheck` runs on every PR. That line doesn't
 apply when this module is a dependency. Consumers choose their own toolchain

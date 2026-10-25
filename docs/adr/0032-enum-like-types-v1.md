@@ -28,8 +28,8 @@ The record disagreed with Dan's v1 plan, which made these types growable:
 - **`toolloop.CompactReason`** has no recorded growth decision at all.
   ADR-0030 defines its two values as the hook's two call points.
 
-A frozen `OutcomeKind` is costly. The loop has gained a kind in five of its
-releases (terminal tools, deadline, empty response, context overflow,
+A frozen `OutcomeKind` is costly. The loop has gained five kinds across four
+releases (terminal tools; deadline and empty response; context overflow;
 compaction errors). Every one of those reported a stop that callers had been
 misreading as something else. A frozen set forces the next such case either
 into `OutcomeLLMError` with a sentinel error, which is the misclassification
@@ -71,8 +71,8 @@ those ADRs existed to remove, or into a major version.
    separate, opt-in hook.
 6. This amends the "the set stays closed" and "v1 freezes the outcome set"
    sentences in ADR-0017, ADR-0019, ADR-0020, ADR-0026 and ADR-0030, the
-   "closed set of constants" sentence in ADR-0022, and adds Decision 5 to
-   ADR-0030's design. Their other decisions are unchanged.
+   "closed set of constants" sentence in ADR-0022, and adds a rule to
+   ADR-0030's design: this ADR's Decision 5 (`CompactReason` fixed for v1). Their other decisions are unchanged.
 
 ## Consequences
 

@@ -4,6 +4,8 @@ Status: Draft
 Date: 2026-05-15  
 Intended repo/package name: `maestro-llms`
 
+Compatibility: the v1 stability contract (what is covered, what may grow, what is not covered) is the README section ["Stability contract (v1)"](../README.md#stability-contract-v1). The v1 refresh of this document is tracked in #83.
+
 ## Purpose
 
 `maestro-llms` is a small open source Go toolkit for working with LLM and embedding providers behind stable application-facing interfaces.

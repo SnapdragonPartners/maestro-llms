@@ -106,7 +106,7 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 go get github.com/SnapdragonPartners/maestro-llms@latest
 ```
 
-Requires Go 1.26+. Core import path: `github.com/SnapdragonPartners/maestro-llms/llms`.
+Requires Go 1.26+ (see the [Go version policy](#stability-contract-v1)). Core import path: `github.com/SnapdragonPartners/maestro-llms/llms`.
 
 ## Usage
 
@@ -927,9 +927,117 @@ Conventions: a PR that intentionally diverges from Maestro appends a row to
 in `docs/adr/` in the same PR. Don't relitigate decisions the spec or an ADR
 already settled, and don't "fix" a deliberate limitation an ADR explains.
 
+## Stability contract (v1)
+
+This section is the compatibility promise that takes effect at **v1.0.0**.
+Until then, v0.x minor versions may still break (tracked in
+[#84](https://github.com/SnapdragonPartners/maestro-llms/issues/84)). From
+v1.0.0 on, anything this section covers changes incompatibly only in a new
+major version with a `/v2` import path. Deprecated identifiers stay for the
+life of v1.
+
+**Covered: every exported identifier in the public packages**
+
+| Packages | Notes |
+|---|---|
+| `llms` | Core interfaces, conversation model, errors, `Usage`, `EstimateTextTokens` |
+| `llms/middleware`, `llms/ratelimit` | Middleware, chain helpers, `Recommended*`, the reservation protocol, `FromBucket` |
+| `llms/toolloop`, `llms/toolloop/compact` | Loop, outcomes, compaction hook and policies |
+| `llms/testllm` | Deterministic fakes |
+| `llms/providers/anthropic`, `.../anthropic/anthropicvertex`, `.../google`, `.../ollama`, `.../openai`, `.../openaicompat` | Constructors, options and client methods |
+| `llms/providers/vllm` | Deprecated alias of `openaicompat`, kept permanently ([ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md)) |
+| `bucket`, `bucket/memory`, `bucket/postgres` | Limiter, lease, backends, `Ensure`, the schema-version API |
+
+**Covered: documented semantics, not just signatures.** This includes
+everything [`docs/specification.md`](docs/specification.md) and the accepted
+ADRs specify, for example:
+
+- `Usage` normalization: `InputTokens` includes cached input, with cache
+  reads and writes as subsets; `ReasoningTokens` and `BillableOutputTokens`
+  ([ADR-0016](docs/adr/0016-usage-reasoning-tokens.md),
+  [ADR-0018](docs/adr/0018-anthropic-thinking-tokens.md),
+  [ADR-0023](docs/adr/0023-usage-input-includes-cache.md)).
+- Error classification: `llms.Retryable` is the single classifier, and the
+  meaning of each `ErrorKind`
+  ([ADR-0004](docs/adr/0004-retry-circuit-reuse-llms-retryable.md),
+  [ADR-0026](docs/adr/0026-context-length-error-kind.md)).
+- Middleware composition: first argument outermost, and the order of the
+  `Recommended*` chains.
+- The reservation protocol (`Reserve` → `Commit` → always `Release`) and
+  the `bucket` lease semantics, including fail-closed behavior and `MaxWait`
+  as a hard deadline ([ADR-0025](docs/adr/0025-bucket-distributed-limiter.md)).
+- Tool-loop semantics: when each `OutcomeKind` is reported, terminal tools,
+  and the compaction hook ([ADR-0011](docs/adr/0011-toolloop-helper.md)
+  through [ADR-0030](docs/adr/0030-toolloop-compaction.md)).
+- The `EstimateTextTokens` formula (rune count divided by 4, rounded up),
+  because callers persist chunk boundaries built on it
+  ([ADR-0013](docs/adr/0013-text-token-estimator.md)).
+
+A change that makes behavior match its documentation is a bug fix, not a
+break. Such fixes ship in patch or minor releases and are called out in the
+release notes.
+
+**Enum-like types grow.** New values of `llms.ErrorKind`,
+`ContentPartType`, `Role`, `ToolChoiceType`, `ReasoningEffort`,
+`EmbeddingTask`, `Purpose` and `ProviderID`, `ratelimit.Operation`, and
+`toolloop.OutcomeKind` and `CompactReason` may be added in minor releases. A switch over any of them needs a `default`
+case. A new value comes with a documented meaning and, where it changes what
+a caller sees, a release-notes entry.
+
+**Interfaces are frozen.** Adding a method to an exported interface would
+break every implementation, including consumers' own fakes and wrappers.
+That applies to `ChatClient`, `EmbeddingClient`, `StreamingChatClient`,
+`ModelLister`, `ratelimit.Limiter`, `Reservation`, `LimiterStats`,
+`middleware.Observer`, `ContextObserver`, `TokenEstimator`,
+`bucket.Limiter` and `bucket.Lease`. So adding a method is a v2 change.
+Capabilities grow through new optional interfaces, which callers detect with
+a type assertion, as `StreamingChatClient` and `ContextObserver` already do.
+New fields on exported structs and new functional options are additive.
+Don't use unkeyed struct literals for this package's types.
+
+**Not covered**
+
+- `Raw` fields (`ChatResponse.Raw`, `EmbeddingResponse.Raw`,
+  `ModelInfo.Raw`): provider- and SDK-specific payloads.
+- Error message text. Match on types, `ErrorKind` and `errors.As`, not
+  strings.
+- `StopReason` values, which are the provider's own strings, and provider
+  model IDs, model families and listing results.
+- Provider-side behavior: what a model or API accepts, returns or rejects.
+  `ProviderParams` keys and values pass through as the provider defines them
+  ([ADR-0024](docs/adr/0024-provider-params.md)).
+- Third-party types in the public API: `anthropic.WithRequestOptions` takes
+  anthropic-sdk-go's `option.RequestOption`; `anthropicvertex.New` returns
+  anthropic-sdk-go's `*anthropic.Client`; and `google.WithCredentials` and
+  `anthropicvertex.WithCredentials` take cloud.google.com/go/auth's
+  `*auth.Credentials`. Those types follow their own modules. Moving to a new
+  SDK major version can change them in a minor release of this module, and
+  that release says so in its notes. Nothing else in the public API exposes
+  an SDK type.
+- Tuning values that aren't part of a documented semantic: default backoff
+  timings, and the default `TokenEstimator`'s exact numbers (only its bias
+  toward over-reserving is promised).
+- `bucket/postgres` table layout: the `bucket` schema's tables are internal
+  to the backend. A minor release may raise `postgres.SchemaVersion` with
+  new expand-only migrations. Its release notes open with **"Database
+  migration required"**, and an unmigrated database gets
+  `*postgres.SchemaError`, not wrong behavior.
+- Anything under an `internal/` directory, `examples/`, and test-only
+  helpers.
+
+**Go version policy.** The `go` directive in `go.mod` is the minimum
+language version (currently Go 1.26), not a patch pin. It is raised only when
+the code needs a newer release, never past the oldest Go release still
+supported upstream, and a raise is noted in the release notes. This module's
+own CI and development builds run on a patched toolchain through the
+`toolchain` line, and `govulncheck` runs on every PR. That line doesn't
+apply when this module is a dependency. Consumers choose their own toolchain
+and should keep it on a supported, patched release.
+
 ## Versioning & license
 
-Pre-1.0; v0.x minor versions may break. Shipped lines: **v0.1.0** (core +
+Pre-1.0; v0.x minor versions may break. The v1 promise is the
+[stability contract](#stability-contract-v1) above. Shipped lines: **v0.1.0** (core +
 Anthropic chat + OpenAI embeddings), **v0.2.0** (OpenAI/Google/Ollama chat +
 error classifier), **v0.3.0** (full middleware set + `Recommended*`),
 **v0.4.0** (Anthropic-on-Vertex + Gemini/Vertex embeddings, PSC

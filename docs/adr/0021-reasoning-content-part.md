@@ -1,6 +1,6 @@
 # 0021. Round-trip provider reasoning as a `ContentReasoning` part
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0030](0030-toolloop-compaction.md) (a `Compact` hook edits history, so it must strip reasoning first)
 - **Date:** 2026-10-17
 
 ## Context
@@ -125,7 +125,9 @@ text as well as tool use, so it needs its own part.
 - **New failure mode for apps that edit history:** editing an earlier turn
   and resending later thinking blocks is a 400 on enforced accounts. Call
   `llms.WithoutReasoning` first. `toolloop` only appends and keeps `System`
-  and `Tools` fixed, so it is unaffected.
+  and `Tools` fixed, so it is unaffected. (Amended by ADR-0030: with
+  `Config.Compact` set, the hook edits history and must strip reasoning
+  first; the shipped compactors do.)
 - Consumers that switch exhaustively on `ContentPart.Type` will see a new
   value. Consumers that persist transcripts should store reasoning parts
   (including `ProviderData`) or drop all of them.

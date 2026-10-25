@@ -1,6 +1,6 @@
 # 0022. Provider-neutral reasoning control (`ChatRequest.Reasoning`, `ChatResponse.AppliedReasoning`)
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0032](0032-enum-like-types-v1.md) (new `ReasoningEffort` constants may be added after v1; only the constants have meaning)
 - **Date:** 2026-10-17
 
 ## Context

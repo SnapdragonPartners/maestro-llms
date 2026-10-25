@@ -1,6 +1,6 @@
 # 0017. Tool loop terminal tools and executed limit turn
 
-- **Status:** Accepted; amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (negative `MaxIterations` is unlimited), and by [ADR-0032](0032-outcome-kind-grows.md) (`OutcomeKind` may grow after v1; switches need a `default` case)
+- **Status:** Accepted; amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (negative `MaxIterations` is unlimited), and by [ADR-0032](0032-enum-like-types-v1.md) (`OutcomeKind` may grow after v1; switches need a `default` case)
 - **Date:** 2026-10-15
 
 ## Context

@@ -55,7 +55,7 @@ Copy `0001`'s structure as the template.
 | [0019](0019-toolloop-deadline-and-no-iteration-limit.md) | Tool loop `OutcomeDeadline` and `NoIterationLimit` (the loop's context decides deadline vs failure; negative `MaxIterations` is unlimited) | Accepted; amended by 0032 |
 | [0020](0020-toolloop-empty-response.md) | Tool loop `OutcomeEmptyResponse` (an empty response is reported, not appended) | Accepted; amended by 0032 |
 | [0021](0021-reasoning-content-part.md) | Round-trip provider reasoning as a `ContentReasoning` part (Anthropic thinking blocks); typed `ProviderID` | Accepted; amended by 0030 |
-| [0022](0022-reasoning-effort.md) | Provider-neutral reasoning control (`ChatRequest.Reasoning`, `ChatResponse.AppliedReasoning`): 1:1 mapping or omitted, no per-model prediction | Accepted |
+| [0022](0022-reasoning-effort.md) | Provider-neutral reasoning control (`ChatRequest.Reasoning`, `ChatResponse.AppliedReasoning`): 1:1 mapping or omitted, no per-model prediction | Accepted; amended by 0032 |
 | [0023](0023-usage-input-includes-cache.md) | `Usage.InputTokens` includes cached input on every provider; cache reads/writes are subsets | Accepted |
 | [0024](0024-provider-params.md) | Per-request `ProviderParams`: raw provider body fields keyed by `ProviderID`, deep-merged after mapping | Accepted |
 | [0025](0025-bucket-distributed-limiter.md) | Generic `bucket` limiter with a Postgres backend (lease rows + renewal for slots; FIFO queue planned, not MVP) | Accepted |
@@ -65,4 +65,4 @@ Copy `0001`'s structure as the template.
 | [0029](0029-vertex-injected-client-auth.md) | Vertex: `WithCredentials` authenticates an injected `WithHTTPClient` (network-only on every provider; caller's client never mutated) | Accepted |
 | [0030](0030-toolloop-compaction.md) | Tool loop compaction: one `Compact` hook (before each turn, and once on overflow), `OutcomeCompactionError`, separate `CompactionUsage`, `KeepLast`/`Summarize` in the `compact` leaf | Accepted; amended by 0032 |
 | [0031](0031-attempt-context-observer.md) | Per-attempt correlation: optional `ContextObserver` (each `Event` with its context) and the retry attempt number via `AttemptFromContext`; no chain-order change | Accepted |
-| [0032](0032-outcome-kind-grows.md) | `toolloop.OutcomeKind` may grow after v1: new kinds still need an ADR, switches need a `default` case, no silent reclassification | Accepted |
+| [0032](0032-enum-like-types-v1.md) | Enum-like types at v1: the grow list (switches need a `default` case, no silent reclassification), a new `OutcomeKind` still needs an ADR, `CompactReason` fixed for v1 | Accepted |

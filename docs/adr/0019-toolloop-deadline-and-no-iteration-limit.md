@@ -1,6 +1,6 @@
 # 0019. Tool loop `OutcomeDeadline` and `NoIterationLimit`
 
-- **Status:** Accepted; amended by [ADR-0032](0032-outcome-kind-grows.md) (`OutcomeKind` may grow after v1; switches need a `default` case)
+- **Status:** Accepted; amended by [ADR-0032](0032-enum-like-types-v1.md) (`OutcomeKind` may grow after v1; switches need a `default` case)
 - **Date:** 2026-10-16
 
 ## Context

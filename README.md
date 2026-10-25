@@ -987,12 +987,12 @@ release notes.
 A switch over any of them needs a `default` case. A new value comes with a
 documented meaning and, where it changes what a caller sees, a release-notes
 entry. A new `OutcomeKind` also needs its own ADR, and it doesn't silently
-take over stops that an existing kind reports
-([ADR-0032](docs/adr/0032-outcome-kind-grows.md)). `toolloop.CompactReason`
-is the exception: it names the hook's two call points (before a turn, and on
-overflow), which are fixed for v1
-([ADR-0030](docs/adr/0030-toolloop-compaction.md)), so a hook may test
-`Reason == CompactOverflow` and treat everything else as before-turn.
+take over cases that an existing value reports.
+`toolloop.CompactReason` is the exception: it names the hook's two call
+points (before a turn, and on overflow), which are fixed for v1, so a hook
+may test `Reason == CompactOverflow` and treat everything else as
+before-turn. [ADR-0032](docs/adr/0032-enum-like-types-v1.md) is the decision
+of record for this list.
 
 **Interfaces are frozen.** Adding a method to an exported interface would
 break every implementation, including consumers' own fakes and wrappers.

@@ -118,7 +118,7 @@ type Config struct {
 type Compactor func(ctx context.Context, in CompactInput) (CompactResult, error)
 
 // CompactReason says why Run called a Compactor. Its two values name the
-// hook's two call points, which are fixed for v1 (ADR-0030); unlike
+// hook's two call points, which are fixed for v1 (ADR-0032); unlike
 // OutcomeKind, it does not grow.
 type CompactReason string
 

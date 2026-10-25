@@ -52,7 +52,7 @@ Pre-1.0; v0.x minor versions may break. Shipped lines: see README "Versioning & 
 
 ## Branch and review workflow
 
-Several consumers (Maestro, Morris, maestro-cms, buggrit) depend on this package, so substantive work follows a **review-before-push** loop (the same process as Morris): the heavy review happens on the local branch *before* the push. Post-push checks (CI, CodeQL, the automatic Copilot review) are a lighter final proofread.
+Several consumers (Maestro, Morris, maestro-cms, buggrit) depend on this package, so substantive work follows a **review-before-push** loop (the same process as Morris): the heavy review happens on the local branch *before* the push. Post-push checks (CI, CodeQL, the automatic Copilot review, and buggrit, which posts each finding as its own review thread and re-verifies it on every push and reply) are a lighter final proofread. buggrit reads `.github/buggrit.json` from `main`; its check is `buggrit / review`.
 
 **Roles:**
 

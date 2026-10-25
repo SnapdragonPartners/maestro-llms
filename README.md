@@ -223,7 +223,10 @@ Anthropic binds each thinking block to the conversation before it. **If you
 edit history** (drop or rewrite earlier turns, compact client-side), remove
 all reasoning first with `llms.WithoutReasoning(msgs)`. Otherwise newer
 Anthropic accounts reject the request with `400 ... bound to a different
-conversation`. Appending is always safe, and `toolloop` only appends.
+conversation`. Appending is always safe, and `toolloop` only appends unless
+`Config.Compact` is set: a compaction hook that drops or rewrites turns must
+remove reasoning first, as both `llms/toolloop/compact` policies do
+([ADR-0030](docs/adr/0030-toolloop-compaction.md)).
 
 #### Reasoning control
 

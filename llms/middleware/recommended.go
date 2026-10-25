@@ -17,7 +17,8 @@ type RecommendedConfig struct {
 	Limiter ratelimit.Limiter
 	// Estimator is used only when Limiter is non-nil; nil => DefaultEstimator.
 	Estimator TokenEstimator
-	// Observer, if non-nil, adds the innermost metrics middleware.
+	// Observer, if non-nil, adds the innermost metrics middleware. A
+	// ContextObserver also receives each attempt's context (ADR-0031).
 	Observer Observer
 	// Retry policy. Zero value => default schedule with jitter OFF; use
 	// DefaultRetryConfig() for the recommended jittered policy.
@@ -51,6 +52,13 @@ type RecommendedConfig struct {
 // per-attempt granularity and fold backoff sleeps into latency). Apps that
 // also need rejection/aggregate observability should hand-compose with
 // ChainChat and add a second, outer MetricsChat (it is placement-agnostic).
+//
+// Attempt correlation: an Observer that also implements ContextObserver gets
+// each attempt's context, which carries the caller's context values and the
+// retry attempt number (AttemptFromContext). A consumer that wraps this
+// chain in its own decorator can therefore tie each attempt to its logical
+// call, and attribute the rest of the logical call's time to backoff and
+// limiter waits (ADR-0031).
 func RecommendedChat(base llms.ChatClient, cfg RecommendedConfig) llms.ChatClient {
 	mws := []ChatMiddleware{ValidationChat(), RetryChat(cfg.Retry)}
 	if cfg.Timeout > 0 {

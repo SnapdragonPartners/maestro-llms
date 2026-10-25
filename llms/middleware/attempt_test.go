@@ -247,6 +247,22 @@ func TestAttemptFromContextAbsentOutsideRetry(t *testing.T) {
 	}
 }
 
+func TestAttemptFromContextReportsInnermostRetry(t *testing.T) {
+	rec := &ctxRecorder{}
+	base := &testllm.FakeChatClient{ModelRef: llms.ModelRef{Provider: "p", Name: "m"}, Func: failFirst(4)}
+	// Outer attempt 1 runs inner attempts 1-3 (all fail); outer attempt 2
+	// runs inner attempts 1 (fails) and 2 (succeeds). The observer sees the
+	// inner layer's count, restarting with each outer attempt.
+	c := ChainChat(base, RetryChat(fastRetry(2)), RetryChat(fastRetry(3)), MetricsChat(rec))
+
+	if _, err := c.Complete(callCtx("c1"), userReq("hi")); err != nil {
+		t.Fatalf("want success, got %v", err)
+	}
+	if got := attemptsOf(rec.snapshot()); !slices.Equal(got, []int{1, 2, 3, 1, 2}) {
+		t.Fatalf("want the innermost retry's numbers [1 2 3 1 2], got %v", got)
+	}
+}
+
 func TestContextObserverEmbeddingsSeesEachAttempt(t *testing.T) {
 	rec := &ctxRecorder{}
 	var calls atomic.Int32

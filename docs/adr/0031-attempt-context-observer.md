@@ -61,8 +61,8 @@ engineering review on #114 found two problems:
    `Observe`, never both, with the context of the call `MetricsChat`
    wrapped. The choice is made once, at construction. In
    `RecommendedChat`, where metrics is innermost, that is the attempt's
-   context: the caller's values, the attempt number, and the per-attempt
-   timeout's deadline.
+   context: the caller's values, the attempt number, and, when
+   `RecommendedConfig.Timeout` is set, the per-attempt deadline.
 
 3. **The context is for reading values.** It may already be done (a
    per-attempt timeout that fired, or the caller's cancellation), so an

@@ -316,6 +316,8 @@ case toolloop.OutcomeTerminalTool, toolloop.OutcomeEmptyResponse,
 	toolloop.OutcomeContextExceeded, toolloop.OutcomeCompactionError,
 	toolloop.OutcomeToolError, toolloop.OutcomeCanceled, toolloop.OutcomeDeadline:
 	// inspect out.Err, out.Messages, out.TotalUsage
+default:
+	// a kind added in a later release (ADR-0032): inspect out.Err, out.Messages
 }
 ```
 
@@ -981,12 +983,16 @@ release notes.
 **Enum-like types grow.** New values of `llms.ErrorKind`,
 `ContentPartType`, `Role`, `ToolChoiceType`, `ReasoningEffort`,
 `EmbeddingTask`, `Purpose` and `ProviderID`, `ratelimit.Operation`, and
-`toolloop.OutcomeKind` and `CompactReason` may be added in minor releases.
+`toolloop.OutcomeKind` may be added in minor releases.
 A switch over any of them needs a `default` case. A new value comes with a
 documented meaning and, where it changes what a caller sees, a release-notes
 entry. A new `OutcomeKind` also needs its own ADR, and it doesn't silently
 take over stops that an existing kind reports
-([ADR-0032](docs/adr/0032-outcome-kind-grows.md)).
+([ADR-0032](docs/adr/0032-outcome-kind-grows.md)). `toolloop.CompactReason`
+is the exception: it names the hook's two call points (before a turn, and on
+overflow), which are fixed for v1
+([ADR-0030](docs/adr/0030-toolloop-compaction.md)), so a hook may test
+`Reason == CompactOverflow` and treat everything else as before-turn.
 
 **Interfaces are frozen.** Adding a method to an exported interface would
 break every implementation, including consumers' own fakes and wrappers.

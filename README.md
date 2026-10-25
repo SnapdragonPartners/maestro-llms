@@ -656,7 +656,7 @@ just performance.**
 | `TimeoutChat` / `TimeoutEmbeddings` | Per-attempt `context` deadline. |
 | `CircuitChat` / `CircuitEmbeddings` | Three-state breaker; fast-fails with a non-retryable `*CircuitOpenError`; single-flight HalfOpen probe. |
 | `RateLimitChat` / `RateLimitEmbeddings` | Reservation protocol against a `ratelimit.Limiter`. |
-| `MetricsChat` / `MetricsEmbeddings` | One app-neutral `Event` per call to a narrow `Observer` (success and failure). |
+| `MetricsChat` / `MetricsEmbeddings` | One app-neutral `Event` per call to a narrow `Observer` (success and failure). An `Observer` that also implements `ContextObserver` gets each `Event` with the call's context; with retry outside, `AttemptFromContext` gives the attempt number (ADR-0031). |
 
 The easy path is `RecommendedChat`, which composes the spec's recommended
 order — `validation → retry → per-attempt timeout → circuit → rate limit →

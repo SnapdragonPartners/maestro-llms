@@ -78,6 +78,9 @@ func (c RetryConfig) normalized() RetryConfig {
 // middleware: each attempt flows independently through timeout, circuit
 // breaker, and the rate-limit reservation, so retries are gated like first
 // attempts.
+//
+// Each attempt's context carries its 1-based attempt number, readable by
+// inner layers with AttemptFromContext (ADR-0031).
 func RetryChat(cfg RetryConfig) ChatMiddleware {
 	cfg = cfg.normalized()
 	return func(next llms.ChatClient) llms.ChatClient {
@@ -94,9 +97,10 @@ func RetryEmbeddings(cfg RetryConfig) EmbeddingMiddleware {
 }
 
 // retry runs call up to cfg.MaxAttempts times, backing off between attempts
-// while llms.Retryable(err) holds. Provider/limiter errors pass through
-// unwrapped so errors.As keeps resolving *llms.ProviderError / *llms.LimitError;
-// a backoff interrupted by ctx cancellation returns ctx.Err().
+// while llms.Retryable(err) holds. Each call gets ctx tagged with its attempt
+// number. Provider/limiter errors pass through unwrapped so errors.As keeps
+// resolving *llms.ProviderError / *llms.LimitError; a backoff interrupted by
+// ctx cancellation returns ctx.Err().
 func retry[Resp any](
 	ctx context.Context,
 	cfg RetryConfig,
@@ -109,7 +113,7 @@ func retry[Resp any](
 		delay = cfg.InitialDelay
 	)
 	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
-		resp, err = call(ctx)
+		resp, err = call(withAttempt(ctx, attempt))
 		if err == nil || !llms.Retryable(err) {
 			return resp, err //nolint:wrapcheck // pass provider/limiter errors through unwrapped
 		}

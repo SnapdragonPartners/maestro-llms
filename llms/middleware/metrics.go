@@ -43,6 +43,35 @@ type Observer interface {
 	Observe(Event)
 }
 
+// ContextObserver is an optional Observer capability (ADR-0031). When the
+// Observer passed to MetricsChat/MetricsEmbeddings also implements it, each
+// Event goes to ObserveContext instead of Observe (never both), together with
+// the context of the call MetricsChat wrapped. That lets a consumer tie an
+// Event to its own logical call through values it put in ctx, and read the
+// attempt number with AttemptFromContext when a retry layer sits outside.
+//
+// ctx is for reading values. It may already be done (a per-attempt timeout
+// that fired, or the caller's cancellation), so an implementation that does
+// I/O with it should detach it first (context.WithoutCancel). The Observer
+// contract applies: safe for concurrent use, and non-blocking, because the
+// call returns only after ObserveContext does. The Event deliberately carries
+// no request or response content; consumers that capture content do it in
+// their own decorator.
+type ContextObserver interface {
+	Observer
+	ObserveContext(ctx context.Context, ev Event)
+}
+
+// emitter returns the function that delivers an Event, resolved once at
+// construction: ObserveContext when obs implements ContextObserver, Observe
+// otherwise.
+func emitter(obs Observer) func(context.Context, Event) {
+	if co, ok := obs.(ContextObserver); ok {
+		return co.ObserveContext
+	}
+	return func(_ context.Context, ev Event) { obs.Observe(ev) }
+}
+
 // MetricsChat returns middleware that reports each Complete to obs. A nil obs
 // returns next unchanged (zero overhead, no wrapper). Per the spec's
 // recommended order this is the innermost middleware (closest to the provider
@@ -53,7 +82,7 @@ func MetricsChat(obs Observer) ChatMiddleware {
 		if obs == nil {
 			return next
 		}
-		return &metricsChat{next: next, obs: obs}
+		return &metricsChat{next: next, emit: emitter(obs)}
 	}
 }
 
@@ -63,22 +92,23 @@ func MetricsEmbeddings(obs Observer) EmbeddingMiddleware {
 		if obs == nil {
 			return next
 		}
-		return &metricsEmbedding{next: next, obs: obs}
+		return &metricsEmbedding{next: next, emit: emitter(obs)}
 	}
 }
 
 // observed times call and emits exactly one Event regardless of outcome.
 // The call's error passes through unwrapped so errors.As keeps resolving.
 func observed[Resp any](
-	obs Observer,
+	ctx context.Context,
+	emit func(context.Context, Event),
 	m llms.ModelRef,
 	op ratelimit.Operation,
 	purpose llms.Purpose,
 	usageOf func(Resp) llms.Usage,
-	call func() (Resp, error),
+	call func(context.Context) (Resp, error),
 ) (Resp, error) {
 	start := time.Now()
-	resp, err := call()
+	resp, err := call(ctx)
 	ev := Event{
 		Provider:  m.Provider,
 		Model:     m.Name,
@@ -92,13 +122,13 @@ func observed[Resp any](
 	if err == nil {
 		ev.Usage = usageOf(resp)
 	}
-	obs.Observe(ev)
+	emit(ctx, ev)
 	return resp, err //nolint:wrapcheck // pass provider/limiter errors through unwrapped
 }
 
 type metricsChat struct {
 	next llms.ChatClient
-	obs  Observer
+	emit func(context.Context, Event)
 }
 
 func (c *metricsChat) Model() llms.ModelRef { return c.next.Model() }
@@ -108,15 +138,15 @@ func (c *metricsChat) Model() llms.ModelRef { return c.next.Model() }
 //
 //nolint:dupl // parallel typed adapter; shared logic already extracted to observed()
 func (c *metricsChat) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
-	return observed(c.obs, c.next.Model(), ratelimit.OperationChat, req.Purpose,
+	return observed(ctx, c.emit, c.next.Model(), ratelimit.OperationChat, req.Purpose,
 		func(r llms.ChatResponse) llms.Usage { return r.Usage },
-		func() (llms.ChatResponse, error) { return c.next.Complete(ctx, req) },
+		func(ctx context.Context) (llms.ChatResponse, error) { return c.next.Complete(ctx, req) },
 	)
 }
 
 type metricsEmbedding struct {
 	next llms.EmbeddingClient
-	obs  Observer
+	emit func(context.Context, Event)
 }
 
 func (c *metricsEmbedding) Model() llms.ModelRef   { return c.next.Model() }
@@ -127,8 +157,8 @@ func (c *metricsEmbedding) DefaultDimensions() int { return c.next.DefaultDimens
 //
 //nolint:dupl // parallel typed adapter; shared logic already extracted to observed()
 func (c *metricsEmbedding) Embed(ctx context.Context, req llms.EmbeddingRequest) (llms.EmbeddingResponse, error) {
-	return observed(c.obs, c.next.Model(), ratelimit.OperationEmbedding, req.Purpose,
+	return observed(ctx, c.emit, c.next.Model(), ratelimit.OperationEmbedding, req.Purpose,
 		func(r llms.EmbeddingResponse) llms.Usage { return r.Usage },
-		func() (llms.EmbeddingResponse, error) { return c.next.Embed(ctx, req) },
+		func(ctx context.Context) (llms.EmbeddingResponse, error) { return c.next.Embed(ctx, req) },
 	)
 }

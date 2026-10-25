@@ -64,3 +64,4 @@ Copy `0001`'s structure as the template.
 | [0028](0028-gemini-chat-on-vertex.md) | Gemini chat on Vertex AI: `google.New` accepts `WithVertex`/`WithCredentials`, one backend selector for chat and embeddings, Vertex model-listing prefix | Accepted; amended by 0029 |
 | [0029](0029-vertex-injected-client-auth.md) | Vertex: `WithCredentials` authenticates an injected `WithHTTPClient` (network-only on every provider; caller's client never mutated) | Accepted |
 | [0030](0030-toolloop-compaction.md) | Tool loop compaction: one `Compact` hook (before each turn, and once on overflow), `OutcomeCompactionError`, separate `CompactionUsage`, `KeepLast`/`Summarize` in the `compact` leaf | Accepted |
+| [0031](0031-attempt-context-observer.md) | Per-attempt correlation: optional `ContextObserver` (each `Event` with its context) and the retry attempt number via `AttemptFromContext`; no chain-order change | Accepted |

@@ -1,6 +1,6 @@
 module github.com/SnapdragonPartners/maestro-llms
 
-go 1.26.9
+go 1.26.10
 
 require (
 	cloud.google.com/go/auth v0.24.1
@@ -8,7 +8,6 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.82.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/openai/openai-go/v3 v3.78.0
-	golang.org/x/oauth2 v0.37.0
 	google.golang.org/genai v1.75.0
 )
 
@@ -46,6 +45,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect

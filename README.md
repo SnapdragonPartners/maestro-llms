@@ -993,7 +993,18 @@ That applies to `ChatClient`, `EmbeddingClient`, `StreamingChatClient`,
 Capabilities grow through new optional interfaces, which callers detect with
 a type assertion, as `StreamingChatClient` and `ContextObserver` already do.
 New fields on exported structs and new functional options are additive.
-Don't use unkeyed struct literals for this package's types.
+Don't use unkeyed struct literals for this package's types. A struct that
+is comparable today stays comparable (for example `ModelRef`, often used as
+a map key, and `Usage`), so new fields on those are themselves comparable.
+
+**Dependency upgrades don't break the API.** Per
+[ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md), an upgrade that would
+change one of the escape-hatch types (listed under "Not covered" below) is a breaking change of this
+module. It isn't taken in a v1 minor release. If it's unavoidable (for
+example a security fix only in a new major version of the SDK), the new type
+arrives through a new option next to the old one, or in `/v2`.
+cloud.google.com/go/auth is still pre-1.0, so this is a real constraint on
+its upgrades.
 
 **Not covered**
 
@@ -1006,14 +1017,13 @@ Don't use unkeyed struct literals for this package's types.
 - Provider-side behavior: what a model or API accepts, returns or rejects.
   `ProviderParams` keys and values pass through as the provider defines them
   ([ADR-0024](docs/adr/0024-provider-params.md)).
-- Third-party types in the public API: `anthropic.WithRequestOptions` takes
-  anthropic-sdk-go's `option.RequestOption`; `anthropicvertex.New` returns
-  anthropic-sdk-go's `*anthropic.Client`; and `google.WithCredentials` and
-  `anthropicvertex.WithCredentials` take cloud.google.com/go/auth's
-  `*auth.Credentials`. Those types follow their own modules. Moving to a new
-  SDK major version can change them in a minor release of this module, and
-  that release says so in its notes. Nothing else in the public API exposes
-  an SDK type.
+- What a third-party type does: the public API exposes two types from
+  other modules, through three options, as deliberate escape hatches. `anthropic.WithRequestOptions`
+  takes anthropic-sdk-go's `option.RequestOption`, and `google.WithCredentials`
+  and `anthropicvertex.WithCredentials` take cloud.google.com/go/auth's
+  `*auth.Credentials`. The signatures are covered like any other. The
+  behavior of those types belongs to their own modules. Nothing else in the
+  public API exposes an SDK type.
 - Tuning values that aren't part of a documented semantic: default backoff
   timings, and the default `TokenEstimator`'s exact numbers (only its bias
   toward over-reserving is promised).

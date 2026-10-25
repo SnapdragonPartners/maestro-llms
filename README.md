@@ -972,7 +972,7 @@ cached input on every provider — see
 `bucket/memory` and shared `bucket/postgres` backends, adapted to the
 middleware by `ratelimit.FromBucket` — see
 [ADR-0025](docs/adr/0025-bucket-distributed-limiter.md); `bucket/postgres`
-needs its schema v1 migration applied before deploying), and **v0.13.0**
+needs its schema v1 migration applied before deploying), **v0.13.0**
 (`ErrorKindContextLength` for context-window overflow, plus toolloop
 `OutcomeContextExceeded` — see
 [ADR-0026](docs/adr/0026-context-length-error-kind.md); pre-v1 API cleanup:
@@ -982,6 +982,13 @@ permanent alias), `*auth.Credentials` on both Vertex entry points, and one
 [ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md); Gemini chat on Vertex AI
 — see [ADR-0028](docs/adr/0028-gemini-chat-on-vertex.md); on Vertex,
 `WithCredentials` authenticates an injected `WithHTTPClient` — see
-[ADR-0029](docs/adr/0029-vertex-injected-client-auth.md)).
+[ADR-0029](docs/adr/0029-vertex-injected-client-auth.md)), and **v0.14.0**
+(toolloop compaction: one `Config.Compact` hook, run before each turn and
+once on overflow, plus `OutcomeCompactionError` and the `KeepLast`/
+`Summarize` policies in `llms/toolloop/compact` — see
+[ADR-0030](docs/adr/0030-toolloop-compaction.md); per-attempt correlation
+for observers: an optional `middleware.ContextObserver` gets each `Event`
+with its context, and `AttemptFromContext` reports the retry attempt
+number — see [ADR-0031](docs/adr/0031-attempt-context-observer.md)).
 
 MIT — see [`LICENSE`](LICENSE).

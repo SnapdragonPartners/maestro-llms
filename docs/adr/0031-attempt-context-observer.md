@@ -1,6 +1,6 @@
 # 0031. Per-attempt correlation: `ContextObserver` and the retry attempt number in ctx
 
-- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (`LimitError` is retryable only when temporary, so only those rejections consume an attempt)
+- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (`LimitError` is retryable unless `Permanent` or canceled, so only those retryable rejections consume an attempt)
 - **Date:** 2026-10-24
 
 ## Context
@@ -23,9 +23,10 @@ attempt index derived by counting the attempts the slot sees. The
 engineering review on #114 found two problems:
 
 - **Counting undercounts.** `*llms.LimitError` is retryable (since
-  ADR-0033, only a temporary one), so a limiter rejection consumes a
-  retry attempt that never reaches anything inside the rate-limit layer. With `MaxAttempts=3` an innermost hook can
-  see attempts 1 and 3 and call them 1 and 2.
+  ADR-0033, unless `Permanent` or canceled), so a limiter rejection
+  consumes a retry attempt that never reaches anything inside the
+  rate-limit layer. With `MaxAttempts=3` an innermost hook can see
+  attempts 1 and 3 and call them 1 and 2.
 - **A middleware slot is more than observation needs.** The request is
   the same on every attempt, and only the final attempt's response is
   trusted, so a per-attempt hook adds the context, attempt number,
@@ -125,7 +126,7 @@ wait. `ExampleContextObserver` shows the records.
 - #114 (request and the engineering review comment), #112 (the wider
   capture scope), buggrit#26 (first consumer).
 - ADR-0003 (middleware is `Complete`/`Embed` only), ADR-0004 (retry
-  classifies via `llms.Retryable`, which makes a temporary `LimitError`
-  retryable; ADR-0033).
+  classifies via `llms.Retryable`, which makes a `LimitError`
+  retryable unless it is `Permanent` or canceled; ADR-0033).
 - Spec: "Logging and metrics should use narrow callback interfaces, not
   a specific logging package."

@@ -127,6 +127,8 @@ says anything about the provider.
   failures count" rule gains the `LimitError` exception.
 - [ADR-0025](0025-bucket-distributed-limiter.md): `bucket.LimitError` gains
   `Permanent` and `Cause`, and `FromBucket` maps both.
+- [ADR-0031](0031-attempt-context-observer.md): only a retryable (temporary
+  or deadline-ended) limiter rejection consumes a retry attempt.
 
 ## References
 

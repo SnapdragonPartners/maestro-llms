@@ -112,9 +112,19 @@ func TestCircuitHalfOpenLimitErrorIsNeitherFailureNorSuccess(t *testing.T) {
 	}
 	// Not a success either: had the LimitError closed the breaker
 	// (SuccessThreshold 1), this one provider failure would leave it Closed
-	// (FailureThreshold 2). Still HalfOpen, the failed probe reopens it.
-	if _, err := c.Complete(context.Background(), llms.ChatRequest{}); !errors.As(err, new(*CircuitOpenError)) {
-		t.Fatalf("a LimitError probe must not count as a recovery success; want reopened breaker, got %v", err)
+	// (FailureThreshold 2). Still HalfOpen, the failed probe reopens it. The
+	// state is read directly: a third call would depend on the short open
+	// window not having elapsed yet.
+	cc, ok := c.(*circuitChat)
+	if !ok {
+		t.Fatalf("CircuitChat returned %T", c)
+	}
+	b := cc.b
+	b.mu.Lock()
+	state := b.state
+	b.mu.Unlock()
+	if state != stateOpen {
+		t.Fatalf("a LimitError probe must not count as a recovery success; want the failed probe to reopen the breaker, state %d", state)
 	}
 }
 

@@ -49,7 +49,8 @@ Introduce `middleware.CircuitOpenError{Provider, Model, RetryAfter}`:
   recommended chain) is advised.
 - Only `llms.Retryable(err)` failures count against the breaker; successes
   reset a Closed failure streak; non-retryable/caller errors are **neutral**
-  (pass through, no state change) — consistent with ADR-0004.
+  (pass through, no state change) — consistent with ADR-0004. Since
+  ADR-0033, a `*llms.LimitError` is neutral even when retryable.
 
 Lives in the `middleware` package (it is produced only by this middleware;
 consumers using it already import the package). Recorded as divergence **M4**.

@@ -16,7 +16,8 @@ auth (401/403), bad request (400/404), and `ServiceUnavailable`.
 - `*llms.ProviderError` with `Kind` and `Retryable()` (retryable kinds:
   `rate_limited`, `timeout`, `unavailable`, and `unknown`-conservative; not
   `auth`, `config`, `bad_request`, `content_policy`),
-- `*llms.LimitError` (always retryable; carries `RetryAfter`),
+- `*llms.LimitError` (always retryable; carries `RetryAfter`; since
+  ADR-0033, retryable only when temporary),
 - `llms.Retryable(err)` which resolves both via `errors.As`,
 - `RetryAfter` on both error types for provider/limiter backoff hints.
 

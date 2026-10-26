@@ -97,10 +97,11 @@ func TestProviderErrorRetryableAndUnwrap(t *testing.T) {
 	}
 }
 
-func TestLimitErrorIsAlwaysRetryable(t *testing.T) {
+// The Permanent, canceled and deadline cases are in error_test.go (ADR-0033).
+func TestLimitErrorTemporaryIsRetryable(t *testing.T) {
 	le := &LimitError{Provider: "openai", Model: "gpt", Reason: "tokens", RetryAfter: 2 * time.Second}
 	if !le.Retryable() || !Retryable(le) {
-		t.Fatal("LimitError should always be retryable")
+		t.Fatal("a temporary LimitError should be retryable")
 	}
 	var pe *ProviderError
 	if errors.As(le, &pe) {

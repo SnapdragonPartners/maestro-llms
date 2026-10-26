@@ -25,6 +25,10 @@ concurrency:
 
 permissions:
   contents: read
+  # buggrit's optional database (buggrit design §3 "Database"): a keyless
+  # Google Cloud login for the rate limit shared with other repositories.
+  # Without it, buggrit warns on the PR and runs without the database.
+  id-token: write
 
 jobs:
   buggrit:

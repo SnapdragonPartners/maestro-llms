@@ -2,21 +2,22 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/SnapdragonPartners/maestro-llms/bucket"
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
-
-// defaultBufferFactor sizes bucket capacity below the nominal per-minute rate
-// to absorb token-estimate inaccuracy (overestimation is the safe direction).
-const defaultBufferFactor = 0.9
 
 // defaultPollInterval is how often a blocked Reserve re-checks for capacity.
 const defaultPollInterval = 100 * time.Millisecond
 
 // Config configures an InMemoryLimiter. The zero value is usable: a zero
-// TokensPerMinute or MaxConcurrency means that dimension is unlimited.
+// TokensPerMinute or MaxConcurrency means that dimension is unlimited. The
+// limits are validated like bucket.Limits (ADR-0034): a negative limit, a
+// NaN, infinite or negative BufferFactor, or a capacity that overflows int is
+// an error from NewInMemoryLimiter.
 type Config struct {
 	// Clock returns the current time; defaults to time.Now. Injectable so
 	// refill behavior is deterministic in tests.
@@ -30,7 +31,8 @@ type Config struct {
 	MaxWait time.Duration
 	// PollInterval is the re-check cadence while blocked; defaults to 100ms.
 	PollInterval time.Duration
-	// BufferFactor scales capacity below TokensPerMinute; defaults to 0.9.
+	// BufferFactor scales capacity below TokensPerMinute; 0 selects
+	// bucket.DefaultBufferFactor (0.9).
 	BufferFactor float64
 }
 
@@ -59,40 +61,43 @@ type InMemoryLimiter struct {
 // compile-time assertions live in the test file (package-level vars would trip
 // gochecknoglobals).
 
-// NewInMemoryLimiter builds an InMemoryLimiter from cfg.
-func NewInMemoryLimiter(cfg Config) *InMemoryLimiter {
+// NewInMemoryLimiter builds an InMemoryLimiter from cfg. It returns an error,
+// and no limiter, when the limits fail validation (see Config).
+func NewInMemoryLimiter(cfg Config) (*InMemoryLimiter, error) {
+	// The capacity math and its validation are bucket.Limits', so both
+	// in-memory limiters and bucket/postgres size a bucket identically.
+	limits := bucket.Limits{
+		TokensPerMinute: cfg.TokensPerMinute,
+		MaxConcurrency:  cfg.MaxConcurrency,
+		BufferFactor:    cfg.BufferFactor,
+	}
+	if err := limits.Validate(); err != nil {
+		return nil, fmt.Errorf("ratelimit: %w", err)
+	}
 	clock := cfg.Clock
 	if clock == nil {
 		clock = time.Now
-	}
-	buffer := cfg.BufferFactor
-	if buffer <= 0 {
-		buffer = defaultBufferFactor
 	}
 	poll := cfg.PollInterval
 	if poll <= 0 {
 		poll = defaultPollInterval
 	}
-	// A positive rate must yield a positive bucket: with a sub-1 product
-	// (e.g. 1 TPM * 0.9) int truncation would give 0 and silently disable
-	// token limiting. Floor at 1 and keep the fractional refill via carry.
-	tokenLimiting := cfg.TokensPerMinute > 0
-	capacity := 0
-	if tokenLimiting {
-		capacity = max(1, int(float64(cfg.TokensPerMinute)*buffer))
-	}
+	// Capacity floors a positive rate at 1, so a sub-1 product (e.g. 1 TPM *
+	// 0.9) never truncates to 0 and silently disables token limiting; the
+	// fractional refill is kept via carry.
+	capacity := limits.Capacity()
 	return &InMemoryLimiter{
 		clock:          clock,
 		lastRefill:     clock(),
 		maxWait:        cfg.MaxWait,
 		pollInterval:   poll,
-		refillPerSec:   float64(cfg.TokensPerMinute) / 60.0,
+		refillPerSec:   limits.RefillPerSecond(),
 		availableTok:   capacity,
 		maxCapacity:    capacity,
 		maxConcurrency: cfg.MaxConcurrency,
-		tokenLimiting:  tokenLimiting,
-		slotLimiting:   cfg.MaxConcurrency > 0,
-	}
+		tokenLimiting:  limits.TokenLimited(),
+		slotLimiting:   limits.SlotLimited(),
+	}, nil
 }
 
 func (l *InMemoryLimiter) tokenLimited() bool { return l.tokenLimiting }
@@ -265,15 +270,28 @@ type reservation struct {
 	released  bool
 }
 
-// effectiveTokens is the total tokens to charge for actual usage: chat
-// (TotalTokens, else input + output) and embeddings (EmbeddingTokens). Cache
-// reads and writes are subsets of InputTokens (ADR-0023), so they are already
-// counted and are not added again.
+// effectiveTokens is the token count charged for actual usage (ADR-0034),
+// shared by InMemoryLimiter and FromBucket:
+//
+//   - input is InputTokens, or EmbeddingTokens for an embedding call. Both
+//     count the request's input tokens, so they overlap and the larger is
+//     taken rather than the sum. Cache reads and writes are subsets of
+//     InputTokens (ADR-0023) and are not added again.
+//   - output is BillableOutputTokens, or OutputTokens + ReasoningTokens when
+//     it is unset, so reasoning tokens are charged either way.
+//   - TotalTokens is a provider-specific aggregate, so it is a floor, not the
+//     charge: usage that reports only a total charges that total instead of
+//     refunding the whole estimate, and a total that counts tokens the
+//     normalized fields don't (Gemini's tool-use prompt) is not undercounted.
+//
+// Negative fields count as zero.
 func effectiveTokens(u llms.Usage) int {
-	if u.TotalTokens > 0 {
-		return u.TotalTokens
+	input := max(u.InputTokens, u.EmbeddingTokens, 0)
+	output := u.BillableOutputTokens
+	if output <= 0 {
+		output = max(u.OutputTokens, 0) + max(u.ReasoningTokens, 0)
 	}
-	return u.InputTokens + u.OutputTokens + u.EmbeddingTokens
+	return max(input+output, u.TotalTokens)
 }
 
 // Commit reconciles actual token usage against the estimate. Lower actual

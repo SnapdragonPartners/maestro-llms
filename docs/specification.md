@@ -776,6 +776,7 @@ Reconciliation contract:
 - If actual usage is higher than estimated, implementations should charge the delta if the backend supports it.
 - A failed delta charge must not erase the fact that the provider call already happened; implementations should return an error so the application can audit/account for the mismatch.
 - Concurrency leases are released by `Release`, not by `Commit`.
+- **Amended by ADR-0034 (2026-10-26):** the toolkit's limiters charge `max(InputTokens, EmbeddingTokens)` plus `BillableOutputTokens` (or `OutputTokens + ReasoningTokens` when it is unset), with `TotalTokens`, a provider-specific aggregate, as a floor. Middleware commits any usage that reports a token field. `NewInMemoryLimiter` returns an error for limits `bucket.Limits.Validate` rejects.
 
 In-memory limiter implementation:
 

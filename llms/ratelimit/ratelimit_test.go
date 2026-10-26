@@ -52,7 +52,7 @@ func chatReq(tokens int) ReservationRequest {
 
 func TestReserveSucceedsAndStatsReflectConsumption(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)}
-	l := NewInMemoryLimiter(Config{TokensPerMinute: 1000, MaxConcurrency: 4, Clock: clk.Now})
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1000, MaxConcurrency: 4, Clock: clk.Now})
 	// capacity = 1000 * 0.9 = 900.
 	r, err := l.Reserve(context.Background(), chatReq(100))
 	if err != nil {
@@ -72,7 +72,7 @@ func TestReserveSucceedsAndStatsReflectConsumption(t *testing.T) {
 }
 
 func TestImpossibleRequestsReturnLimitError(t *testing.T) {
-	l := NewInMemoryLimiter(Config{TokensPerMinute: 100, MaxConcurrency: 1})
+	l := mustNewLimiter(t, Config{TokensPerMinute: 100, MaxConcurrency: 1})
 	_, err := l.Reserve(context.Background(), chatReq(10_000))
 	var le *llms.LimitError
 	if !errors.As(err, &le) || !le.Permanent || llms.Retryable(err) {
@@ -94,7 +94,7 @@ func TestEndedWaitLimitErrors(t *testing.T) {
 	full := func(t *testing.T, cfg Config) *InMemoryLimiter {
 		t.Helper()
 		cfg.MaxConcurrency, cfg.PollInterval = 1, time.Millisecond
-		l := NewInMemoryLimiter(cfg)
+		l := mustNewLimiter(t, cfg)
 		r := mustReserve(t, l, chatReq(1)) // hold the only slot
 		t.Cleanup(func() { _ = r.Release(context.Background()) })
 		return l
@@ -141,7 +141,7 @@ func TestEndedWaitLimitErrors(t *testing.T) {
 }
 
 func TestConcurrencyGateBlocksUntilRelease(t *testing.T) {
-	l := NewInMemoryLimiter(Config{MaxConcurrency: 1}) // token-unlimited
+	l := mustNewLimiter(t, Config{MaxConcurrency: 1}) // token-unlimited
 	r1, err := l.Reserve(context.Background(), chatReq(0))
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestConcurrencyGateBlocksUntilRelease(t *testing.T) {
 }
 
 func TestBlockedReserveProceedsAfterRelease(t *testing.T) {
-	l := NewInMemoryLimiter(Config{MaxConcurrency: 1, PollInterval: 5 * time.Millisecond})
+	l := mustNewLimiter(t, Config{MaxConcurrency: 1, PollInterval: 5 * time.Millisecond})
 	r1 := mustReserve(t, l, chatReq(0))
 
 	done := make(chan error, 1)
@@ -202,7 +202,7 @@ func TestBlockedReserveProceedsAfterRelease(t *testing.T) {
 
 func TestCommitReconciliation(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)} // frozen: no refill interference
-	l := NewInMemoryLimiter(Config{TokensPerMinute: 1000, MaxConcurrency: 2, Clock: clk.Now})
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1000, MaxConcurrency: 2, Clock: clk.Now})
 
 	// Under-use: reserve 200, actually use 50 -> refund 150.
 	r := mustReserve(t, l, chatReq(200))
@@ -237,7 +237,7 @@ func TestCommitReconciliation(t *testing.T) {
 }
 
 func TestReleaseIdempotentAndSafeAfterCommit(t *testing.T) {
-	l := NewInMemoryLimiter(Config{TokensPerMinute: 1000, MaxConcurrency: 2})
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1000, MaxConcurrency: 2})
 	r := mustReserve(t, l, chatReq(10))
 	if err := r.Commit(context.Background(), llms.Usage{TotalTokens: 10}); err != nil {
 		t.Fatal(err)
@@ -255,7 +255,7 @@ func TestReleaseIdempotentAndSafeAfterCommit(t *testing.T) {
 
 func TestLazyRefillFromClock(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)}
-	l := NewInMemoryLimiter(Config{TokensPerMinute: 600, MaxConcurrency: 1, Clock: clk.Now})
+	l := mustNewLimiter(t, Config{TokensPerMinute: 600, MaxConcurrency: 1, Clock: clk.Now})
 	// capacity = 540, refill = 10 tok/sec.
 	r := mustReserve(t, l, chatReq(540))
 	_ = r.Release(context.Background())
@@ -276,7 +276,7 @@ func TestLazyRefillFromClock(t *testing.T) {
 }
 
 func TestUnlimitedDimensions(t *testing.T) {
-	l := NewInMemoryLimiter(Config{}) // both unlimited
+	l := mustNewLimiter(t, Config{}) // both unlimited
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Go(func() {
@@ -296,7 +296,7 @@ func TestUnlimitedDimensions(t *testing.T) {
 // so Commit charges them once, not on top.
 func TestCommitDoesNotDoubleCountCache(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)}
-	l := NewInMemoryLimiter(Config{TokensPerMinute: 1000, MaxConcurrency: 2, Clock: clk.Now})
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1000, MaxConcurrency: 2, Clock: clk.Now})
 	r := mustReserve(t, l, chatReq(200))
 	if err := r.Commit(context.Background(), llms.Usage{
 		InputTokens: 90, OutputTokens: 10, TotalTokens: 100, CacheReadTokens: 60, CacheWriteTokens: 20,
@@ -314,4 +314,13 @@ func TestCommitDoesNotDoubleCountCache(t *testing.T) {
 	if s, _ := l.Stats(context.Background()); s.AvailableTokens != 700 {
 		t.Fatalf("no TotalTokens: want input+output (100) charged, available = %d", s.AvailableTokens)
 	}
+}
+
+func mustNewLimiter(t *testing.T, cfg Config) *InMemoryLimiter {
+	t.Helper()
+	l, err := NewInMemoryLimiter(cfg)
+	if err != nil {
+		t.Fatalf("NewInMemoryLimiter(%+v): %v", cfg, err)
+	}
+	return l
 }

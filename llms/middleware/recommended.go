@@ -66,7 +66,7 @@ func RecommendedChat(base llms.ChatClient, cfg RecommendedConfig) llms.ChatClien
 	}
 	mws = append(mws, CircuitChat(cfg.Circuit))
 	if cfg.Limiter != nil {
-		mws = append(mws, RateLimitChat(cfg.Limiter, estimatorOrDefault(cfg.Estimator)))
+		mws = append(mws, RateLimitChat(cfg.Limiter, cfg.Estimator))
 	}
 	if cfg.Observer != nil {
 		mws = append(mws, MetricsChat(cfg.Observer))
@@ -84,7 +84,7 @@ func RecommendedEmbeddings(base llms.EmbeddingClient, cfg RecommendedConfig) llm
 	}
 	mws = append(mws, CircuitEmbeddings(cfg.Circuit))
 	if cfg.Limiter != nil {
-		mws = append(mws, RateLimitEmbeddings(cfg.Limiter, estimatorOrDefault(cfg.Estimator)))
+		mws = append(mws, RateLimitEmbeddings(cfg.Limiter, cfg.Estimator))
 	}
 	if cfg.Observer != nil {
 		mws = append(mws, MetricsEmbeddings(cfg.Observer))

@@ -134,7 +134,7 @@ func TestCircuitHalfOpenLimitErrorIsNeitherFailureNorSuccess(t *testing.T) {
 // impossible request burned every attempt and tripped the breaker.
 func TestRecommendedChatImpossibleRequestDoesNotTripCircuit(t *testing.T) {
 	fake := &testllm.FakeChatClient{Text: "ok"}
-	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{TokensPerMinute: 20_000})
+	lim := mustNewLimiter(t, ratelimit.Config{TokensPerMinute: 20_000})
 	retry := fastRetry(5)
 	c := RecommendedChat(fake, RecommendedConfig{
 		Retry:   retry,
@@ -161,7 +161,7 @@ func TestRecommendedChatImpossibleRequestDoesNotTripCircuit(t *testing.T) {
 // reaches the provider.
 func TestRecommendedChatTemporaryExhaustionDoesNotTripCircuit(t *testing.T) {
 	fake := &testllm.FakeChatClient{Text: "ok"}
-	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{MaxConcurrency: 1, MaxWait: 2 * time.Millisecond, PollInterval: time.Millisecond})
+	lim := mustNewLimiter(t, ratelimit.Config{MaxConcurrency: 1, MaxWait: 2 * time.Millisecond, PollInterval: time.Millisecond})
 	held, err := lim.Reserve(context.Background(), ratelimit.ReservationRequest{})
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestRecommendedChatTemporaryExhaustionDoesNotTripCircuit(t *testing.T) {
 // after d, so the first waits on it end by their own context.
 func heldLimiter(t *testing.T, d time.Duration) *ratelimit.InMemoryLimiter {
 	t.Helper()
-	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{MaxConcurrency: 1, PollInterval: time.Millisecond})
+	lim := mustNewLimiter(t, ratelimit.Config{MaxConcurrency: 1, PollInterval: time.Millisecond})
 	held, err := lim.Reserve(context.Background(), ratelimit.ReservationRequest{})
 	if err != nil {
 		t.Fatal(err)

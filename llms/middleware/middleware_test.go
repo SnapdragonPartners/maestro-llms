@@ -93,7 +93,7 @@ func (r *recordEmb) Embed(ctx context.Context, req llms.EmbeddingRequest) (llms.
 }
 
 func TestRateLimitChatReservesCommitsReleases(t *testing.T) {
-	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{
+	lim := mustNewLimiter(t, ratelimit.Config{
 		TokensPerMinute: 100_000, MaxConcurrency: 2, Clock: frozenClock(),
 	})
 	// capacity = 90_000.
@@ -117,7 +117,7 @@ func TestRateLimitChatReservesCommitsReleases(t *testing.T) {
 }
 
 func TestRateLimitChatLimitErrorSkipsInnerCall(t *testing.T) {
-	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{TokensPerMinute: 100}) // cap 90
+	lim := mustNewLimiter(t, ratelimit.Config{TokensPerMinute: 100}) // cap 90
 	fake := &testllm.FakeChatClient{Text: "should not be called"}
 	c := RateLimitChat(lim, DefaultEstimator{})(fake)
 
@@ -137,7 +137,7 @@ func TestRateLimitChatLimitErrorSkipsInnerCall(t *testing.T) {
 }
 
 func TestRateLimitChatReleasesAfterMidCallContextCancel(t *testing.T) {
-	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{MaxConcurrency: 1}) // token-unlimited
+	lim := mustNewLimiter(t, ratelimit.Config{MaxConcurrency: 1}) // token-unlimited
 	ctx, cancel := context.WithCancel(context.Background())
 	// Reserve succeeds first (ctx still live); the cancellation happens
 	// *inside* the call, so the deferred Release(WithoutCancel) path is
@@ -165,7 +165,7 @@ func TestRateLimitChatReleasesAfterMidCallContextCancel(t *testing.T) {
 }
 
 func TestRateLimitChatKeepsEstimateWhenUsageUnreported(t *testing.T) {
-	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{
+	lim := mustNewLimiter(t, ratelimit.Config{
 		TokensPerMinute: 100_000, MaxConcurrency: 2, Clock: frozenClock(),
 	}) // capacity 90_000
 	fake := &testllm.FakeChatClient{
@@ -191,7 +191,7 @@ func TestRateLimitChatKeepsEstimateWhenUsageUnreported(t *testing.T) {
 }
 
 func TestRateLimitEmbeddingsHappyAndReject(t *testing.T) {
-	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{TokensPerMinute: 100_000, MaxConcurrency: 1, Clock: frozenClock()})
+	lim := mustNewLimiter(t, ratelimit.Config{TokensPerMinute: 100_000, MaxConcurrency: 1, Clock: frozenClock()})
 	fake := &testllm.FakeEmbeddingClient{Dims: 4, Usage: llms.Usage{EmbeddingTokens: 12}}
 	c := RateLimitEmbeddings(lim, DefaultEstimator{})(fake)
 	resp, err := c.Embed(context.Background(), llms.EmbeddingRequest{
@@ -249,11 +249,51 @@ func TestDefaultEstimatorCountsOpaquePayloads(t *testing.T) {
 	}
 
 	// The reservation consequence: the payload alone exceeds the limiter.
-	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{TokensPerMinute: 100}) // cap 90
+	lim := mustNewLimiter(t, ratelimit.Config{TokensPerMinute: 100}) // cap 90
 	fake := &testllm.FakeChatClient{Text: "should not be called"}
 	_, err := RateLimitChat(lim, DefaultEstimator{})(fake).Complete(context.Background(), withReasoning)
 	var le *llms.LimitError
 	if !errors.As(err, &le) || len(fake.Calls()) != 0 {
 		t.Fatalf("err = %v, calls = %d; want a LimitError before any call", err, len(fake.Calls()))
+	}
+}
+
+func mustNewLimiter(t *testing.T, cfg ratelimit.Config) *ratelimit.InMemoryLimiter {
+	t.Helper()
+	l, err := ratelimit.NewInMemoryLimiter(cfg)
+	if err != nil {
+		t.Fatalf("NewInMemoryLimiter(%+v): %v", cfg, err)
+	}
+	return l
+}
+
+// TestRateLimitNilEstimatorUsesDefault: a nil estimator selects
+// DefaultEstimator instead of panicking on the first call (ADR-0034).
+func TestRateLimitNilEstimatorUsesDefault(t *testing.T) {
+	lim := mustNewLimiter(t, ratelimit.Config{TokensPerMinute: 100_000, Clock: frozenClock()})
+	chat := RateLimitChat(lim, nil)(&testllm.FakeChatClient{Text: "ok"})
+	if _, err := chat.Complete(context.Background(), userReq("hello")); err != nil {
+		t.Fatalf("chat with nil estimator: %v", err)
+	}
+	emb := RateLimitEmbeddings(lim, nil)(&testllm.FakeEmbeddingClient{})
+	if _, err := emb.Embed(context.Background(), llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{{Text: "hello"}}}); err != nil {
+		t.Fatalf("embeddings with nil estimator: %v", err)
+	}
+}
+
+// TestRateLimitCommitsOutputOnlyUsage: usage reporting only reasoning or only
+// billable output is reconciled, not treated as unreported (ADR-0034).
+func TestRateLimitCommitsOutputOnlyUsage(t *testing.T) {
+	for _, u := range []llms.Usage{{ReasoningTokens: 250}, {BillableOutputTokens: 250}} {
+		lim := mustNewLimiter(t, ratelimit.Config{TokensPerMinute: 100_000, Clock: frozenClock()})
+		fake := &testllm.FakeChatClient{
+			Responses: []llms.ChatResponse{{Message: llms.AssistantText("hi"), Text: "hi", Usage: u}},
+		}
+		if _, err := RateLimitChat(lim, nil)(fake).Complete(context.Background(), userReq("hello")); err != nil {
+			t.Fatal(err)
+		}
+		if st, _ := lim.Stats(context.Background()); st.AvailableTokens != 90_000-250 {
+			t.Fatalf("usage %+v: available = %d, want %d", u, st.AvailableTokens, 90_000-250)
+		}
 	}
 }

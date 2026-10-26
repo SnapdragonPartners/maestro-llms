@@ -14,15 +14,18 @@ import (
 //
 // Per the spec, Release is always called and runs on a context that survives
 // request cancellation, and Commit records actual usage only when the call
-// returned one.
+// returned one. A nil est selects DefaultEstimator (ADR-0034).
 func RateLimitChat(limiter ratelimit.Limiter, est TokenEstimator) ChatMiddleware {
+	est = estimatorOrDefault(est)
 	return func(next llms.ChatClient) llms.ChatClient {
 		return &rlChat{next: next, limiter: limiter, est: est}
 	}
 }
 
-// RateLimitEmbeddings is the embedding-side counterpart of RateLimitChat.
+// RateLimitEmbeddings is the embedding-side counterpart of RateLimitChat. A
+// nil est selects DefaultEstimator.
 func RateLimitEmbeddings(limiter ratelimit.Limiter, est TokenEstimator) EmbeddingMiddleware {
+	est = estimatorOrDefault(est)
 	return func(next llms.EmbeddingClient) llms.EmbeddingClient {
 		return &rlEmbedding{next: next, limiter: limiter, est: est}
 	}
@@ -62,9 +65,11 @@ func reserved[Resp any](
 }
 
 // usageReported reports whether any token field is set, i.e. the provider
-// returned usage we can reconcile against.
+// returned usage we can reconcile against. Every Usage token field counts, so
+// reasoning-only or billable-output-only usage is committed too (ADR-0034).
 func usageReported(u llms.Usage) bool {
 	return u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 ||
+		u.ReasoningTokens != 0 || u.BillableOutputTokens != 0 ||
 		u.EmbeddingTokens != 0 || u.CacheReadTokens != 0 || u.CacheWriteTokens != 0
 }
 

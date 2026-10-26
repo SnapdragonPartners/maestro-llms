@@ -713,11 +713,14 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms/ratelimit"
 )
 
-lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{
+lim, err := ratelimit.NewInMemoryLimiter(ratelimit.Config{
 	TokensPerMinute: 100_000, // 0 = token-unlimited
 	MaxConcurrency:  8,        // 0 = concurrency-unlimited
 	// MaxWait: 0 => block until ctx is done; BufferFactor defaults to 0.9
 })
+if err != nil { // negative, non-finite or overflowing limits (ADR-0034)
+	return err
+}
 
 c := middleware.RecommendedChat(client, middleware.RecommendedConfig{
 	Limiter: lim, // nil => rate-limit middleware omitted
@@ -729,11 +732,16 @@ c := middleware.RecommendedChat(client, middleware.RecommendedConfig{
 ```
 
 `ratelimit.Config`'s zero value is usable (a zero dimension is "unlimited").
+A nil estimator passed to `RateLimitChat`/`RateLimitEmbeddings` selects
+`DefaultEstimator`.
 The protocol the middleware runs per call is a **reservation**: `Reserve`
 (estimate units up front) → run the request → `Commit` (actual `Usage`) →
 `Release`. Over-use drives the bucket negative (debt repaid by future
 refills) so traffic is never undercounted; `Release` always runs, even if
-the request's context was canceled.
+the request's context was canceled. `Commit` charges input
+(`max(InputTokens, EmbeddingTokens)`) plus `BillableOutputTokens` (or
+`OutputTokens + ReasoningTokens`), with the provider's `TotalTokens` as a
+floor ([ADR-0034](docs/adr/0034-limiter-config-and-charging.md)).
 
 A limiter that exposes the optional `LimiterStats` capability (the in-memory
 one does) can be type-asserted for a point-in-time snapshot:

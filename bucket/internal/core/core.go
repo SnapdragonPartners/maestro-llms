@@ -100,7 +100,7 @@ func Wait(ctx context.Context, key string, w Waiter, try func(context.Context) (
 		defer cancel()
 	}
 	ended := func(when string, retryAfter time.Duration) *bucket.LimitError {
-		// The caller's context, not waitCtx: only the caller ending the
+		// The ctx passed in, not waitCtx: only that context ending the
 		// wait sets Cause. MaxWait alone is a temporary rejection.
 		if cause := ctx.Err(); cause != nil {
 			return &bucket.LimitError{Key: key, Reason: "context done " + when, RetryAfter: retryAfter, Cause: cause}

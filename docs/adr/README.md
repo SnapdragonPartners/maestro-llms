@@ -66,4 +66,4 @@ Copy `0001`'s structure as the template.
 | [0030](0030-toolloop-compaction.md) | Tool loop compaction: one `Compact` hook (before each turn, and once on overflow), `OutcomeCompactionError`, separate `CompactionUsage`, `KeepLast`/`Summarize` in the `compact` leaf | Accepted; amended by 0032 |
 | [0031](0031-attempt-context-observer.md) | Per-attempt correlation: optional `ContextObserver` (each `Event` with its context) and the retry attempt number via `AttemptFromContext`; no chain-order change | Accepted |
 | [0032](0032-enum-like-types-v1.md) | Enum-like types at v1: the grow list (switches need a `default` case, no silent reclassification), a new `OutcomeKind` still needs an ADR, `CompactReason` fixed for v1 | Accepted |
-| [0033](0033-limit-error-classification.md) | Limiter rejections: `LimitError` is neutral to the circuit; `Permanent` and caller-ended (`Cause`) rejections are not retryable | Accepted |
+| [0033](0033-limit-error-classification.md) | Limiter rejections: `LimitError` is neutral to the circuit; `Permanent` and canceled rejections are not retryable (a deadline still is) | Accepted |

@@ -35,7 +35,7 @@ func boundaryCases() []struct {
 		{name: "limit temporary (capacity exhausted / MaxWait)", err: &llms.LimitError{Reason: "wait exceeded MaxWait"}, retryable: true},
 		{name: "limit impossible", err: &llms.LimitError{Reason: "can never fit", Permanent: true}},
 		{name: "limit caller canceled", err: &llms.LimitError{Reason: "context done", Cause: context.Canceled}, matchesCtxE: context.Canceled},
-		{name: "limit caller deadline", err: &llms.LimitError{Reason: "context done", Cause: context.DeadlineExceeded}, matchesCtxE: context.DeadlineExceeded},
+		{name: "limit deadline (per-attempt or caller)", err: &llms.LimitError{Reason: "context done", Cause: context.DeadlineExceeded}, retryable: true, matchesCtxE: context.DeadlineExceeded},
 		{name: "provider 429", err: &llms.ProviderError{Kind: llms.ErrorKindRateLimited}, retryable: true, tripsBreak: true},
 		{name: "provider outage", err: &llms.ProviderError{Kind: llms.ErrorKindUnavailable}, retryable: true, tripsBreak: true},
 	}
@@ -172,5 +172,71 @@ func TestRecommendedChatTemporaryExhaustionDoesNotTripCircuit(t *testing.T) {
 	}
 	if _, err := c.Complete(context.Background(), req); err != nil {
 		t.Fatalf("breaker must stay closed through limiter rejections, got %v", err)
+	}
+}
+
+// heldLimiter returns a one-slot limiter whose slot is held until release
+// after d, so the first waits on it end by their own context.
+func heldLimiter(t *testing.T, d time.Duration) *ratelimit.InMemoryLimiter {
+	t.Helper()
+	lim := ratelimit.NewInMemoryLimiter(ratelimit.Config{MaxConcurrency: 1, PollInterval: time.Millisecond})
+	held, err := lim.Reserve(context.Background(), ratelimit.ReservationRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(d, func() { _ = held.Release(context.Background()) })
+	return lim
+}
+
+// The timeout middleware runs inside retry, so the limiter waits on a
+// per-attempt context. That attempt's deadline ending the wait must stay
+// retryable: the caller is still active and the next attempt can be
+// admitted (Codex PR 1 round 1; ADR-0033 Decision 4).
+func TestRecommendedPerAttemptDeadlineInLimiterStillRetries(t *testing.T) {
+	cfg := func(lim ratelimit.Limiter) RecommendedConfig {
+		return RecommendedConfig{Retry: fastRetry(3), Timeout: 40 * time.Millisecond, Limiter: lim}
+	}
+	t.Run("chat", func(t *testing.T) {
+		fake := &testllm.FakeChatClient{Text: "ok"}
+		c := RecommendedChat(fake, cfg(heldLimiter(t, 60*time.Millisecond)))
+		req := llms.ChatRequest{Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{llms.Text("hi")}}}}
+		if _, err := c.Complete(context.Background(), req); err != nil {
+			t.Fatalf("a per-attempt deadline in the limiter must be retried, got %v", err)
+		}
+		if n := len(fake.Calls()); n != 1 {
+			t.Fatalf("provider called %d times, want 1", n)
+		}
+	})
+	t.Run("embeddings", func(t *testing.T) {
+		fake := &testllm.FakeEmbeddingClient{}
+		c := RecommendedEmbeddings(fake, cfg(heldLimiter(t, 60*time.Millisecond)))
+		req := llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{{ID: "a", Text: "hi"}}}
+		if _, err := c.Embed(context.Background(), req); err != nil {
+			t.Fatalf("a per-attempt deadline in the limiter must be retried, got %v", err)
+		}
+		if n := len(fake.Calls()); n != 1 {
+			t.Fatalf("provider called %d times, want 1", n)
+		}
+	})
+}
+
+// The caller's own deadline ending the wait stops retry promptly on the
+// caller's context, still matching context.DeadlineExceeded.
+func TestRecommendedCallerDeadlineInLimiterStopsRetry(t *testing.T) {
+	fake := &testllm.FakeChatClient{Text: "ok"}
+	c := RecommendedChat(fake, RecommendedConfig{Retry: fastRetry(50), Limiter: heldLimiter(t, time.Hour)})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	req := llms.ChatRequest{Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{llms.Text("hi")}}}}
+	_, err := c.Complete(ctx, req)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want an error matching context.DeadlineExceeded, got %v", err)
+	}
+	if el := time.Since(start); el > time.Second {
+		t.Fatalf("retry kept going %v after the caller's deadline", el)
+	}
+	if n := len(fake.Calls()); n != 0 {
+		t.Fatalf("provider called %d times, want 0", n)
 	}
 }

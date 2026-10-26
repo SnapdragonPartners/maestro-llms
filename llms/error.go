@@ -1,6 +1,7 @@
 package llms
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -88,11 +89,13 @@ func (e *ProviderError) Retryable() bool {
 // that the provider is unhealthy, so the circuit breaker treats it as
 // neutral (ADR-0033).
 type LimitError struct {
-	// Cause is the error that ended the wait, when one did: the caller's
-	// context error (context.Canceled or context.DeadlineExceeded) when the
-	// caller's context ended the wait. It is nil for a temporary rejection
-	// (capacity exhausted, MaxWait exceeded) and for a Permanent one.
-	// Unwrap exposes it, so errors.Is(err, context.Canceled) holds.
+	// Cause is the context error (context.Canceled or
+	// context.DeadlineExceeded) when the context passed to the limiter
+	// ended the wait. That context may be a per-attempt one (the timeout
+	// middleware runs inside retry), so a deadline here doesn't mean the
+	// caller is gone. It is nil when the limiter's own MaxWait ended the
+	// wait and for a Permanent rejection. Unwrap exposes it, so
+	// errors.Is(err, context.Canceled) holds.
 	Cause    error
 	Provider ProviderID
 	Model    string
@@ -118,11 +121,17 @@ func (e *LimitError) Error() string {
 // Unwrap exposes Cause for errors.Is/errors.As.
 func (e *LimitError) Unwrap() error { return e.Cause }
 
-// Retryable reports whether retrying the same request can succeed: true for
-// a temporary rejection (capacity exhausted, MaxWait exceeded), false when
-// the rejection is Permanent or a Cause (the caller's context) ended the
-// wait. Callers should wait RetryAfter (if non-zero) first.
-func (e *LimitError) Retryable() bool { return !e.Permanent && e.Cause == nil }
+// Retryable reports whether retrying the same request can succeed. It is
+// false when the rejection is Permanent or the wait was canceled (only the
+// caller cancels; retry stops). It is true for a temporary rejection
+// (capacity exhausted, MaxWait exceeded) and for a deadline Cause, matching
+// how a provider deadline is a retryable timeout: a per-attempt deadline
+// leaves the caller active, and when the caller's own deadline has passed
+// the retry loop stops on its context. Callers should wait RetryAfter (if
+// non-zero) first.
+func (e *LimitError) Retryable() bool {
+	return !e.Permanent && !errors.Is(e.Cause, context.Canceled)
+}
 
 // Retryable reports whether err is a known maestro-llms error that is worth
 // retrying. Errors that are neither *ProviderError nor *LimitError are treated

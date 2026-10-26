@@ -110,10 +110,10 @@ func (l Limits) RefillPerSecond() float64 { return float64(l.TokensPerMinute) / 
 // canceled, or the request can never fit. It is distinct from a backend
 // failure.
 type LimitError struct {
-	// Cause is the caller's context error (context.Canceled or
-	// context.DeadlineExceeded) when the caller's context ended the wait;
-	// nil when MaxWait ended it or the request is Permanent. Unwrap
-	// exposes it.
+	// Cause is the context error (context.Canceled or
+	// context.DeadlineExceeded) when the context passed to Acquire ended
+	// the wait; nil when MaxWait ended it or the request is Permanent.
+	// Unwrap exposes it.
 	Cause  error
 	Key    string
 	Reason string

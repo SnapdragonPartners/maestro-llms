@@ -87,9 +87,9 @@ func TestImpossibleRequestsReturnLimitError(t *testing.T) {
 }
 
 // TestEndedWaitLimitErrors pins how a wait that ends without admission is
-// classified (ADR-0033): MaxWait is a temporary, retryable rejection; the
-// caller's context ending the wait sets Cause, so it is not retryable and
-// errors.Is matches the context error.
+// classified (ADR-0033): MaxWait is a temporary, retryable rejection; ctx
+// ending the wait sets Cause, so errors.Is matches the context error, and
+// only a cancellation is non-retryable.
 func TestEndedWaitLimitErrors(t *testing.T) {
 	full := func(t *testing.T, cfg Config) *InMemoryLimiter {
 		t.Helper()
@@ -108,16 +108,17 @@ func TestEndedWaitLimitErrors(t *testing.T) {
 		}
 	})
 	for _, tc := range []struct {
-		ctx  func() (context.Context, context.CancelFunc)
-		want error
-		name string
+		ctx       func() (context.Context, context.CancelFunc)
+		want      error
+		name      string
+		retryable bool
 	}{
 		{name: "canceled", want: context.Canceled, ctx: func() (context.Context, context.CancelFunc) {
 			ctx, cancel := context.WithCancel(context.Background())
 			time.AfterFunc(10*time.Millisecond, cancel)
 			return ctx, cancel
 		}},
-		{name: "deadline", want: context.DeadlineExceeded, ctx: func() (context.Context, context.CancelFunc) {
+		{name: "deadline", want: context.DeadlineExceeded, retryable: true, ctx: func() (context.Context, context.CancelFunc) {
 			return context.WithTimeout(context.Background(), 10*time.Millisecond)
 		}},
 		{name: "done before waiting", want: context.Canceled, ctx: func() (context.Context, context.CancelFunc) {
@@ -132,8 +133,8 @@ func TestEndedWaitLimitErrors(t *testing.T) {
 			defer cancel()
 			_, err := l.Reserve(ctx, chatReq(1))
 			var le *llms.LimitError
-			if !errors.As(err, &le) || !errors.Is(err, tc.want) || llms.Retryable(err) {
-				t.Fatalf("want a non-retryable LimitError matching %v, got %#v", tc.want, err)
+			if !errors.As(err, &le) || !errors.Is(err, tc.want) || llms.Retryable(err) != tc.retryable {
+				t.Fatalf("want a LimitError matching %v (retryable %v), got %#v", tc.want, tc.retryable, err)
 			}
 		})
 	}

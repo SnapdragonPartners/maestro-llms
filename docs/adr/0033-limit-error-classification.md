@@ -1,4 +1,4 @@
-# 0033. Limiter rejections: neutral to the circuit, permanent and caller-ended waits not retryable
+# 0033. Limiter rejections: neutral to the circuit; permanent and canceled waits not retryable
 
 - **Status:** Accepted
 - **Date:** 2026-10-26
@@ -56,16 +56,31 @@ says anything about the provider.
    limiter sets it when the estimate exceeds the maximum capacity or the
    requested concurrency exceeds the maximum; the bucket wait sets it for a
    backend's `Impossible` result.
-3. **`LimitError.Cause`** (and `bucket.LimitError.Cause`) holds the caller's
-   context error when the caller's context ended the wait, and `Unwrap`
-   exposes it. So `errors.As` still finds the `LimitError`, and `errors.Is`
-   matches `context.Canceled` or `context.DeadlineExceeded`. `MaxWait` is
-   the limiter's own budget, not the caller's context: it remains a
+3. **`LimitError.Cause`** (and `bucket.LimitError.Cause`) holds the context
+   error when the context passed to the limiter ended the wait, and
+   `Unwrap` exposes it. So `errors.As` still finds the `LimitError`, and
+   `errors.Is` matches `context.Canceled` or `context.DeadlineExceeded`.
+   `MaxWait` is the limiter's own budget, not a context: it remains a
    temporary rejection with no `Cause`.
-4. **`LimitError.Retryable()` is `!Permanent && Cause == nil`.** A temporary
-   rejection (capacity exhausted, or `MaxWait` exceeded) stays retryable and
-   still honors `RetryAfter`. `llms.Retryable` remains the single classifier
+4. **`LimitError.Retryable()` is `!Permanent && !errors.Is(Cause,
+   context.Canceled)`.** Canceled is not retryable, because only the caller
+   cancels. A deadline is retryable, the same way `apierr` makes a provider
+   deadline a retryable timeout. The context the limiter sees may be a
+   per-attempt one: the timeout middleware runs inside retry. So an
+   expired attempt deadline leaves the caller active, and the next attempt
+   may be admitted. When the caller's own deadline has passed, the retry
+   loop stops on the caller's context (it returns `ctx.Err()`), so the
+   retryable classification costs nothing. A temporary rejection (capacity
+   exhausted, or `MaxWait` exceeded) stays retryable and still honors
+   `RetryAfter`. `llms.Retryable` remains the single classifier
    (ADR-0004).
+
+   The first draft made every `Cause` non-retryable. Codex's round 1
+   reproduced the regression: with `Timeout` set, a held slot freed after
+   the first attempt's deadline failed the call after one attempt, where
+   the base retried and succeeded.
+   `TestRecommendedPerAttemptDeadlineInLimiterStillRetries` pins it for
+   chat and embeddings.
 5. **`ratelimit.FromBucket` carries `Permanent` and `Cause` across** into the
    `*llms.LimitError` it returns, along with `RetryAfter`.
 
@@ -80,10 +95,16 @@ says anything about the provider.
 - A cancelled wait is reported as a `LimitError` that also matches the
   context error, so toolloop and app code that test `errors.Is(err,
   context.Canceled)` behave the same whether the cancellation hit the
-  provider call or the limiter wait.
+  provider call or the limiter wait. The same holds for
+  `context.DeadlineExceeded`.
+- Retry semantics on a context-ended wait now match the provider path:
+  cancellation stops, a deadline is retried while the caller's context is
+  live. The timeout-inside-retry composition (CLAUDE.md: "changing order
+  changes correctness") is preserved.
 - **Behavior change for consumers**, for the release notes:
   - local limiter rejections no longer trip the circuit;
-  - permanent and caller-ended rejections are no longer retried;
+  - permanent and canceled rejections are no longer retried (a deadline
+    still is, as before);
   - code that assumed every `LimitError` is retryable must check
     `llms.Retryable` (or `Permanent` and `Cause`).
 
@@ -114,8 +135,9 @@ says anything about the provider.
 - `llms/ratelimit/memory.go`, `llms/ratelimit/bucket.go`,
   `bucket/bucket.go`, `bucket/internal/core/core.go`
 - `llms/middleware/limit_classification_test.go`: the boundary tests
-  (impossible request, temporary exhaustion, caller cancellation and
-  deadline, `MaxWait`, provider 429, provider outage, and a HalfOpen probe
-  rejected by the limiter)
+  (impossible request, temporary exhaustion, cancellation, deadline,
+  `MaxWait`, provider 429, provider outage, a HalfOpen probe rejected by
+  the limiter, a per-attempt deadline that is retried, and the caller's
+  deadline stopping retry)
 - `docs/MAESTRO_DIVERGENCES.md` row M6
 - #84 (the v1 plan and the v0.15 scope)

@@ -136,9 +136,9 @@ func (l *InMemoryLimiter) limitErr(req ReservationRequest, reason string, retryA
 	}
 }
 
-// ctxDone is the LimitError for a wait ended by the caller's context: Cause
-// is ctx.Err(), so it is not retryable and errors.Is matches the context
-// error (ADR-0033).
+// ctxDone is the LimitError for a wait ended by ctx: Cause is ctx.Err(), so
+// errors.Is matches the context error. Canceled is not retryable; a
+// deadline (possibly a per-attempt one) is (ADR-0033).
 func (l *InMemoryLimiter) ctxDone(ctx context.Context, req ReservationRequest, reason string, retryAfter time.Duration) *llms.LimitError {
 	le := l.limitErr(req, reason, retryAfter)
 	le.Cause = ctx.Err()

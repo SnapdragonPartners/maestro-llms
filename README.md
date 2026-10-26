@@ -848,9 +848,11 @@ default:
 it, no second policy ([ADR-0004](docs/adr/0004-retry-circuit-reuse-llms-retryable.md)).
 A `*llms.LimitError` is retryable only when it is temporary (capacity
 exhausted, `MaxWait` exceeded). One marked `Permanent` (the request can never
-fit the configured limits) is not, and neither is one whose `Cause` is the
-caller's context ending the wait; `errors.Is(err, context.Canceled)` still
-matches through it. The circuit breaker never counts a `LimitError`: a
+fit the configured limits) is not, and neither is a canceled wait. When a
+context ends the wait, `Cause` holds its error, so `errors.Is(err,
+context.Canceled)` matches. A deadline stays retryable, as a provider
+deadline does, because with a per-attempt `Timeout` the caller is still
+waiting. The circuit breaker never counts a `LimitError`: a
 limiter rejection says nothing about the provider's health
 ([ADR-0033](docs/adr/0033-limit-error-classification.md)).
 `*CircuitOpenError` and `*ValidationError` (from middleware) are deliberately

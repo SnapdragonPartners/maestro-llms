@@ -52,7 +52,7 @@ Pre-1.0; v0.x minor versions may break. The v1 promise is the README "Stability 
 
 ## Branch and review workflow
 
-Several consumers (Maestro, Morris, maestro-cms, buggrit) depend on this package, so substantive work follows a **review-before-push** loop (the same process as Morris): the heavy review happens on the local branch *before* the push. Post-push checks (CI, CodeQL, the automatic Copilot review, and buggrit, which posts each finding as its own review thread and re-verifies it on every push and reply) are a lighter final proofread. buggrit reads `.github/buggrit.json` from `main`; its check is `buggrit / review`.
+Several consumers (Maestro, Morris, maestro-cms, buggrit) depend on this package, so substantive work follows a **review-before-push** loop (the same process as Morris): the heavy review happens on the local branch *before* the push. Post-push checks (CI, CodeQL, the automatic Copilot review, and buggrit, which posts each finding as its own review thread and re-verifies it on every push) are a lighter final proofread. buggrit reads `.github/buggrit.json` from `main`; its check is `buggrit / review`.
 
 **Roles:**
 
@@ -122,4 +122,4 @@ End the body with the Claude Code attribution line; end commits with the `Co-Aut
 
 ### Post-push reviewer feedback
 
-Apply the same standard as *Responding to findings*. Fix real bugs in a dedicated commit ("Address PR #N review feedback"). Pushing a fix is another push: a small fix for a post-push finding needs no fresh Codex round unless it changes design or behavior, but a substantive change goes back through Counterpoint and the push gate. **Then reply on each thread citing the fixing commit and resolve the thread** (GraphQL `resolveReviewThread`); a summary comment is not enough. Check again for new feedback after each push.
+Apply the same standard as *Responding to findings*. Fix real bugs in a dedicated commit ("Address PR #N review feedback"). Pushing a fix is another push: a small fix for a post-push finding needs no fresh Codex round unless it changes design or behavior, but a substantive change goes back through Counterpoint and the push gate. **Then reply on each thread citing the fixing commit and resolve the thread** (GraphQL `resolveReviewThread`); a summary comment is not enough. **buggrit's threads are the exception:** to fix one, push the fix and leave the thread open; buggrit verifies it on the next push and resolves it. Resolving a buggrit thread settles the finding, so resolve one only when not fixing it, after replying with the reason. Check again for new feedback after each push.

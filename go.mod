@@ -6,10 +6,10 @@ toolchain go1.26.10
 
 require (
 	cloud.google.com/go/auth v0.24.1
-	cloud.google.com/go/auth/oauth2adapt v0.2.8
-	github.com/anthropics/anthropic-sdk-go v1.82.0
+	cloud.google.com/go/auth/oauth2adapt v0.3.0
+	github.com/anthropics/anthropic-sdk-go v1.84.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/openai/openai-go/v3 v3.78.0
+	github.com/openai/openai-go/v3 v3.85.1
 	google.golang.org/genai v1.75.0
 )
 

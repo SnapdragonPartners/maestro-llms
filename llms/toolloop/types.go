@@ -117,7 +117,9 @@ type Config struct {
 // goroutine, and receives the loop's context.
 type Compactor func(ctx context.Context, in CompactInput) (CompactResult, error)
 
-// CompactReason says why Run called a Compactor.
+// CompactReason says why Run called a Compactor. Its two values name the
+// hook's two call points, which are fixed for v1 (ADR-0032); unlike
+// OutcomeKind, it does not grow.
 type CompactReason string
 
 const (
@@ -194,10 +196,11 @@ type ToolCallEvent struct {
 	Iteration int
 }
 
-// OutcomeKind discriminates Outcome. The set is closed; new kinds require
-// a superseding ADR (OutcomeTerminalTool was added by ADR-0017,
+// OutcomeKind discriminates Outcome. New kinds may be added in minor
+// releases, each by its own ADR (ADR-0032), so a switch over Kind needs a
+// default case. OutcomeTerminalTool was added by ADR-0017,
 // OutcomeDeadline by ADR-0019, OutcomeEmptyResponse by ADR-0020,
-// OutcomeContextExceeded by ADR-0026, OutcomeCompactionError by ADR-0030).
+// OutcomeContextExceeded by ADR-0026, OutcomeCompactionError by ADR-0030.
 type OutcomeKind string
 
 const (

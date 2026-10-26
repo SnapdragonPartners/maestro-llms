@@ -1,6 +1,8 @@
 module github.com/SnapdragonPartners/maestro-llms
 
-go 1.26.10
+go 1.26.0
+
+toolchain go1.26.10
 
 require (
 	cloud.google.com/go/auth v0.24.1

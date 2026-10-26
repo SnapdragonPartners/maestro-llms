@@ -1,6 +1,6 @@
 # 0020. Tool loop `OutcomeEmptyResponse`: an empty response is reported, not appended
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0032](0032-enum-like-types-v1.md) (`OutcomeKind` may grow after v1; switches need a `default` case)
 - **Date:** 2026-10-16
 
 ## Context

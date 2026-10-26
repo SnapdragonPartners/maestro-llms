@@ -136,17 +136,29 @@ func (l *InMemoryLimiter) limitErr(req ReservationRequest, reason string, retryA
 	}
 }
 
-// impossible returns a LimitError when the request can never be admitted at
-// any time (estimate larger than maximum capacity).
+// ctxDone is the LimitError for a wait ended by the caller's context: Cause
+// is ctx.Err(), so it is not retryable and errors.Is matches the context
+// error (ADR-0033).
+func (l *InMemoryLimiter) ctxDone(ctx context.Context, req ReservationRequest, reason string, retryAfter time.Duration) *llms.LimitError {
+	le := l.limitErr(req, reason, retryAfter)
+	le.Cause = ctx.Err()
+	return le
+}
+
+// impossible returns a Permanent LimitError when the request can never be
+// admitted under these limits (estimate larger than maximum capacity).
 func (l *InMemoryLimiter) impossible(req ReservationRequest, tokens, slots int) *llms.LimitError {
+	var le *llms.LimitError
 	switch {
 	case l.tokenLimited() && tokens > l.maxCapacity:
-		return l.limitErr(req, "estimated tokens exceed maximum bucket capacity; request can never be admitted", 0)
+		le = l.limitErr(req, "estimated tokens exceed maximum bucket capacity; request can never be admitted", 0)
 	case l.slotLimited() && slots > l.maxConcurrency:
-		return l.limitErr(req, "requested concurrency exceeds maximum; request can never be admitted", 0)
+		le = l.limitErr(req, "requested concurrency exceeds maximum; request can never be admitted", 0)
 	default:
 		return nil
 	}
+	le.Permanent = true
+	return le
 }
 
 // tryAcquireLocked deducts tokens and a slot when both are available,
@@ -173,7 +185,8 @@ func (l *InMemoryLimiter) tryAcquireLocked(tokens, slots int) (ok bool, retryAft
 
 // Reserve admits the request, blocking until capacity is available, MaxWait is
 // exceeded, or ctx is done. Over-capacity-impossible, timeout, and ctx
-// cancellation all return a *llms.LimitError.
+// cancellation all return a *llms.LimitError: impossible is Permanent, a
+// done ctx sets Cause to ctx.Err(), and MaxWait is temporary (retryable).
 func (l *InMemoryLimiter) Reserve(ctx context.Context, req ReservationRequest) (Reservation, error) {
 	tokens, slots := normalizeUnits(req.EstimatedUnits)
 	if le := l.impossible(req, tokens, slots); le != nil {
@@ -186,7 +199,7 @@ func (l *InMemoryLimiter) Reserve(ctx context.Context, req ReservationRequest) (
 		// consumes capacity (and so a post-sleep cancellation is caught
 		// before the next acquire attempt).
 		if err := ctx.Err(); err != nil {
-			return nil, l.limitErr(req, "context done before rate-limit capacity available", 0)
+			return nil, l.ctxDone(ctx, req, "context done before rate-limit capacity available", 0)
 		}
 
 		l.mu.Lock()
@@ -209,7 +222,7 @@ func (l *InMemoryLimiter) Reserve(ctx context.Context, req ReservationRequest) (
 		}
 		select {
 		case <-ctx.Done():
-			return nil, l.limitErr(req, "context done while waiting for rate-limit capacity", retryAfter)
+			return nil, l.ctxDone(ctx, req, "context done while waiting for rate-limit capacity", retryAfter)
 		case <-time.After(sleep):
 		}
 	}

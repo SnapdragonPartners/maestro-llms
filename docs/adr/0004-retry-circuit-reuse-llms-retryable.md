@@ -1,6 +1,6 @@
 # 0004. Retry and circuit middleware reuse `llms.Retryable`, not a ported classifier
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (`LimitError` is retryable only when temporary, and the circuit never counts it)
 - **Date:** 2026-05-16
 
 ## Context

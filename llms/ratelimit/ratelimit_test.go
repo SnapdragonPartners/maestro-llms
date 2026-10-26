@@ -75,14 +75,67 @@ func TestImpossibleRequestsReturnLimitError(t *testing.T) {
 	l := NewInMemoryLimiter(Config{TokensPerMinute: 100, MaxConcurrency: 1})
 	_, err := l.Reserve(context.Background(), chatReq(10_000))
 	var le *llms.LimitError
-	if !errors.As(err, &le) {
-		t.Fatalf("want *llms.LimitError, got %v", err)
+	if !errors.As(err, &le) || !le.Permanent || llms.Retryable(err) {
+		t.Fatalf("want a Permanent, non-retryable *llms.LimitError, got %#v", err)
 	}
 	_, err = l.Reserve(context.Background(), ReservationRequest{
 		EstimatedUnits: UsageUnits{Requests: 5},
 	})
-	if !errors.As(err, &le) {
-		t.Fatalf("want *llms.LimitError for over-concurrency, got %v", err)
+	if !errors.As(err, &le) || !le.Permanent || llms.Retryable(err) {
+		t.Fatalf("want a Permanent *llms.LimitError for over-concurrency, got %#v", err)
+	}
+}
+
+// TestEndedWaitLimitErrors pins how a wait that ends without admission is
+// classified (ADR-0033): MaxWait is a temporary, retryable rejection; the
+// caller's context ending the wait sets Cause, so it is not retryable and
+// errors.Is matches the context error.
+func TestEndedWaitLimitErrors(t *testing.T) {
+	full := func(t *testing.T, cfg Config) *InMemoryLimiter {
+		t.Helper()
+		cfg.MaxConcurrency, cfg.PollInterval = 1, time.Millisecond
+		l := NewInMemoryLimiter(cfg)
+		r := mustReserve(t, l, chatReq(1)) // hold the only slot
+		t.Cleanup(func() { _ = r.Release(context.Background()) })
+		return l
+	}
+	t.Run("MaxWait", func(t *testing.T) {
+		l := full(t, Config{MaxWait: 10 * time.Millisecond})
+		_, err := l.Reserve(context.Background(), chatReq(1))
+		var le *llms.LimitError
+		if !errors.As(err, &le) || le.Permanent || le.Cause != nil || !llms.Retryable(err) {
+			t.Fatalf("MaxWait: want a temporary retryable LimitError, got %#v", err)
+		}
+	})
+	for _, tc := range []struct {
+		ctx  func() (context.Context, context.CancelFunc)
+		want error
+		name string
+	}{
+		{name: "canceled", want: context.Canceled, ctx: func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			time.AfterFunc(10*time.Millisecond, cancel)
+			return ctx, cancel
+		}},
+		{name: "deadline", want: context.DeadlineExceeded, ctx: func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 10*time.Millisecond)
+		}},
+		{name: "done before waiting", want: context.Canceled, ctx: func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return ctx, cancel
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := full(t, Config{})
+			ctx, cancel := tc.ctx()
+			defer cancel()
+			_, err := l.Reserve(ctx, chatReq(1))
+			var le *llms.LimitError
+			if !errors.As(err, &le) || !errors.Is(err, tc.want) || llms.Retryable(err) {
+				t.Fatalf("want a non-retryable LimitError matching %v, got %#v", tc.want, err)
+			}
+		})
 	}
 }
 

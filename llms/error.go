@@ -84,14 +84,27 @@ func (e *ProviderError) Retryable() bool {
 // LimitError is returned when a local or shared rate limiter rejects a request
 // before any provider call is made. It is deliberately distinct from
 // ProviderError so retry/circuit middleware can distinguish "we throttled
-// locally" from "the provider returned 429".
+// locally" from "the provider returned 429": a LimitError is never evidence
+// that the provider is unhealthy, so the circuit breaker treats it as
+// neutral (ADR-0033).
 type LimitError struct {
+	// Cause is the error that ended the wait, when one did: the caller's
+	// context error (context.Canceled or context.DeadlineExceeded) when the
+	// caller's context ended the wait. It is nil for a temporary rejection
+	// (capacity exhausted, MaxWait exceeded) and for a Permanent one.
+	// Unwrap exposes it, so errors.Is(err, context.Canceled) holds.
+	Cause    error
 	Provider ProviderID
 	Model    string
 	Reason   string
 	// RetryAfter is how long the caller should wait before retrying; zero if
 	// the limiter did not provide a hint.
 	RetryAfter time.Duration
+	// Permanent reports that the request is not admissible under the limits
+	// in force (for example its estimate exceeds the bucket's capacity), so
+	// it is not retryable without changing the request or the configured
+	// limits.
+	Permanent bool
 }
 
 // Error implements error.
@@ -102,9 +115,14 @@ func (e *LimitError) Error() string {
 	return fmt.Sprintf("%s/%s: rate limited locally", e.Provider, e.Model)
 }
 
-// Retryable returns true: a local limiter rejection is the most retryable
-// condition there is. Callers should wait RetryAfter (if non-zero) first.
-func (e *LimitError) Retryable() bool { return true }
+// Unwrap exposes Cause for errors.Is/errors.As.
+func (e *LimitError) Unwrap() error { return e.Cause }
+
+// Retryable reports whether retrying the same request can succeed: true for
+// a temporary rejection (capacity exhausted, MaxWait exceeded), false when
+// the rejection is Permanent or a Cause (the caller's context) ended the
+// wait. Callers should wait RetryAfter (if non-zero) first.
+func (e *LimitError) Retryable() bool { return !e.Permanent && e.Cause == nil }
 
 // Retryable reports whether err is a known maestro-llms error that is worth
 // retrying. Errors that are neither *ProviderError nor *LimitError are treated

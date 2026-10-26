@@ -1,6 +1,6 @@
 # 0005. Circuit breaker emits a distinct, non-retryable `CircuitOpenError`
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (a `*llms.LimitError` is neutral to the breaker even when retryable)
 - **Date:** 2026-05-16
 
 ## Context

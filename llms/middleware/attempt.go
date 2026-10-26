@@ -17,8 +17,8 @@ func withAttempt(ctx context.Context, attempt int) context.Context {
 // layers it reports the innermost one's count.
 //
 // The number is the retry loop's own counter, so it stays exact when an
-// attempt is rejected before reaching an inner layer: a *llms.LimitError from
-// the rate limiter is retryable and consumes an attempt that an inner
+// attempt is rejected before reaching an inner layer: a temporary
+// *llms.LimitError from the rate limiter is retryable and consumes an attempt that an inner
 // ContextObserver never sees, leaving a gap in the numbers it observes
 // (ADR-0031).
 func AttemptFromContext(ctx context.Context) (int, bool) {

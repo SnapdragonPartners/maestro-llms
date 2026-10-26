@@ -79,8 +79,8 @@ func TestWaitImpossibleAndBackendError(t *testing.T) {
 	_, err := Wait(context.Background(), "k", Waiter{Initial: time.Millisecond, Max: time.Millisecond},
 		func(context.Context) (Result, error) { return Result{Impossible: "too big"}, nil })
 	var le *bucket.LimitError
-	if !errors.As(err, &le) || le.Reason != "too big" {
-		t.Fatalf("impossible: %v", err)
+	if !errors.As(err, &le) || le.Reason != "too big" || !le.Permanent || le.Cause != nil {
+		t.Fatalf("impossible: want a Permanent LimitError, got %#v", err)
 	}
 	boom := errors.New("db down")
 	_, err = Wait(context.Background(), "k", Waiter{Initial: time.Millisecond, Max: time.Millisecond},
@@ -97,6 +97,11 @@ func TestWaitMaxWait(t *testing.T) {
 	var le *bucket.LimitError
 	if !errors.As(err, &le) || le.RetryAfter != time.Hour || !strings.Contains(le.Reason, "MaxWait") {
 		t.Fatalf("MaxWait: %v", err)
+	}
+	// MaxWait is the limiter's own budget, not the caller's context: a
+	// temporary rejection with no Cause (ADR-0033).
+	if le.Permanent || le.Cause != nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("MaxWait must be temporary with no Cause: %#v", le)
 	}
 	if el := time.Since(start); el > time.Second {
 		t.Fatalf("MaxWait overslept: %v", el)
@@ -131,16 +136,16 @@ func TestWaitContextCanceled(t *testing.T) {
 	_, err := Wait(ctx, "k", Waiter{Initial: 5 * time.Millisecond, Max: 5 * time.Millisecond},
 		func(context.Context) (Result, error) { return Result{}, nil })
 	var le *bucket.LimitError
-	if !errors.As(err, &le) {
-		t.Fatalf("ctx done: %v", err)
+	if !errors.As(err, &le) || !errors.Is(err, context.DeadlineExceeded) || le.Permanent {
+		t.Fatalf("ctx done: want a LimitError caused by the deadline, got %#v", err)
 	}
 	// A backend error caused by the caller's cancellation is reported as an
 	// ended wait, not a backend failure.
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	_, err = Wait(ctx2, "k", Waiter{Initial: time.Millisecond, Max: time.Millisecond},
 		func(ctx context.Context) (Result, error) { cancel2(); return Result{}, ctx.Err() })
-	if !errors.As(err, &le) {
-		t.Fatalf("ctx canceled mid-try: %v", err)
+	if !errors.As(err, &le) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("ctx canceled mid-try: want a LimitError caused by cancellation, got %#v", err)
 	}
 }
 

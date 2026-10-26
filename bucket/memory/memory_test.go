@@ -84,8 +84,8 @@ func TestTokenRefillAndRetryAfter(t *testing.T) {
 	_ = lease.Release(ctx)
 	_, err = l.Acquire(ctx, "api", 10)
 	var le *bucket.LimitError
-	if !errors.As(err, &le) || le.RetryAfter != 10*time.Second {
-		t.Fatalf("empty bucket: %v", err)
+	if !errors.As(err, &le) || le.RetryAfter != 10*time.Second || le.Permanent || le.Cause != nil {
+		t.Fatalf("empty bucket: want a temporary LimitError, got %#v", err)
 	}
 	clk.advance(10 * time.Second)
 	if _, err := l.Acquire(ctx, "api", 10); err != nil {
@@ -121,8 +121,8 @@ func TestImpossibleUnknownAndDefault(t *testing.T) {
 	l := mustNew(t, Config{Limits: map[string]bucket.Limits{"api": {TokensPerMinute: 10}}})
 	ctx := context.Background()
 	var le *bucket.LimitError
-	if _, err := l.Acquire(ctx, "api", 100); !errors.As(err, &le) {
-		t.Fatalf("impossible: %v", err)
+	if _, err := l.Acquire(ctx, "api", 100); !errors.As(err, &le) || !le.Permanent {
+		t.Fatalf("impossible: want a Permanent LimitError, got %#v", err)
 	}
 	if _, err := l.Acquire(ctx, "nope", 1); !errors.Is(err, bucket.ErrUnknownKey) {
 		t.Fatalf("unknown: %v", err)
@@ -157,8 +157,8 @@ func TestReleaseIdempotentAndLostNeverCloses(t *testing.T) {
 	cctx, cancel := context.WithCancel(ctx)
 	cancel()
 	var le *bucket.LimitError
-	if _, err := l.Acquire(cctx, "api", 0); !errors.As(err, &le) {
-		t.Fatalf("canceled ctx: %v", err)
+	if _, err := l.Acquire(cctx, "api", 0); !errors.As(err, &le) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled ctx: want a LimitError caused by cancellation, got %#v", err)
 	}
 	_ = held.Release(ctx)
 }

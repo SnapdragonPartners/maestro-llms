@@ -86,6 +86,22 @@ func TestFromBucketMapsLimitError(t *testing.T) {
 	if !errors.As(err, &le) || le.Provider != llms.ProviderAnthropic || le.Model != "m" || le.RetryAfter != 3*time.Second {
 		t.Fatalf("LimitError not mapped: %#v", err)
 	}
+	if le.Permanent || le.Cause != nil || !llms.Retryable(err) {
+		t.Fatalf("a temporary bucket rejection must stay retryable: %#v", le)
+	}
+
+	// Permanent and Cause carry across (ADR-0033).
+	b.err = &bucket.LimitError{Key: "k", Reason: "can never fit", Permanent: true}
+	_, err = lim.Reserve(context.Background(), bucketReq(UsageUnits{InputTokens: 1}))
+	if !errors.As(err, &le) || !le.Permanent || llms.Retryable(err) {
+		t.Fatalf("Permanent not mapped: %#v", err)
+	}
+	b.err = &bucket.LimitError{Key: "k", Reason: "context done", Cause: context.Canceled}
+	_, err = lim.Reserve(context.Background(), bucketReq(UsageUnits{InputTokens: 1}))
+	if !errors.As(err, &le) || !errors.Is(err, context.Canceled) || llms.Retryable(err) {
+		t.Fatalf("Cause not mapped: %#v", err)
+	}
+
 	boom := errors.New("db down")
 	b.err = boom
 	_, err = lim.Reserve(context.Background(), bucketReq(UsageUnits{InputTokens: 1}))

@@ -100,11 +100,12 @@ func Wait(ctx context.Context, key string, w Waiter, try func(context.Context) (
 		defer cancel()
 	}
 	ended := func(when string, retryAfter time.Duration) *bucket.LimitError {
-		reason := "context done " + when
-		if ctx.Err() == nil {
-			reason = "wait exceeded MaxWait " + when
+		// The caller's context, not waitCtx: only the caller ending the
+		// wait sets Cause. MaxWait alone is a temporary rejection.
+		if cause := ctx.Err(); cause != nil {
+			return &bucket.LimitError{Key: key, Reason: "context done " + when, RetryAfter: retryAfter, Cause: cause}
 		}
-		return &bucket.LimitError{Key: key, Reason: reason, RetryAfter: retryAfter}
+		return &bucket.LimitError{Key: key, Reason: "wait exceeded MaxWait " + when, RetryAfter: retryAfter}
 	}
 	backoff := w.Initial
 	var retryAfter time.Duration
@@ -123,7 +124,7 @@ func Wait(ctx context.Context, key string, w Waiter, try func(context.Context) (
 			return res.Lease, nil
 		}
 		if res.Impossible != "" {
-			return nil, &bucket.LimitError{Key: key, Reason: res.Impossible}
+			return nil, &bucket.LimitError{Key: key, Reason: res.Impossible, Permanent: true}
 		}
 		retryAfter = res.RetryAfter
 		sleep := jitter(backoff)

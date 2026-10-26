@@ -1,6 +1,6 @@
 # 0025. Generic `bucket` limiter with a Postgres backend (lease rows, renewal, FIFO queue planned)
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (`bucket.LimitError` gains `Permanent` and `Cause`; `FromBucket` maps both)
 - **Date:** 2026-10-18
 
 ## Context

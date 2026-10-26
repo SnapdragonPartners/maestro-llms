@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -32,7 +33,8 @@ func (e *CircuitOpenError) Error() string {
 // defaults via normalized(), so CircuitConfig{} is a valid "use defaults".
 type CircuitConfig struct {
 	// FailureThreshold is the consecutive retryable failures in Closed state
-	// that trip the breaker Open.
+	// that trip the breaker Open. Limiter rejections (*llms.LimitError)
+	// never count (ADR-0033).
 	FailureThreshold int
 	// SuccessThreshold is the consecutive successes in HalfOpen that close it.
 	SuccessThreshold int
@@ -124,10 +126,13 @@ func (b *breaker) allow() error {
 // record folds a call result into the state. Only llms.Retryable failures
 // count against the breaker (a provider-health signal); a success resets a
 // Closed failure streak. Non-retryable/caller errors are neutral — they pass
-// through without opening the breaker (consistent with ADR-0004).
+// through without opening the breaker (consistent with ADR-0004). A
+// *llms.LimitError is neutral too, retryable or not: a local or shared
+// limiter rejected the call before it reached the provider, which says
+// nothing about the provider's health (ADR-0033).
 func (b *breaker) record(err error) {
 	success := err == nil
-	failure := err != nil && llms.Retryable(err)
+	failure := err != nil && llms.Retryable(err) && !errors.As(err, new(*llms.LimitError))
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if !success && !failure {

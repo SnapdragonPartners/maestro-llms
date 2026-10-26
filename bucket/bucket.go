@@ -110,17 +110,29 @@ func (l Limits) RefillPerSecond() float64 { return float64(l.TokensPerMinute) / 
 // canceled, or the request can never fit. It is distinct from a backend
 // failure.
 type LimitError struct {
+	// Cause is the context error (context.Canceled or
+	// context.DeadlineExceeded) when the context passed to Acquire ended
+	// the wait; nil when MaxWait ended it or the request is Permanent.
+	// Unwrap exposes it.
+	Cause  error
 	Key    string
 	Reason string
 	// RetryAfter is a hint for when capacity may be available; zero when
 	// the backend has no estimate (for example, waiting on a slot).
 	RetryAfter time.Duration
+	// Permanent reports that the request can never fit under the key's
+	// current limits, so retrying it is pointless without changing the
+	// request or the limits.
+	Permanent bool
 }
 
 // Error implements error.
 func (e *LimitError) Error() string {
 	return fmt.Sprintf("bucket %q: not admitted: %s", e.Key, e.Reason)
 }
+
+// Unwrap exposes Cause for errors.Is/errors.As.
+func (e *LimitError) Unwrap() error { return e.Cause }
 
 // ErrUnknownKey is wrapped by errors for a key with no configured limits.
 var ErrUnknownKey = errors.New("bucket: unknown key")

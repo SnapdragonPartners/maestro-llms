@@ -1,6 +1,6 @@
 # 0004. Retry and circuit middleware reuse `llms.Retryable`, not a ported classifier
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (`LimitError` is retryable unless `Permanent` or canceled, so a deadline still is, and the circuit never counts it)
 - **Date:** 2026-05-16
 
 ## Context
@@ -16,7 +16,8 @@ auth (401/403), bad request (400/404), and `ServiceUnavailable`.
 - `*llms.ProviderError` with `Kind` and `Retryable()` (retryable kinds:
   `rate_limited`, `timeout`, `unavailable`, and `unknown`-conservative; not
   `auth`, `config`, `bad_request`, `content_policy`),
-- `*llms.LimitError` (always retryable; carries `RetryAfter`),
+- `*llms.LimitError` (carries `RetryAfter`; at the time always
+  retryable, and since ADR-0033 retryable unless `Permanent` or canceled),
 - `llms.Retryable(err)` which resolves both via `errors.As`,
 - `RetryAfter` on both error types for provider/limiter backoff hints.
 

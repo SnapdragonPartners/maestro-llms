@@ -18,8 +18,8 @@ import (
 // Reserve acquires EstimatedUnits.Tokens() on key(req); Commit adjusts to the
 // same effective-token count InMemoryLimiter uses; Release releases. A
 // *bucket.LimitError becomes a *llms.LimitError with the request's Provider
-// and Model, so retry and circuit middleware treat it like any local
-// rejection. A bucket lease is exactly one slot: a reservation with
+// and Model, keeping Permanent and Cause, so retry and circuit middleware
+// treat it like any local rejection (ADR-0033). A bucket lease is exactly one slot: a reservation with
 // EstimatedUnits.Slots() > 1 is rejected before acquiring, with a
 // non-retryable error.
 func FromBucket(l bucket.Limiter, key func(ReservationRequest) string) Limiter {
@@ -48,6 +48,8 @@ func (b *bucketLimiter) Reserve(ctx context.Context, req ReservationRequest) (Re
 				Model:      req.Model,
 				Reason:     fmt.Sprintf("bucket %q: %s", le.Key, le.Reason),
 				RetryAfter: le.RetryAfter,
+				Permanent:  le.Permanent,
+				Cause:      le.Cause,
 			}
 		}
 		return nil, fmt.Errorf("ratelimit: bucket: %w", err)

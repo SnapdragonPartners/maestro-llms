@@ -287,8 +287,10 @@ func TestUnknownKeyAndImpossible(t *testing.T) {
 	}
 	ensure(t, l, name, bucket.Limits{TokensPerMinute: 100, BufferFactor: 1})
 	start := time.Now()
-	if _, err := l.Acquire(context.Background(), name, 101); !isLimitErr(err) || time.Since(start) > time.Second {
-		t.Fatalf("impossible: %v after %v", err, time.Since(start))
+	_, err := l.Acquire(context.Background(), name, 101)
+	var le *bucket.LimitError
+	if !errors.As(err, &le) || !le.Permanent || time.Since(start) > time.Second {
+		t.Fatalf("impossible: want a Permanent LimitError, got %#v after %v", err, time.Since(start))
 	}
 }
 

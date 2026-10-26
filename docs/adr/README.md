@@ -38,8 +38,8 @@ Copy `0001`'s structure as the template.
 | [0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](0002-ollama-no-sdk-hand-rolled-client.md) | Ollama provider: no SDK, hand-rolled `/api/chat` client | Accepted |
 | [0003](0003-middleware-complete-only-defer-streaming.md) | Middleware wraps `Complete` only; defer streaming semantics | Accepted |
-| [0004](0004-retry-circuit-reuse-llms-retryable.md) | Retry/circuit middleware reuse `llms.Retryable`, not a ported classifier | Accepted |
-| [0005](0005-circuit-open-error.md) | Circuit breaker emits a distinct, non-retryable `CircuitOpenError` | Accepted |
+| [0004](0004-retry-circuit-reuse-llms-retryable.md) | Retry/circuit middleware reuse `llms.Retryable`, not a ported classifier | Accepted; amended by 0033 |
+| [0005](0005-circuit-open-error.md) | Circuit breaker emits a distinct, non-retryable `CircuitOpenError` | Accepted; amended by 0033 |
 | [0006](0006-validation-error.md) | Validation middleware: distinct non-retryable `ValidationError`, structural scope only | Accepted |
 | [0007](0007-toolchoice-required.md) | `ToolChoiceRequired` — force a tool call without naming one | Accepted |
 | [0008](0008-prompt-cache-hint.md) | Provider-neutral prompt-cache hint (`ContentPart.CacheBreakpoint`) | Accepted |
@@ -58,11 +58,12 @@ Copy `0001`'s structure as the template.
 | [0022](0022-reasoning-effort.md) | Provider-neutral reasoning control (`ChatRequest.Reasoning`, `ChatResponse.AppliedReasoning`): 1:1 mapping or omitted, no per-model prediction | Accepted; amended by 0032 |
 | [0023](0023-usage-input-includes-cache.md) | `Usage.InputTokens` includes cached input on every provider; cache reads/writes are subsets | Accepted |
 | [0024](0024-provider-params.md) | Per-request `ProviderParams`: raw provider body fields keyed by `ProviderID`, deep-merged after mapping | Accepted |
-| [0025](0025-bucket-distributed-limiter.md) | Generic `bucket` limiter with a Postgres backend (lease rows + renewal for slots; FIFO queue planned, not MVP) | Accepted |
+| [0025](0025-bucket-distributed-limiter.md) | Generic `bucket` limiter with a Postgres backend (lease rows + renewal for slots; FIFO queue planned, not MVP) | Accepted; amended by 0033 |
 | [0026](0026-context-length-error-kind.md) | Context-window overflow: `ErrorKindContextLength` (deterministic provider signals only) and toolloop `OutcomeContextExceeded` | Accepted; amended by 0030, 0032 |
 | [0027](0027-pre-v1-api-cleanup.md) | Pre-v1 API cleanup: `openaicompat` package (`vllm` a permanent alias), `*auth.Credentials` for both Vertex entry points, one `google.Option` for chat and embeddings | Accepted; amended by 0028 |
 | [0028](0028-gemini-chat-on-vertex.md) | Gemini chat on Vertex AI: `google.New` accepts `WithVertex`/`WithCredentials`, one backend selector for chat and embeddings, Vertex model-listing prefix | Accepted; amended by 0029 |
 | [0029](0029-vertex-injected-client-auth.md) | Vertex: `WithCredentials` authenticates an injected `WithHTTPClient` (network-only on every provider; caller's client never mutated) | Accepted |
 | [0030](0030-toolloop-compaction.md) | Tool loop compaction: one `Compact` hook (before each turn, and once on overflow), `OutcomeCompactionError`, separate `CompactionUsage`, `KeepLast`/`Summarize` in the `compact` leaf | Accepted; amended by 0032 |
-| [0031](0031-attempt-context-observer.md) | Per-attempt correlation: optional `ContextObserver` (each `Event` with its context) and the retry attempt number via `AttemptFromContext`; no chain-order change | Accepted |
+| [0031](0031-attempt-context-observer.md) | Per-attempt correlation: optional `ContextObserver` (each `Event` with its context) and the retry attempt number via `AttemptFromContext`; no chain-order change | Accepted; amended by 0033 |
 | [0032](0032-enum-like-types-v1.md) | Enum-like types at v1: the grow list (switches need a `default` case, no silent reclassification), a new `OutcomeKind` still needs an ADR, `CompactReason` fixed for v1 | Accepted |
+| [0033](0033-limit-error-classification.md) | Limiter rejections: `LimitError` is neutral to the circuit; `Permanent` and canceled rejections are not retryable (a deadline still is) | Accepted |

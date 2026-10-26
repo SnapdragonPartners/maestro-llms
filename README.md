@@ -832,7 +832,8 @@ switch {
 case err == nil:
 	// ok
 case llms.Retryable(err):
-	// transient: rate_limited / timeout / unavailable / local limiter.
+	// transient: rate_limited / timeout / unavailable / a temporary
+	// local limiter rejection.
 	// llms.RetryAfter(err) gives a backoff hint (0 if none).
 default:
 	var pe *llms.ProviderError
@@ -845,6 +846,15 @@ default:
 
 `llms.Retryable` is the single classifier — retry and circuit middleware use
 it, no second policy ([ADR-0004](docs/adr/0004-retry-circuit-reuse-llms-retryable.md)).
+A `*llms.LimitError` is retryable unless it is marked `Permanent` (the
+request can never fit the configured limits) or the wait was canceled. A
+temporary rejection (capacity exhausted, `MaxWait` exceeded) is retried. When
+a context ends the wait, `Cause` holds its error, so `errors.Is(err,
+context.Canceled)` matches. A deadline stays retryable, as a provider
+deadline does, because with a per-attempt `Timeout` the caller is still
+waiting. The circuit breaker never counts a `LimitError`: a
+limiter rejection says nothing about the provider's health
+([ADR-0033](docs/adr/0033-limit-error-classification.md)).
 `*CircuitOpenError` and `*ValidationError` (from middleware) are deliberately
 **non-retryable** ([ADR-0005](docs/adr/0005-circuit-open-error.md),
 [ADR-0006](docs/adr/0006-validation-error.md)).

@@ -174,20 +174,25 @@ func TestRefillRepaysDebtBeyondMaxInt(t *testing.T) {
 	}
 }
 
+// retryAfter calls retryAfterLocked under the mutex: the hint arithmetic is
+// tested directly, because a Reserve wait can end on its context before it
+// computes a hint (Codex r5).
+func retryAfter(l *InMemoryLimiter, tokens int) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.retryAfterLocked(tokens, false)
+}
+
 // TestRetryAfterKeepsSmallDeficitAtLargeCapacity: a one-token deficit at
 // capacity 1e18 must give a one-minute RetryAfter at 1 TPM, not zero from
 // float rounding (Codex r4).
 func TestRetryAfterKeepsSmallDeficitAtLargeCapacity(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)}
-	l := mustNewLimiter(t, Config{TokensPerMinute: 1, BufferFactor: 1e18, Clock: clk.Now, PollInterval: time.Millisecond})
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1, BufferFactor: 1e18, Clock: clk.Now})
 	s, _ := l.Stats(context.Background())
 	_ = mustReserve(t, l, chatReq(1))
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
-	defer cancel()
-	_, err := l.Reserve(ctx, chatReq(s.MaxCapacity))
-	var le *llms.LimitError
-	if !errors.As(err, &le) || le.RetryAfter != time.Minute {
-		t.Fatalf("Reserve = %v (RetryAfter %v), want a LimitError with RetryAfter 1m", err, le)
+	if got := retryAfter(l, s.MaxCapacity); got != time.Minute {
+		t.Fatalf("RetryAfter = %v, want 1m", got)
 	}
 }
 
@@ -195,15 +200,11 @@ func TestRetryAfterKeepsSmallDeficitAtLargeCapacity(t *testing.T) {
 // nanoseconds, which saturates (ADR-0034).
 func TestRetryAfterSaturates(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)}
-	l := mustNewLimiter(t, Config{TokensPerMinute: 1, BufferFactor: 1e18, Clock: clk.Now, PollInterval: time.Millisecond})
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1, BufferFactor: 1e18, Clock: clk.Now})
 	r := mustReserve(t, l, chatReq(1))
 	_ = r.Commit(context.Background(), llms.Usage{TotalTokens: math.MaxInt})
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
-	defer cancel()
-	_, err := l.Reserve(ctx, chatReq(1))
-	var le *llms.LimitError
-	if !errors.As(err, &le) || le.RetryAfter != time.Duration(math.MaxInt64) {
-		t.Fatalf("Reserve = %v, want a LimitError with RetryAfter MaxInt64", err)
+	if got := retryAfter(l, 1); got != time.Duration(math.MaxInt64) {
+		t.Fatalf("RetryAfter = %v, want MaxInt64", got)
 	}
 }
 

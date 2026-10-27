@@ -14,9 +14,15 @@ import (
 
 // exports maps each exported top-level identifier of the package in dir
 // (non-test files) to its signature: the parameter and result types of a
-// function, or "type" for a type. Methods are skipped: vllm's types are
-// aliases, so openaicompat's methods come with them.
-func exports(t *testing.T, dir string) map[string]string {
+// function, or the declaration kind ("type", "const", "var"). Methods are
+// skipped: vllm's types are aliases, so openaicompat's methods come with them.
+//
+// With forwardFrom set (the alias package), a type, const or var counts as
+// its kind only when it forwards to the same-named identifier there: a type
+// alias (type X = pkg.X) or a value (X = pkg.X). Anything else is recorded
+// as a mismatch, so a defined type (which drops the methods) or a
+// re-declared value (which can drift) fails the comparison.
+func exports(t *testing.T, dir, forwardFrom string) map[string]string {
 	t.Helper()
 	fset := token.NewFileSet()
 	notTest := func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }
@@ -24,16 +30,19 @@ func exports(t *testing.T, dir string) map[string]string {
 	if err != nil {
 		t.Fatalf("parse %s: %v", dir, err)
 	}
+	render := func(n ast.Node) string {
+		var b strings.Builder
+		_ = printer.Fprint(&b, fset, n)
+		return b.String()
+	}
 	typeList := func(fl *ast.FieldList) string {
 		if fl == nil {
 			return ""
 		}
 		var parts []string
 		for _, f := range fl.List {
-			var b strings.Builder
-			_ = printer.Fprint(&b, fset, f.Type)
 			for range max(len(f.Names), 1) {
-				parts = append(parts, b.String())
+				parts = append(parts, render(f.Type))
 			}
 		}
 		return strings.Join(parts, ", ")
@@ -53,11 +62,18 @@ func exports(t *testing.T, dir string) map[string]string {
 						case *ast.TypeSpec:
 							if s.Name.IsExported() {
 								out[s.Name.Name] = "type"
+								if forwardFrom != "" && (!s.Assign.IsValid() || render(s.Type) != forwardFrom+"."+s.Name.Name) {
+									out[s.Name.Name] = "type not an alias of " + forwardFrom + "." + s.Name.Name
+								}
 							}
 						case *ast.ValueSpec:
-							for _, n := range s.Names {
-								if n.IsExported() {
-									out[n.Name] = d.Tok.String()
+							for i, n := range s.Names {
+								if !n.IsExported() {
+									continue
+								}
+								out[n.Name] = d.Tok.String()
+								if forwardFrom != "" && (s.Type != nil || i >= len(s.Values) || render(s.Values[i]) != forwardFrom+"."+n.Name) {
+									out[n.Name] = d.Tok.String() + " not forwarded from " + forwardFrom + "." + n.Name
 								}
 							}
 						}
@@ -74,7 +90,7 @@ func exports(t *testing.T, dir string) map[string]string {
 // ADR-0035). Adding an exported identifier to openaicompat fails this test
 // until vllm forwards it.
 func TestExportParityWithOpenAICompat(t *testing.T) {
-	want, got := exports(t, "../openaicompat"), exports(t, ".")
+	want, got := exports(t, "../openaicompat", ""), exports(t, ".", "openaicompat")
 	if len(want) == 0 {
 		t.Fatal("found no openaicompat exports; the parser path is wrong")
 	}

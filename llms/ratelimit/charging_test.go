@@ -101,15 +101,26 @@ func TestRefillAtValidateBoundStaysDefined(t *testing.T) {
 	}
 }
 
-// TestRefillKeepsSmallRoomAtLargeCapacity: at a capacity where float64 can't
-// resolve one token, a 1ns gap must not refill the token (the refill room is
-// compared in ints).
+// TestRefillKeepsSmallRoomAtLargeCapacity: at capacity 1e18 float64 can't
+// resolve a few tokens (its spacing there is 128), so the refill room must
+// be compared in ints. A whole token accrues against a room of two, and the
+// bucket must end one short of capacity, not full (Codex r2, buggrit
+// f-a01134). A sub-token gap must not move the balance either.
 func TestRefillKeepsSmallRoomAtLargeCapacity(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)}
 	l := mustNewLimiter(t, Config{TokensPerMinute: 1, BufferFactor: 1e18, Clock: clk.Now})
-	_ = mustReserve(t, l, chatReq(1))
-	clk.Advance(time.Nanosecond)
+	_ = mustReserve(t, l, chatReq(2))
+
+	clk.Advance(time.Nanosecond) // no whole token accrued
+	if s, _ := l.Stats(context.Background()); s.AvailableTokens != s.MaxCapacity-2 {
+		t.Fatalf("after 1ns available = %d, want capacity-2 = %d", s.AvailableTokens, s.MaxCapacity-2)
+	}
+	clk.Advance(time.Minute) // one whole token at 1 TPM; the room is 2
 	if s, _ := l.Stats(context.Background()); s.AvailableTokens != s.MaxCapacity-1 {
-		t.Fatalf("after 1ns at 1 TPM available = %d, want capacity-1 = %d", s.AvailableTokens, s.MaxCapacity-1)
+		t.Fatalf("after 1 token of refill available = %d, want capacity-1 = %d", s.AvailableTokens, s.MaxCapacity-1)
+	}
+	clk.Advance(time.Minute) // the second token fills the room exactly
+	if s, _ := l.Stats(context.Background()); s.AvailableTokens != s.MaxCapacity {
+		t.Fatalf("after 2 tokens of refill available = %d, want capacity %d", s.AvailableTokens, s.MaxCapacity)
 	}
 }

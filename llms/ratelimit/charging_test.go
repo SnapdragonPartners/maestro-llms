@@ -100,3 +100,16 @@ func TestRefillAtValidateBoundStaysDefined(t *testing.T) {
 		t.Fatalf("after a long gap available = %d, want capacity %d", s.AvailableTokens, s.MaxCapacity)
 	}
 }
+
+// TestRefillKeepsSmallRoomAtLargeCapacity: at a capacity where float64 can't
+// resolve one token, a 1ns gap must not refill the token (the refill room is
+// compared in ints).
+func TestRefillKeepsSmallRoomAtLargeCapacity(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(0, 0)}
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1, BufferFactor: 1e18, Clock: clk.Now})
+	_ = mustReserve(t, l, chatReq(1))
+	clk.Advance(time.Nanosecond)
+	if s, _ := l.Stats(context.Background()); s.AvailableTokens != s.MaxCapacity-1 {
+		t.Fatalf("after 1ns at 1 TPM available = %d, want capacity-1 = %d", s.AvailableTokens, s.MaxCapacity-1)
+	}
+}

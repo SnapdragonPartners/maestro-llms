@@ -57,10 +57,12 @@ documented or observable behavior, so they have to be settled before v1
    `BufferFactor` (even when token limiting is off) and a
    `TokensPerMinute * BufferFactor` of `float64(math.MaxInt)` or more.
    `Capacity` is documented as defined only for limits that pass `Validate`.
-   Capacity bounds refill too: `InMemoryLimiter`'s refill clamps the
-   accrued carry at the room left below capacity before converting it to
-   an int, so a long gap at a rate near the bound stays defined. The
-   bucket backends refill in float64 and clamp to `Capacity` already.
+   Refill stays defined too: `InMemoryLimiter` converts at most
+   `math.MaxInt` of accrued carry to an int per refill, and compares the
+   result with the room below capacity in integer arithmetic, so a long gap
+   at a rate near the bound is defined and a small room at a large capacity
+   is not rounded away. The bucket backends refill in float64 and clamp to
+   `Capacity` already.
 3. **A nil estimator selects `DefaultEstimator`** in `RateLimitChat` and
    `RateLimitEmbeddings`, matching `RecommendedConfig`.
 4. **`effectiveTokens` charges from the normalized fields**, on both limiter

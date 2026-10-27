@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -116,20 +117,32 @@ func (l *InMemoryLimiter) refillLocked() {
 	}
 	l.lastRefill = now
 	l.tokenCarry += elapsed * l.refillPerSec
-	// Clamp at capacity before converting: at a rate near the Validate
-	// bound, one long gap accrues more than an int holds (ADR-0034).
-	if l.tokenCarry >= float64(l.maxCapacity)-float64(l.availableTok) {
-		l.availableTok = l.maxCapacity
-		l.tokenCarry = 0
-		return
+	// At a rate near the Validate bound one long gap accrues more than an
+	// int holds, so take at most MaxInt per refill: converting a larger
+	// float is undefined (ADR-0034).
+	whole := math.MaxInt
+	if l.tokenCarry < maxCarry {
+		whole = int(l.tokenCarry)
 	}
-	whole := int(l.tokenCarry)
 	if whole <= 0 {
 		return
 	}
 	l.tokenCarry -= float64(whole)
+	// Compare in ints so the room is exact at any capacity (float math
+	// rounds a small room away at large capacities). The room overflows
+	// only for debt below maxCapacity-MaxInt, where whole can't fill it.
+	if l.availableTok >= l.maxCapacity-math.MaxInt && whole >= l.maxCapacity-l.availableTok {
+		l.availableTok = l.maxCapacity
+		l.tokenCarry = 0
+		return
+	}
 	l.availableTok += whole
 }
+
+// maxCarry bounds the refill carry converted to int in one step:
+// float64(math.MaxInt) rounds up to 2^63, and a float below it converts
+// exactly.
+const maxCarry = float64(math.MaxInt)
 
 func normalizeUnits(u UsageUnits) (tokens, slots int) {
 	return u.Tokens(), u.Slots()

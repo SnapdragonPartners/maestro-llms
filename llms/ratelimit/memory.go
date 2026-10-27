@@ -2,21 +2,24 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"sync"
 	"time"
 
+	"github.com/SnapdragonPartners/maestro-llms/bucket"
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/satint"
 )
-
-// defaultBufferFactor sizes bucket capacity below the nominal per-minute rate
-// to absorb token-estimate inaccuracy (overestimation is the safe direction).
-const defaultBufferFactor = 0.9
 
 // defaultPollInterval is how often a blocked Reserve re-checks for capacity.
 const defaultPollInterval = 100 * time.Millisecond
 
 // Config configures an InMemoryLimiter. The zero value is usable: a zero
-// TokensPerMinute or MaxConcurrency means that dimension is unlimited.
+// TokensPerMinute or MaxConcurrency means that dimension is unlimited. The
+// limits are validated like bucket.Limits (ADR-0034): a negative limit, a
+// NaN, infinite or negative BufferFactor, or a capacity that overflows int is
+// an error from NewInMemoryLimiter.
 type Config struct {
 	// Clock returns the current time; defaults to time.Now. Injectable so
 	// refill behavior is deterministic in tests.
@@ -30,7 +33,8 @@ type Config struct {
 	MaxWait time.Duration
 	// PollInterval is the re-check cadence while blocked; defaults to 100ms.
 	PollInterval time.Duration
-	// BufferFactor scales capacity below TokensPerMinute; defaults to 0.9.
+	// BufferFactor scales capacity below TokensPerMinute; 0 selects
+	// bucket.DefaultBufferFactor (0.9).
 	BufferFactor float64
 }
 
@@ -59,40 +63,43 @@ type InMemoryLimiter struct {
 // compile-time assertions live in the test file (package-level vars would trip
 // gochecknoglobals).
 
-// NewInMemoryLimiter builds an InMemoryLimiter from cfg.
-func NewInMemoryLimiter(cfg Config) *InMemoryLimiter {
+// NewInMemoryLimiter builds an InMemoryLimiter from cfg. It returns an error,
+// and no limiter, when the limits fail validation (see Config).
+func NewInMemoryLimiter(cfg Config) (*InMemoryLimiter, error) {
+	// The capacity math and its validation are bucket.Limits', so both
+	// in-memory limiters and bucket/postgres size a bucket identically.
+	limits := bucket.Limits{
+		TokensPerMinute: cfg.TokensPerMinute,
+		MaxConcurrency:  cfg.MaxConcurrency,
+		BufferFactor:    cfg.BufferFactor,
+	}
+	if err := limits.Validate(); err != nil {
+		return nil, fmt.Errorf("ratelimit: %w", err)
+	}
 	clock := cfg.Clock
 	if clock == nil {
 		clock = time.Now
-	}
-	buffer := cfg.BufferFactor
-	if buffer <= 0 {
-		buffer = defaultBufferFactor
 	}
 	poll := cfg.PollInterval
 	if poll <= 0 {
 		poll = defaultPollInterval
 	}
-	// A positive rate must yield a positive bucket: with a sub-1 product
-	// (e.g. 1 TPM * 0.9) int truncation would give 0 and silently disable
-	// token limiting. Floor at 1 and keep the fractional refill via carry.
-	tokenLimiting := cfg.TokensPerMinute > 0
-	capacity := 0
-	if tokenLimiting {
-		capacity = max(1, int(float64(cfg.TokensPerMinute)*buffer))
-	}
+	// Capacity floors a positive rate at 1, so a sub-1 product (e.g. 1 TPM *
+	// 0.9) never truncates to 0 and silently disables token limiting; the
+	// fractional refill is kept via carry.
+	capacity := limits.Capacity()
 	return &InMemoryLimiter{
 		clock:          clock,
 		lastRefill:     clock(),
 		maxWait:        cfg.MaxWait,
 		pollInterval:   poll,
-		refillPerSec:   float64(cfg.TokensPerMinute) / 60.0,
+		refillPerSec:   limits.RefillPerSecond(),
 		availableTok:   capacity,
 		maxCapacity:    capacity,
 		maxConcurrency: cfg.MaxConcurrency,
-		tokenLimiting:  tokenLimiting,
-		slotLimiting:   cfg.MaxConcurrency > 0,
-	}
+		tokenLimiting:  limits.TokenLimited(),
+		slotLimiting:   limits.SlotLimited(),
+	}, nil
 }
 
 func (l *InMemoryLimiter) tokenLimited() bool { return l.tokenLimiting }
@@ -111,17 +118,32 @@ func (l *InMemoryLimiter) refillLocked() {
 	}
 	l.lastRefill = now
 	l.tokenCarry += elapsed * l.refillPerSec
-	whole := int(l.tokenCarry)
-	if whole <= 0 {
-		return
-	}
-	l.tokenCarry -= float64(whole)
-	l.availableTok += whole
-	if l.availableTok > l.maxCapacity {
-		l.availableTok = l.maxCapacity
-		l.tokenCarry = 0
+	// Consume the carry in chunks of at most MaxInt (converting a larger
+	// float is undefined) until it runs out or the bucket is full, so debt
+	// deeper than MaxInt is still repaid in one refill (ADR-0034). The room
+	// is compared in ints, so it is exact at any capacity. When the room
+	// itself would overflow (debt below maxCapacity-MaxInt) it exceeds any
+	// chunk, so the chunk is added. That lifts the balance to at least -1,
+	// so at most two chunks precede the one that fills the bucket.
+	for l.tokenCarry >= 1 {
+		whole := math.MaxInt
+		if l.tokenCarry < maxCarry {
+			whole = int(l.tokenCarry)
+		}
+		if l.availableTok >= l.maxCapacity-math.MaxInt && whole >= l.maxCapacity-l.availableTok {
+			l.availableTok = l.maxCapacity
+			l.tokenCarry = 0
+			return
+		}
+		l.tokenCarry -= float64(whole)
+		l.availableTok += whole // below the room, so it can't overflow
 	}
 }
+
+// maxCarry bounds the refill carry converted to int in one step:
+// float64(math.MaxInt) rounds up to 2^63, and a float below it converts
+// exactly.
+const maxCarry = float64(math.MaxInt)
 
 func normalizeUnits(u UsageUnits) (tokens, slots int) {
 	return u.Tokens(), u.Slots()
@@ -166,12 +188,14 @@ func (l *InMemoryLimiter) impossible(req ReservationRequest, tokens, slots int) 
 // estimate. Caller holds l.mu.
 func (l *InMemoryLimiter) tryAcquireLocked(tokens, slots int) (ok bool, retryAfter time.Duration) {
 	hasTokens := !l.tokenLimited() || l.availableTok >= tokens
-	hasSlot := !l.slotLimited() || l.activeReqs+slots <= l.maxConcurrency
+	// Compare against the free slots, not activeReqs+slots: the difference
+	// can't overflow (0 <= activeReqs <= maxConcurrency), and a sum could.
+	hasSlot := !l.slotLimited() || slots <= l.maxConcurrency-l.activeReqs
 	if hasTokens && hasSlot {
 		if l.tokenLimited() {
 			l.availableTok -= tokens
 		}
-		l.activeReqs += slots
+		l.activeReqs = satint.Add(l.activeReqs, slots) // unbounded when slots aren't limited
 		return true, 0
 	}
 	if !hasTokens {
@@ -234,12 +258,27 @@ func (l *InMemoryLimiter) retryAfterLocked(tokens int, hasTokens bool) time.Dura
 	if hasTokens || l.refillPerSec <= 0 {
 		return 0
 	}
-	deficit := float64(tokens - l.availableTok)
+	// Exact int difference when it can't overflow (tokens >= 0, so only
+	// debt below tokens-MaxInt can), so a small deficit at a large capacity
+	// isn't rounded to zero; beyond that it is too large for rounding to
+	// matter.
+	deficit := float64(tokens) - float64(l.availableTok)
+	if l.availableTok >= tokens-math.MaxInt {
+		deficit = float64(tokens - l.availableTok)
+	}
 	if deficit <= 0 {
 		return 0
 	}
-	return time.Duration(deficit / l.refillPerSec * float64(time.Second))
+	ns := deficit / l.refillPerSec * float64(time.Second)
+	if ns >= maxDurationNS { // a larger float-to-int conversion is undefined
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(ns)
 }
+
+// maxDurationNS is float64(math.MaxInt64), which rounds up to 2^63: a
+// RetryAfter at or past it saturates (ADR-0034).
+const maxDurationNS = float64(math.MaxInt64)
 
 // Stats implements LimiterStats.
 func (l *InMemoryLimiter) Stats(_ context.Context) (LimiterSnapshot, error) {
@@ -265,15 +304,29 @@ type reservation struct {
 	released  bool
 }
 
-// effectiveTokens is the total tokens to charge for actual usage: chat
-// (TotalTokens, else input + output) and embeddings (EmbeddingTokens). Cache
-// reads and writes are subsets of InputTokens (ADR-0023), so they are already
-// counted and are not added again.
+// effectiveTokens is the token count charged for actual usage (ADR-0034),
+// shared by InMemoryLimiter and FromBucket:
+//
+//   - input is InputTokens, or EmbeddingTokens for an embedding call. Both
+//     count the request's input tokens, so they overlap and the larger is
+//     taken rather than the sum. Cache reads and writes are subsets of
+//     InputTokens (ADR-0023) and are not added again.
+//   - output is BillableOutputTokens, or OutputTokens + ReasoningTokens when
+//     it is unset, so reasoning tokens are charged either way.
+//   - TotalTokens is a provider-specific aggregate, so it is a floor, not the
+//     charge: usage that reports only a total charges that total instead of
+//     refunding the whole estimate, and a total that counts tokens the
+//     normalized fields don't (Gemini's tool-use prompt) is not undercounted.
+//
+// Negative fields count as zero, and the sums saturate at math.MaxInt rather
+// than wrapping into a refund.
 func effectiveTokens(u llms.Usage) int {
-	if u.TotalTokens > 0 {
-		return u.TotalTokens
+	input := max(u.InputTokens, u.EmbeddingTokens, 0)
+	output := u.BillableOutputTokens
+	if output <= 0 {
+		output = satint.Add(max(u.OutputTokens, 0), max(u.ReasoningTokens, 0))
 	}
-	return u.InputTokens + u.OutputTokens + u.EmbeddingTokens
+	return max(satint.Add(input, output), u.TotalTokens)
 }
 
 // Commit reconciles actual token usage against the estimate. Lower actual
@@ -296,9 +349,8 @@ func (r *reservation) Commit(_ context.Context, usage llms.Usage) error {
 	// later Reserve/Stats would refill from before the delta was charged
 	// and erase over-use debt (undercounting traffic).
 	l.refillLocked()
-	delta := effectiveTokens(usage) - r.tokens // >0: used more; <0: refund
-	l.availableTok -= delta
-	l.availableTok = min(l.availableTok, l.maxCapacity)
+	delta := effectiveTokens(usage) - r.tokens // >0: used more; <0: refund (both >= 0, so no overflow)
+	l.availableTok = min(satint.Sub(l.availableTok, delta), l.maxCapacity)
 	return nil
 }
 

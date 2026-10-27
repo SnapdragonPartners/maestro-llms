@@ -5,6 +5,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"time"
 
@@ -45,8 +46,16 @@ func RetryAfter(l bucket.Limits, balance float64, tokens int) time.Duration {
 	if deficit <= 0 {
 		return 0
 	}
-	return time.Duration(deficit / l.RefillPerSecond() * float64(time.Second))
+	ns := deficit / l.RefillPerSecond() * float64(time.Second)
+	if ns >= maxDurationNS { // a larger float-to-int conversion is undefined
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(ns)
 }
+
+// maxDurationNS is float64(math.MaxInt64), which rounds up to 2^63: a
+// RetryAfter at or past it saturates (ADR-0034).
+const maxDurationNS = float64(math.MaxInt64)
 
 // Impossible returns a non-empty reason when a request for tokens can never
 // be admitted under l.

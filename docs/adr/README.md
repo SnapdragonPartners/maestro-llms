@@ -49,16 +49,16 @@ Copy `0001`'s structure as the template.
 | [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted |
 | [0013](0013-text-token-estimator.md) | Text-level token estimator (`EstimateTextTokens`) — neutral-biased free function distinct from the high-biased middleware estimator | Accepted |
 | [0015](0015-vllm-provider.md) | vLLM provider — leaf package, OpenAI Chat Completions wire shape (no auth allowed, no `LatestInFamily`, `Created` is local load time) | Accepted; amended by 0027 |
-| [0016](0016-usage-reasoning-tokens.md) | `Usage.ReasoningTokens` — surface reasoning-model thinking budget alongside visible output | Accepted; partially superseded by 0018 |
+| [0016](0016-usage-reasoning-tokens.md) | `Usage.ReasoningTokens` — surface reasoning-model thinking budget alongside visible output | Accepted; partially superseded by 0018; amended by 0034 |
 | [0017](0017-toolloop-terminal-tools.md) | Tool loop terminal tools (`ToolResult.Stop`, `OutcomeTerminalTool`) and executed limit turn | Accepted; amended by 0019, 0032 |
 | [0018](0018-anthropic-thinking-tokens.md) | Anthropic `ReasoningTokens` from `output_tokens_details.thinking_tokens` (retires the ADR-0016 exception) | Accepted |
 | [0019](0019-toolloop-deadline-and-no-iteration-limit.md) | Tool loop `OutcomeDeadline` and `NoIterationLimit` (the loop's context decides deadline vs failure; negative `MaxIterations` is unlimited) | Accepted; amended by 0032 |
 | [0020](0020-toolloop-empty-response.md) | Tool loop `OutcomeEmptyResponse` (an empty response is reported, not appended) | Accepted; amended by 0032 |
 | [0021](0021-reasoning-content-part.md) | Round-trip provider reasoning as a `ContentReasoning` part (Anthropic thinking blocks); typed `ProviderID` | Accepted; amended by 0030 |
 | [0022](0022-reasoning-effort.md) | Provider-neutral reasoning control (`ChatRequest.Reasoning`, `ChatResponse.AppliedReasoning`): 1:1 mapping or omitted, no per-model prediction | Accepted; amended by 0032 |
-| [0023](0023-usage-input-includes-cache.md) | `Usage.InputTokens` includes cached input on every provider; cache reads/writes are subsets | Accepted |
+| [0023](0023-usage-input-includes-cache.md) | `Usage.InputTokens` includes cached input on every provider; cache reads/writes are subsets | Accepted; amended by 0034 |
 | [0024](0024-provider-params.md) | Per-request `ProviderParams`: raw provider body fields keyed by `ProviderID`, deep-merged after mapping | Accepted |
-| [0025](0025-bucket-distributed-limiter.md) | Generic `bucket` limiter with a Postgres backend (lease rows + renewal for slots; FIFO queue planned, not MVP) | Accepted; amended by 0033 |
+| [0025](0025-bucket-distributed-limiter.md) | Generic `bucket` limiter with a Postgres backend (lease rows + renewal for slots; FIFO queue planned, not MVP) | Accepted; amended by 0033, 0034 |
 | [0026](0026-context-length-error-kind.md) | Context-window overflow: `ErrorKindContextLength` (deterministic provider signals only) and toolloop `OutcomeContextExceeded` | Accepted; amended by 0030, 0032 |
 | [0027](0027-pre-v1-api-cleanup.md) | Pre-v1 API cleanup: `openaicompat` package (`vllm` a permanent alias), `*auth.Credentials` for both Vertex entry points, one `google.Option` for chat and embeddings | Accepted; amended by 0028 |
 | [0028](0028-gemini-chat-on-vertex.md) | Gemini chat on Vertex AI: `google.New` accepts `WithVertex`/`WithCredentials`, one backend selector for chat and embeddings, Vertex model-listing prefix | Accepted; amended by 0029 |
@@ -67,3 +67,4 @@ Copy `0001`'s structure as the template.
 | [0031](0031-attempt-context-observer.md) | Per-attempt correlation: optional `ContextObserver` (each `Event` with its context) and the retry attempt number via `AttemptFromContext`; no chain-order change | Accepted; amended by 0033 |
 | [0032](0032-enum-like-types-v1.md) | Enum-like types at v1: the grow list (switches need a `default` case, no silent reclassification), a new `OutcomeKind` still needs an ADR, `CompactReason` fixed for v1 | Accepted |
 | [0033](0033-limit-error-classification.md) | Limiter rejections: `LimitError` is neutral to the circuit; `Permanent` and canceled rejections are not retryable (a deadline still is) | Accepted |
+| [0034](0034-limiter-config-and-charging.md) | Limiter configuration is validated (`NewInMemoryLimiter` returns an error; `bucket.Limits.Validate` rejects non-finite and overflowing values); usage is charged from the normalized fields with `TotalTokens` as a floor | Accepted |

@@ -30,6 +30,18 @@ package llms
 //     InputTokens - CacheReadTokens - CacheWriteTokens is the uncached
 //     remainder (never negative). Cost math prices the three separately.
 //
+// TotalTokens is a provider-specific aggregate (ADR-0034), not a field
+// with one cross-provider definition. Google, OpenAI and OpenAI-compatible
+// servers report it as sent; Gemini's includes tool-use prompt tokens that
+// InputTokens doesn't. The Anthropic adapter derives it as InputTokens +
+// BillableOutputTokens, and Ollama as prompt plus generated tokens. Don't
+// assume it equals the sum of the other fields; cost and budget math should
+// use those.
+//
+// EmbeddingTokens is the input token count of an embedding call. It counts
+// the same tokens InputTokens would, so the two overlap and are never summed;
+// the toolkit's limiters charge the larger.
+//
 // Budget math: a length-truncation fires when
 // InputTokens + OutputTokens + ReasoningTokens approaches the cap, not
 // when OutputTokens alone does. Callers that see a small OutputTokens

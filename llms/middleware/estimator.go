@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/satint"
 	"github.com/SnapdragonPartners/maestro-llms/llms/ratelimit"
 )
 
@@ -80,7 +81,7 @@ func (DefaultEstimator) EstimateChat(req llms.ChatRequest) ratelimit.UsageUnits 
 	return ratelimit.UsageUnits{
 		InputTokens:     input,
 		OutputTokensMax: outMax,
-		TotalTokensMax:  input + outMax,
+		TotalTokensMax:  satint.Add(input, outMax), // MaxTokens may be MaxInt for "no cap"
 		Requests:        1,
 	}
 }

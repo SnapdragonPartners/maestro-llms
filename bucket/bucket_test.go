@@ -4,6 +4,7 @@ import (
 	"errors"
 	"go/parser"
 	"go/token"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,14 +37,34 @@ func TestLimitsValidate(t *testing.T) {
 		{TokensPerMinute: -1},
 		{MaxConcurrency: -1},
 		{BufferFactor: -0.5},
+		// ADR-0034: a non-finite factor is invalid even with tokens off.
+		{BufferFactor: math.NaN()},
+		{BufferFactor: math.Inf(1)},
+		{BufferFactor: math.Inf(-1)},
+		{TokensPerMinute: 10, BufferFactor: math.NaN()},
+		// The computed capacity must fit in an int.
+		{TokensPerMinute: math.MaxInt, BufferFactor: 1},
+		{TokensPerMinute: math.MaxInt/2 + 1, BufferFactor: 2},
+		{TokensPerMinute: 1000, BufferFactor: 1e300},
 	}
 	for _, l := range bad {
 		if l.Validate() == nil {
 			t.Errorf("Validate(%+v) = nil, want error", l)
 		}
 	}
-	if err := (bucket.Limits{TokensPerMinute: 10, MaxConcurrency: 2}).Validate(); err != nil {
-		t.Errorf("Validate(valid) = %v", err)
+	good := []bucket.Limits{
+		{},
+		{TokensPerMinute: 10, MaxConcurrency: 2},
+		{BufferFactor: 1e300},          // tokens off: capacity is 0
+		{TokensPerMinute: math.MaxInt}, // default 0.9 still fits
+	}
+	for _, l := range good {
+		if err := l.Validate(); err != nil {
+			t.Errorf("Validate(%+v) = %v, want nil", l, err)
+		}
+	}
+	if c := (bucket.Limits{TokensPerMinute: math.MaxInt}).Capacity(); c <= 0 {
+		t.Errorf("Capacity at MaxInt TPM = %d, want positive", c)
 	}
 }
 

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -165,3 +166,12 @@ type fakeLease struct{}
 func (fakeLease) Adjust(context.Context, int) error { return nil }
 func (fakeLease) Release(context.Context) error     { return nil }
 func (fakeLease) Lost() <-chan struct{}             { return nil }
+
+// TestRetryAfterSaturates: a deficit whose wait exceeds int64 nanoseconds
+// saturates instead of reaching an undefined float-to-int conversion
+// (ADR-0034).
+func TestRetryAfterSaturates(t *testing.T) {
+	if got := RetryAfter(bucket.Limits{TokensPerMinute: 1}, -1e18, 1); got != time.Duration(math.MaxInt64) {
+		t.Fatalf("RetryAfter = %v, want MaxInt64", got)
+	}
+}

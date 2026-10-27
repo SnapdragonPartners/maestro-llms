@@ -1,6 +1,6 @@
 # 0023. `Usage.InputTokens` includes cached input; cache reads and writes are subsets
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0034](0034-limiter-config-and-charging.md) (the limiters charge from the normalized fields, with `TotalTokens` as a floor)
 - **Date:** 2026-10-17
 
 ## Context

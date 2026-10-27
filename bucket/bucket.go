@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -66,18 +67,31 @@ type Limits struct {
 	BufferFactor float64
 }
 
-// Validate reports whether the limits are usable.
+// Validate reports whether the limits are usable: no negative limit, a
+// finite non-negative BufferFactor, and a Capacity that fits in an int
+// (ADR-0034). Without it, a negative limit silently disables its dimension
+// and a NaN, infinite or overflowing capacity is undefined.
 func (l Limits) Validate() error {
 	switch {
 	case l.TokensPerMinute < 0:
 		return fmt.Errorf("bucket: TokensPerMinute %d is negative", l.TokensPerMinute)
 	case l.MaxConcurrency < 0:
 		return fmt.Errorf("bucket: MaxConcurrency %d is negative", l.MaxConcurrency)
+	case math.IsNaN(l.BufferFactor) || math.IsInf(l.BufferFactor, 0):
+		return fmt.Errorf("bucket: BufferFactor %v is not finite", l.BufferFactor)
 	case l.BufferFactor < 0:
 		return fmt.Errorf("bucket: BufferFactor %v is negative", l.BufferFactor)
+	case float64(l.TokensPerMinute)*l.EffectiveBufferFactor() >= maxCapacity:
+		return fmt.Errorf("bucket: capacity TokensPerMinute %d * BufferFactor %v overflows int",
+			l.TokensPerMinute, l.EffectiveBufferFactor())
 	}
 	return nil
 }
+
+// maxCapacity bounds TokensPerMinute * BufferFactor: float64(math.MaxInt)
+// rounds up to 2^63, and converting a float at or above it to int is
+// undefined.
+const maxCapacity = float64(math.MaxInt)
 
 // EffectiveBufferFactor is BufferFactor, or DefaultBufferFactor when unset.
 func (l Limits) EffectiveBufferFactor() float64 {
@@ -89,7 +103,8 @@ func (l Limits) EffectiveBufferFactor() float64 {
 
 // Capacity is the maximum token balance: TokensPerMinute * BufferFactor,
 // floored at 1 when token limiting is on (so a tiny rate never truncates to a
-// disabled bucket), and 0 when it is off.
+// disabled bucket), and 0 when it is off. It is defined only for limits that
+// pass Validate.
 func (l Limits) Capacity() int {
 	if l.TokensPerMinute <= 0 {
 		return 0

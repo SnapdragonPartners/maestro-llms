@@ -174,6 +174,39 @@ func TestRefillRepaysDebtBeyondMaxInt(t *testing.T) {
 	}
 }
 
+// TestRetryAfterKeepsSmallDeficitAtLargeCapacity: a one-token deficit at
+// capacity 1e18 must give a one-minute RetryAfter at 1 TPM, not zero from
+// float rounding (Codex r4).
+func TestRetryAfterKeepsSmallDeficitAtLargeCapacity(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(0, 0)}
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1, BufferFactor: 1e18, Clock: clk.Now, PollInterval: time.Millisecond})
+	s, _ := l.Stats(context.Background())
+	_ = mustReserve(t, l, chatReq(1))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	_, err := l.Reserve(ctx, chatReq(s.MaxCapacity))
+	var le *llms.LimitError
+	if !errors.As(err, &le) || le.RetryAfter != time.Minute {
+		t.Fatalf("Reserve = %v (RetryAfter %v), want a LimitError with RetryAfter 1m", err, le)
+	}
+}
+
+// TestRetryAfterSaturates: deep debt at a low rate gives a wait beyond int64
+// nanoseconds, which saturates (ADR-0034).
+func TestRetryAfterSaturates(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(0, 0)}
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1, BufferFactor: 1e18, Clock: clk.Now, PollInterval: time.Millisecond})
+	r := mustReserve(t, l, chatReq(1))
+	_ = r.Commit(context.Background(), llms.Usage{TotalTokens: math.MaxInt})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	_, err := l.Reserve(ctx, chatReq(1))
+	var le *llms.LimitError
+	if !errors.As(err, &le) || le.RetryAfter != time.Duration(math.MaxInt64) {
+		t.Fatalf("Reserve = %v, want a LimitError with RetryAfter MaxInt64", err)
+	}
+}
+
 // TestSlotCheckSaturates: a huge Requests weight must not wrap the slot sum
 // and slip past MaxConcurrency.
 func TestSlotCheckSaturates(t *testing.T) {

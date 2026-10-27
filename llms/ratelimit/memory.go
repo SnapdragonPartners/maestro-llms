@@ -258,12 +258,27 @@ func (l *InMemoryLimiter) retryAfterLocked(tokens int, hasTokens bool) time.Dura
 	if hasTokens || l.refillPerSec <= 0 {
 		return 0
 	}
-	deficit := float64(tokens) - float64(l.availableTok) // debt can exceed int range in a difference
+	// Exact int difference when it can't overflow (tokens >= 0, so only
+	// debt below tokens-MaxInt can), so a small deficit at a large capacity
+	// isn't rounded to zero; beyond that it is too large for rounding to
+	// matter.
+	deficit := float64(tokens) - float64(l.availableTok)
+	if l.availableTok >= tokens-math.MaxInt {
+		deficit = float64(tokens - l.availableTok)
+	}
 	if deficit <= 0 {
 		return 0
 	}
-	return time.Duration(deficit / l.refillPerSec * float64(time.Second))
+	ns := deficit / l.refillPerSec * float64(time.Second)
+	if ns >= maxDurationNS { // a larger float-to-int conversion is undefined
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(ns)
 }
+
+// maxDurationNS is float64(math.MaxInt64), which rounds up to 2^63: a
+// RetryAfter at or past it saturates (ADR-0034).
+const maxDurationNS = float64(math.MaxInt64)
 
 // Stats implements LimiterStats.
 func (l *InMemoryLimiter) Stats(_ context.Context) (LimiterSnapshot, error) {

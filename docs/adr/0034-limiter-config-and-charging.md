@@ -99,8 +99,11 @@ documented or observable behavior, so they have to be settled before v1
    - **Reserve:** the slot check compares `slots` with the free slots
      (`maxConcurrency - activeReqs`, which can't overflow) rather than a sum,
      and the unlimited-slot counter saturates. The token check subtracts
-     only tokens that are available. The retry-after deficit is computed in
-     float64.
+     only tokens that are available. The retry-after deficit is an exact
+     int difference, and float64 only where that would overflow. The
+     retry-after duration saturates at `math.MaxInt64` nanoseconds, here
+     and in `bucket/internal/core.RetryAfter` (shared by the bucket
+     backends), instead of reaching an undefined float-to-int conversion.
    - **Commit:** `effectiveTokens`' sums saturate, and the balance update
      saturates at `math.MinInt` for debt. The delta itself can't overflow,
      because both terms are non-negative.

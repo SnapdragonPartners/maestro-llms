@@ -116,16 +116,19 @@ func (l *InMemoryLimiter) refillLocked() {
 	}
 	l.lastRefill = now
 	l.tokenCarry += elapsed * l.refillPerSec
+	// Clamp at capacity before converting: at a rate near the Validate
+	// bound, one long gap accrues more than an int holds (ADR-0034).
+	if l.tokenCarry >= float64(l.maxCapacity)-float64(l.availableTok) {
+		l.availableTok = l.maxCapacity
+		l.tokenCarry = 0
+		return
+	}
 	whole := int(l.tokenCarry)
 	if whole <= 0 {
 		return
 	}
 	l.tokenCarry -= float64(whole)
 	l.availableTok += whole
-	if l.availableTok > l.maxCapacity {
-		l.availableTok = l.maxCapacity
-		l.tokenCarry = 0
-	}
 }
 
 func normalizeUnits(u UsageUnits) (tokens, slots int) {

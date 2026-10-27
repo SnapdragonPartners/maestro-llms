@@ -85,3 +85,18 @@ func TestEffectiveTokensFromBucket(t *testing.T) {
 		})
 	}
 }
+
+// TestRefillAtValidateBoundStaysDefined: the largest TokensPerMinute
+// Validate accepts must refill to capacity after a long gap, not through an
+// out-of-range float-to-int conversion (ADR-0034).
+func TestRefillAtValidateBoundStaysDefined(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(0, 0)}
+	l := mustNewLimiter(t, Config{TokensPerMinute: math.MaxInt, Clock: clk.Now})
+	r := mustReserve(t, l, chatReq(1_000_000))
+	_ = r.Commit(context.Background(), llms.Usage{InputTokens: 1_000_000})
+	clk.Advance(10 * time.Minute)
+	s, _ := l.Stats(context.Background())
+	if s.AvailableTokens != s.MaxCapacity {
+		t.Fatalf("after a long gap available = %d, want capacity %d", s.AvailableTokens, s.MaxCapacity)
+	}
+}

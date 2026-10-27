@@ -57,6 +57,10 @@ documented or observable behavior, so they have to be settled before v1
    `BufferFactor` (even when token limiting is off) and a
    `TokensPerMinute * BufferFactor` of `float64(math.MaxInt)` or more.
    `Capacity` is documented as defined only for limits that pass `Validate`.
+   Capacity bounds refill too: `InMemoryLimiter`'s refill clamps the
+   accrued carry at the room left below capacity before converting it to
+   an int, so a long gap at a rate near the bound stays defined. The
+   bucket backends refill in float64 and clamp to `Capacity` already.
 3. **A nil estimator selects `DefaultEstimator`** in `RateLimitChat` and
    `RateLimitEmbeddings`, matching `RecommendedConfig`.
 4. **`effectiveTokens` charges from the normalized fields**, on both limiter
@@ -127,6 +131,9 @@ documented or observable behavior, so they have to be settled before v1
 
 ## Amends
 
+- [ADR-0016](0016-usage-reasoning-tokens.md): `TotalTokens` is no longer
+  "the provider's authoritative grand total". It is a provider-specific
+  aggregate (decision 6), and the limiters use it only as a floor.
 - [ADR-0023](0023-usage-input-includes-cache.md): decision 4 (the in-memory
   limiter charges `TotalTokens`, else input plus output) is replaced by
   decision 4 here, for both limiter paths. Cache fields are still not

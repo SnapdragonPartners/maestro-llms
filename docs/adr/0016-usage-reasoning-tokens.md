@@ -1,6 +1,6 @@
 # 0016. `Usage.ReasoningTokens` + `BillableOutputTokens` — normalize the reasoning split
 
-- **Status:** Accepted; partially superseded by 0018 (Anthropic mapping)
+- **Status:** Accepted; partially superseded by 0018 (Anthropic mapping); amended by [ADR-0034](0034-limiter-config-and-charging.md) (`TotalTokens` is a provider-specific aggregate, and the limiters treat it as a floor)
 - **Date:** 2026-05-31
 
 ## Context
@@ -65,7 +65,10 @@ type Usage struct {
   `OutputTokens + ReasoningTokens`. It exists so consumers doing cost
   math read one field and don't have to track per-provider semantics.
 - `TotalTokens` continues to be the provider's authoritative grand
-  total (input + output + reasoning + cache + tool-use).
+  total (input + output + reasoning + cache + tool-use). *Amended by
+  ADR-0034:* it is a provider-specific aggregate, passed through by some
+  adapters and derived by others, so it is not one cross-provider
+  definition, and the limiters use it only as a floor.
 
 **Budget math:** a length-truncation fires when
 `InputTokens + OutputTokens + ReasoningTokens` approaches the cap, not

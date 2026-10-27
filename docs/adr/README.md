@@ -49,7 +49,7 @@ Copy `0001`'s structure as the template.
 | [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted |
 | [0013](0013-text-token-estimator.md) | Text-level token estimator (`EstimateTextTokens`) — neutral-biased free function distinct from the high-biased middleware estimator | Accepted |
 | [0015](0015-vllm-provider.md) | vLLM provider — leaf package, OpenAI Chat Completions wire shape (no auth allowed, no `LatestInFamily`, `Created` is local load time) | Accepted; amended by 0027 |
-| [0016](0016-usage-reasoning-tokens.md) | `Usage.ReasoningTokens` — surface reasoning-model thinking budget alongside visible output | Accepted; partially superseded by 0018 |
+| [0016](0016-usage-reasoning-tokens.md) | `Usage.ReasoningTokens` — surface reasoning-model thinking budget alongside visible output | Accepted; partially superseded by 0018; amended by 0034 |
 | [0017](0017-toolloop-terminal-tools.md) | Tool loop terminal tools (`ToolResult.Stop`, `OutcomeTerminalTool`) and executed limit turn | Accepted; amended by 0019, 0032 |
 | [0018](0018-anthropic-thinking-tokens.md) | Anthropic `ReasoningTokens` from `output_tokens_details.thinking_tokens` (retires the ADR-0016 exception) | Accepted |
 | [0019](0019-toolloop-deadline-and-no-iteration-limit.md) | Tool loop `OutcomeDeadline` and `NoIterationLimit` (the loop's context decides deadline vs failure; negative `MaxIterations` is unlimited) | Accepted; amended by 0032 |

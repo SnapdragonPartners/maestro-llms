@@ -196,7 +196,7 @@ func buildClient(opt ModelOption) (llms.ChatClient, error) {
 		key := envFirst("ANTHROPIC_API_KEY", "MAESTRO_ANTHROPIC_API_KEY")
 		return anthropic.New(anthropic.WithAPIKey(key), anthropic.WithModel(opt.Model))
 	case "openai":
-		return openai.NewChat(openai.WithAPIKey(envFirst("OPENAI_API_KEY")), openai.WithModel(opt.Model))
+		return openai.New(openai.WithAPIKey(envFirst("OPENAI_API_KEY")), openai.WithModel(opt.Model))
 	case "google":
 		key := envFirst("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY", "GOOGLE_API_KEY")
 		return google.New(google.WithAPIKey(key), google.WithModel(opt.Model))

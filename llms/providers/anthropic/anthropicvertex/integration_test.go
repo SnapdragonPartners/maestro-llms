@@ -34,7 +34,6 @@ func newVertexClient(t *testing.T) llms.ChatClient {
 	}
 	region := envOr("VERTEX_REGION", "global")
 	model := envOr("VERTEX_ANTHROPIC_MODEL", "claude-opus-4-6")
-	ctx := context.Background()
 	creds, err := credentials.DetectDefault(&credentials.DetectOptions{
 		Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
 	})
@@ -42,9 +41,7 @@ func newVertexClient(t *testing.T) llms.ChatClient {
 		t.Skipf("no Google credentials (run `gcloud auth application-default login`): %v", err)
 	}
 	c, err := anthropicvertex.New(
-		anthropicvertex.WithContext(ctx),
-		anthropicvertex.WithProjectID(project),
-		anthropicvertex.WithRegion(region),
+		anthropicvertex.WithVertex(project, region),
 		anthropicvertex.WithModel(model),
 		anthropicvertex.WithCredentials(creds),
 	)

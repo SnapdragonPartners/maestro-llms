@@ -9,8 +9,8 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
-// Compile-time assertion that *ChatClient satisfies llms.ModelLister.
-var _ llms.ModelLister = (*ChatClient)(nil)
+// Compile-time assertion that *Client satisfies llms.ModelLister.
+var _ llms.ModelLister = (*Client)(nil)
 
 // modelsListJSON mimics the GET /v1/models response shape OpenAI returns.
 // It mixes chat, embeddings, image, and dated snapshots so we exercise

@@ -1,6 +1,6 @@
 # 0029. Vertex: `WithCredentials` authenticates an injected `WithHTTPClient`
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0035](0035-provider-naming.md) (`anthropicvertex.WithEndpoint` is now `WithBaseURL`; the precedence is unchanged)
 - **Date:** 2026-10-18
 
 ## Context

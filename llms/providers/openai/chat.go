@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"strings"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -10,40 +11,44 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
-// ChatClient is an llms.ChatClient backed by the OpenAI **Responses API**
+// Client is an llms.ChatClient backed by the OpenAI **Responses API**
 // (not Chat Completions, which OpenAI is deprecating). The conversation is
 // sent as structured Responses input items, so tool calls round-trip
 // faithfully rather than being flattened into a text blob.
 //
 //nolint:govet // fieldalignment: size dominated by embedded third-party SDK client
-type ChatClient struct {
+type Client struct {
 	api   openai.Client
 	model string
 }
 
 // compile-time assertion lives in the test file.
 
-// NewChat builds a Responses-API chat client. It returns a
-// *llms.ProviderError of kind config when required values are missing or
-// invalid (e.g. a negative max-retry count).
-func NewChat(opts ...Option) (*ChatClient, error) {
+// New builds a Responses-API chat Client. It returns a *llms.ProviderError
+// of kind config when required values are missing or invalid (e.g. a
+// negative max-retry count) or an embeddings-only option such as
+// WithDimensions is set (ADR-0035).
+func New(opts ...Option) (*Client, error) {
 	var s settings
 	for _, o := range opts {
 		o(&s)
 	}
+	if len(s.embedOnly) > 0 {
+		return nil, configErr(strings.Join(s.embedOnly, ", ") + " applies only to NewEmbeddings")
+	}
 	if err := s.validate(false); err != nil {
 		return nil, err
 	}
-	return &ChatClient{api: newAPI(s.requestOptions()), model: s.model}, nil
+	return &Client{api: newAPI(s.requestOptions()), model: s.model}, nil
 }
 
 // Model returns the model this client targets.
-func (c *ChatClient) Model() llms.ModelRef {
+func (c *Client) Model() llms.ModelRef {
 	return llms.ModelRef{Provider: providerName, Name: c.model}
 }
 
 // Complete sends a synchronous chat completion via the Responses API.
-func (c *ChatClient) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+func (c *Client) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
 	extra, _, err := extraparams.For(&req, providerName)
 	if err != nil {
 		return llms.ChatResponse{}, chatBadRequest(c.model, err.Error())

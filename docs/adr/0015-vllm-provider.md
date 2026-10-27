@@ -1,6 +1,6 @@
 # 0015. vLLM provider (leaf package, OpenAI Chat Completions wire shape)
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0035](0035-provider-naming.md) (the OpenAI chat constructor is now `openai.New`; `openai.NewChat` is gone)
 - **Date:** 2026-05-31
 
 ## Context

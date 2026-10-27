@@ -22,9 +22,9 @@ func TestIntegrationOpenAIReasoningEffort(t *testing.T) {
 	if model == "" {
 		model = "gpt-5-mini"
 	}
-	c, err := openai.NewChat(openai.WithAPIKey(key), openai.WithModel(model))
+	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(model))
 	if err != nil {
-		t.Fatalf("NewChat: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	livetest.ReasoningControl(t, c,
 		livetest.Same(llms.ReasoningConfig{Effort: llms.ReasoningEffortMinimal}),

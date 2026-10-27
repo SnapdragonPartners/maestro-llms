@@ -154,10 +154,15 @@ Every provider is constructed the same way and returns an `llms.ChatClient`:
 | Provider | Constructor | Notable options |
 |---|---|---|
 | Anthropic | `anthropic.New(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithHTTPClient` |
-| OpenAI (chat) | `openai.NewChat(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithHTTPClient` |
+| OpenAI | `openai.New(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithBaseURL`, `WithHTTPClient` |
 | Google | `google.New(...)` | `WithAPIKey`, `WithModel`, `WithMaxRetries`, `WithBaseURL`, `WithHTTPClient` |
 | Ollama | `ollama.New(...)` | `WithBaseURL`, `WithModel`, `WithHTTPClient` |
 | OpenAI-compatible (vLLM, LunaRoute, …) | `openaicompat.New(...)` | `WithBaseURL` (required), `WithModel` (required), `WithAPIKey` (optional — vLLM defaults to no auth), `WithHTTPClient` |
+
+The packages with an embeddings client (`openai`, `google`) build it with
+`NewEmbeddings(...)` from the same option set; an embeddings-only option such
+as `WithDimensions` passed to `New` is a config error
+([ADR-0035](docs/adr/0035-provider-naming.md)).
 
 `WithMaxRetries` controls *SDK-level* retries; the toolkit defaults provider
 SDK retries to 0 and expects you to use the retry middleware (below) for one
@@ -554,7 +559,7 @@ client, err := openaicompat.New(
 ```go
 import "github.com/SnapdragonPartners/maestro-llms/llms/providers/openai"
 
-emb, err := openai.New(
+emb, err := openai.NewEmbeddings(
 	openai.WithAPIKey(apiKey),
 	openai.WithModel("text-embedding-3-small"),
 )
@@ -601,15 +606,14 @@ creds, err := credentials.DetectDefault(&credentials.DetectOptions{
 	Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
 }) // or any *auth.Credentials your app builds; the toolkit never discovers them
 
-// Claude via Vertex. For PSC also pass WithEndpoint + a WithHTTPClient whose
+// Claude via Vertex. For PSC also pass WithBaseURL + a WithHTTPClient whose
 // transport reaches the PSC endpoint; WithCredentials authenticates it
 // (ADR-0029).
 chat, err := anthropicvertex.New(
-	anthropicvertex.WithRegion("us-central1"),
-	anthropicvertex.WithProjectID("my-proj"),
+	anthropicvertex.WithVertex("my-proj", "us-central1"), // same order as google.WithVertex
 	anthropicvertex.WithModel("claude-sonnet-4@20250514"),
 	anthropicvertex.WithCredentials(creds),
-	// anthropicvertex.WithEndpoint(pscURL), anthropicvertex.WithHTTPClient(pscClient),
+	// anthropicvertex.WithBaseURL(pscURL), anthropicvertex.WithHTTPClient(pscClient),
 ) // returns the same *anthropic.Client (all translation/middleware reused)
 
 // gemini-embedding-001 via Vertex, same creds. Truncation is fail-closed:

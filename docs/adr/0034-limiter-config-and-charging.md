@@ -57,12 +57,7 @@ documented or observable behavior, so they have to be settled before v1
    `BufferFactor` (even when token limiting is off) and a
    `TokensPerMinute * BufferFactor` of `float64(math.MaxInt)` or more.
    `Capacity` is documented as defined only for limits that pass `Validate`.
-   Refill stays defined too: `InMemoryLimiter` converts at most
-   `math.MaxInt` of accrued carry to an int per refill, and compares the
-   result with the room below capacity in integer arithmetic, so a long gap
-   at a rate near the bound is defined and a small room at a large capacity
-   is not rounded away. The bucket backends refill in float64 and clamp to
-   `Capacity` already.
+   Refill is covered by decision 7.
 3. **A nil estimator selects `DefaultEstimator`** in `RateLimitChat` and
    `RateLimitEmbeddings`, matching `RecommendedConfig`.
 4. **`effectiveTokens` charges from the normalized fields**, on both limiter
@@ -78,7 +73,7 @@ documented or observable behavior, so they have to be settled before v1
      total instead of refunding the whole estimate. A total that counts
      tokens the normalized fields don't is not undercounted: Gemini's total
      includes the tool-use prompt, which `InputTokens` doesn't.
-   - Negative fields count as zero.
+   - Negative fields count as zero, and the sums saturate (decision 7).
 5. **`usageReported` counts every `Usage` token field**, including
    `ReasoningTokens` and `BillableOutputTokens`. Usage reporting only those
    is committed.
@@ -87,6 +82,41 @@ documented or observable behavior, so they have to be settled before v1
    equality across providers is not promised. `EmbeddingTokens` is
    documented as the input count of an embedding call, which overlaps
    `InputTokens`.
+
+7. **The in-memory token accounting never wraps an int.** Token counts come
+   from callers and providers, so every int operation on the path from
+   estimate to reserve, commit and refill either saturates or is compared
+   exactly. Three review findings on #126 had this shape (refill
+   conversion, the charging sums, debt repayment), so it is fixed as a
+   class at these choke points, using the internal `llms/internal/satint`
+   helpers:
+   - **Estimate:** `UsageUnits.Tokens` and `DefaultEstimator`'s
+     input-plus-`MaxTokens` total saturate at `math.MaxInt`, so
+     `MaxTokens: math.MaxInt` ("no cap") reserves `MaxInt`, which is then
+     rejected as impossible, instead of wrapping negative and reserving
+     zero. The estimator's per-part text sums add `len()`s of in-memory
+     strings, which can't approach `MaxInt`.
+   - **Reserve:** the slot check compares `slots` with the free slots
+     (`maxConcurrency - activeReqs`, which can't overflow) rather than a sum,
+     and the unlimited-slot counter saturates. The token check subtracts
+     only tokens that are available. The retry-after deficit is computed in
+     float64.
+   - **Commit:** `effectiveTokens`' sums saturate, and the balance update
+     saturates at `math.MinInt` for debt. The delta itself can't overflow,
+     because both terms are non-negative.
+   - **Refill:** the accrued float carry is converted in chunks of at most
+     `math.MaxInt` (a larger conversion is undefined) until the carry runs
+     out or the bucket is full, so debt deeper than `MaxInt` is still repaid
+     in one refill. The room below capacity is compared in exact integers,
+     so a small room at a large capacity isn't rounded away. When the room
+     itself would overflow, it exceeds any chunk. At most two chunks precede
+     the one that fills the bucket.
+
+   Saturation is not exact at the boundary: a saturated sum equals
+   `MaxInt`. Comparisons that decide admission or a full bucket therefore
+   use an exact difference, never a saturated sum. The bucket backends
+   keep balances in float64 and clamp to `Capacity`, so this decision
+   covers `InMemoryLimiter` and the shared charge and estimate helpers.
 
 ## Alternatives considered
 
@@ -147,14 +177,17 @@ documented or observable behavior, so they have to be settled before v1
 ## References
 
 - `bucket/bucket.go`: `Limits.Validate`, `Limits.Capacity`
-- `llms/ratelimit/memory.go`: `NewInMemoryLimiter`, `effectiveTokens`
+- `llms/ratelimit/memory.go`: `NewInMemoryLimiter`, `effectiveTokens`,
+  `refillLocked`, `tryAcquireLocked`, `Commit`
+- `llms/internal/satint`: saturating `Add`/`Sub`
 - `llms/ratelimit/bucket.go`: `FromBucket` (`Commit` calls `Adjust` with
   `effectiveTokens`)
 - `llms/middleware/ratelimit.go`: `RateLimitChat`, `RateLimitEmbeddings`,
   `usageReported`
 - `llms/usage.go`: the `TotalTokens` and `EmbeddingTokens` docs
 - Tests: `bucket/bucket_test.go` (`TestLimitsValidate`),
-  `llms/ratelimit/charging_test.go` (the charging table on both paths),
+  `llms/ratelimit/charging_test.go` (the charging table on both paths, and
+  one test per boundary of decision 7),
   `llms/middleware/middleware_test.go`
   (`TestRateLimitNilEstimatorUsesDefault`,
   `TestRateLimitCommitsOutputOnlyUsage`)

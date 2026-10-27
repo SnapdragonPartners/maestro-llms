@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -295,5 +296,15 @@ func TestRateLimitCommitsOutputOnlyUsage(t *testing.T) {
 		if st, _ := lim.Stats(context.Background()); st.AvailableTokens != 90_000-250 {
 			t.Fatalf("usage %+v: available = %d, want %d", u, st.AvailableTokens, 90_000-250)
 		}
+	}
+}
+
+// TestEstimateChatSaturates: MaxTokens = MaxInt ("no cap") must not wrap the
+// total estimate negative (ADR-0034).
+func TestEstimateChatSaturates(t *testing.T) {
+	req := userReq("hello")
+	req.MaxTokens = math.MaxInt
+	if got := (DefaultEstimator{}).EstimateChat(req).TotalTokensMax; got != math.MaxInt {
+		t.Fatalf("TotalTokensMax = %d, want MaxInt", got)
 	}
 }

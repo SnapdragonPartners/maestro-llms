@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -49,6 +50,9 @@ var chargingCases = []struct { //nolint:gochecknoglobals // shared test table
 	{"input and embedding overlap", llms.Usage{InputTokens: 7, EmbeddingTokens: 7}, 7},
 	{"cache is a subset of input", llms.Usage{InputTokens: 90, OutputTokens: 10, CacheReadTokens: 60, CacheWriteTokens: 20}, 100},
 	{"negative fields count as zero", llms.Usage{InputTokens: -5, OutputTokens: 12, ReasoningTokens: -3}, 12},
+	// The sums saturate instead of wrapping into a refund (Copilot, #126).
+	{"output sum saturates", llms.Usage{OutputTokens: math.MaxInt, ReasoningTokens: 1}, math.MaxInt},
+	{"input plus output saturates", llms.Usage{InputTokens: math.MaxInt, BillableOutputTokens: 1}, math.MaxInt},
 }
 
 func TestEffectiveTokensInMemory(t *testing.T) {
@@ -122,5 +126,62 @@ func TestRefillKeepsSmallRoomAtLargeCapacity(t *testing.T) {
 	clk.Advance(time.Minute) // the second token fills the room exactly
 	if s, _ := l.Stats(context.Background()); s.AvailableTokens != s.MaxCapacity {
 		t.Fatalf("after 2 tokens of refill available = %d, want capacity %d", s.AvailableTokens, s.MaxCapacity)
+	}
+}
+
+// The int-overflow class in the limiter accounting (ADR-0034): each boundary
+// saturates instead of wrapping.
+
+// TestTokensSaturates: an estimate whose parts overflow reserves MaxInt
+// (rejected as impossible), not a wrapped negative clamped to zero.
+func TestTokensSaturates(t *testing.T) {
+	if got := (UsageUnits{InputTokens: math.MaxInt, OutputTokensMax: 1}).Tokens(); got != math.MaxInt {
+		t.Fatalf("Tokens() = %d, want MaxInt", got)
+	}
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1000})
+	_, err := l.Reserve(context.Background(), ReservationRequest{EstimatedUnits: UsageUnits{InputTokens: math.MaxInt, OutputTokensMax: 1}})
+	var le *llms.LimitError
+	if !errors.As(err, &le) || !le.Permanent {
+		t.Fatalf("overflowing estimate = %v, want a Permanent LimitError", err)
+	}
+}
+
+// TestCommitDebtSaturates: repeated huge charges drive the balance to MinInt,
+// not around to a large positive balance.
+func TestCommitDebtSaturates(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(0, 0)}
+	l := mustNewLimiter(t, Config{TokensPerMinute: 1000, Clock: clk.Now})
+	r1, r2 := mustReserve(t, l, chatReq(1)), mustReserve(t, l, chatReq(1))
+	_ = r1.Commit(context.Background(), llms.Usage{TotalTokens: math.MaxInt})
+	_ = r2.Commit(context.Background(), llms.Usage{TotalTokens: math.MaxInt})
+	if s, _ := l.Stats(context.Background()); s.AvailableTokens != math.MinInt {
+		t.Fatalf("available = %d, want MinInt (saturated debt)", s.AvailableTokens)
+	}
+}
+
+// TestRefillRepaysDebtBeyondMaxInt: carry larger than MaxInt is consumed in
+// chunks, so one refill repays debt deeper than MaxInt (Copilot, #126).
+func TestRefillRepaysDebtBeyondMaxInt(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(0, 0)}
+	l := mustNewLimiter(t, Config{TokensPerMinute: math.MaxInt, BufferFactor: 0.125, Clock: clk.Now})
+	s0, _ := l.Stats(context.Background())
+	r1, r2 := mustReserve(t, l, chatReq(1)), mustReserve(t, l, chatReq(1))
+	_ = r1.Commit(context.Background(), llms.Usage{TotalTokens: math.MaxInt})
+	_ = r2.Commit(context.Background(), llms.Usage{TotalTokens: s0.MaxCapacity / 2})
+	clk.Advance(10 * time.Minute)
+	if s, _ := l.Stats(context.Background()); s.AvailableTokens != s.MaxCapacity {
+		t.Fatalf("after ten idle minutes available = %d, want capacity %d", s.AvailableTokens, s.MaxCapacity)
+	}
+}
+
+// TestSlotCheckSaturates: a huge Requests weight must not wrap the slot sum
+// and slip past MaxConcurrency.
+func TestSlotCheckSaturates(t *testing.T) {
+	l := mustNewLimiter(t, Config{MaxConcurrency: math.MaxInt, MaxWait: time.Millisecond, PollInterval: time.Millisecond})
+	_ = mustReserve(t, l, ReservationRequest{EstimatedUnits: UsageUnits{Requests: 1}})
+	r, err := l.Reserve(context.Background(), ReservationRequest{EstimatedUnits: UsageUnits{Requests: math.MaxInt}})
+	if err == nil {
+		_ = r.Release(context.Background())
+		t.Fatal("MaxInt slots admitted next to a held slot; the slot sum wrapped")
 	}
 }

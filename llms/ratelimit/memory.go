@@ -9,6 +9,7 @@ import (
 
 	"github.com/SnapdragonPartners/maestro-llms/bucket"
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/satint"
 )
 
 // defaultPollInterval is how often a blocked Reserve re-checks for capacity.
@@ -117,26 +118,26 @@ func (l *InMemoryLimiter) refillLocked() {
 	}
 	l.lastRefill = now
 	l.tokenCarry += elapsed * l.refillPerSec
-	// At a rate near the Validate bound one long gap accrues more than an
-	// int holds, so take at most MaxInt per refill: converting a larger
-	// float is undefined (ADR-0034).
-	whole := math.MaxInt
-	if l.tokenCarry < maxCarry {
-		whole = int(l.tokenCarry)
+	// Consume the carry in chunks of at most MaxInt (converting a larger
+	// float is undefined) until it runs out or the bucket is full, so debt
+	// deeper than MaxInt is still repaid in one refill (ADR-0034). The room
+	// is compared in ints, so it is exact at any capacity. When the room
+	// itself would overflow (debt below maxCapacity-MaxInt) it exceeds any
+	// chunk, so the chunk is added. That lifts the balance to at least -1,
+	// so at most two chunks precede the one that fills the bucket.
+	for l.tokenCarry >= 1 {
+		whole := math.MaxInt
+		if l.tokenCarry < maxCarry {
+			whole = int(l.tokenCarry)
+		}
+		if l.availableTok >= l.maxCapacity-math.MaxInt && whole >= l.maxCapacity-l.availableTok {
+			l.availableTok = l.maxCapacity
+			l.tokenCarry = 0
+			return
+		}
+		l.tokenCarry -= float64(whole)
+		l.availableTok += whole // below the room, so it can't overflow
 	}
-	if whole <= 0 {
-		return
-	}
-	l.tokenCarry -= float64(whole)
-	// Compare in ints so the room is exact at any capacity (float math
-	// rounds a small room away at large capacities). The room overflows
-	// only for debt below maxCapacity-MaxInt, where whole can't fill it.
-	if l.availableTok >= l.maxCapacity-math.MaxInt && whole >= l.maxCapacity-l.availableTok {
-		l.availableTok = l.maxCapacity
-		l.tokenCarry = 0
-		return
-	}
-	l.availableTok += whole
 }
 
 // maxCarry bounds the refill carry converted to int in one step:
@@ -187,12 +188,14 @@ func (l *InMemoryLimiter) impossible(req ReservationRequest, tokens, slots int) 
 // estimate. Caller holds l.mu.
 func (l *InMemoryLimiter) tryAcquireLocked(tokens, slots int) (ok bool, retryAfter time.Duration) {
 	hasTokens := !l.tokenLimited() || l.availableTok >= tokens
-	hasSlot := !l.slotLimited() || l.activeReqs+slots <= l.maxConcurrency
+	// Compare against the free slots, not activeReqs+slots: the difference
+	// can't overflow (0 <= activeReqs <= maxConcurrency), and a sum could.
+	hasSlot := !l.slotLimited() || slots <= l.maxConcurrency-l.activeReqs
 	if hasTokens && hasSlot {
 		if l.tokenLimited() {
 			l.availableTok -= tokens
 		}
-		l.activeReqs += slots
+		l.activeReqs = satint.Add(l.activeReqs, slots) // unbounded when slots aren't limited
 		return true, 0
 	}
 	if !hasTokens {
@@ -255,7 +258,7 @@ func (l *InMemoryLimiter) retryAfterLocked(tokens int, hasTokens bool) time.Dura
 	if hasTokens || l.refillPerSec <= 0 {
 		return 0
 	}
-	deficit := float64(tokens - l.availableTok)
+	deficit := float64(tokens) - float64(l.availableTok) // debt can exceed int range in a difference
 	if deficit <= 0 {
 		return 0
 	}
@@ -300,14 +303,15 @@ type reservation struct {
 //     refunding the whole estimate, and a total that counts tokens the
 //     normalized fields don't (Gemini's tool-use prompt) is not undercounted.
 //
-// Negative fields count as zero.
+// Negative fields count as zero, and the sums saturate at math.MaxInt rather
+// than wrapping into a refund.
 func effectiveTokens(u llms.Usage) int {
 	input := max(u.InputTokens, u.EmbeddingTokens, 0)
 	output := u.BillableOutputTokens
 	if output <= 0 {
-		output = max(u.OutputTokens, 0) + max(u.ReasoningTokens, 0)
+		output = satint.Add(max(u.OutputTokens, 0), max(u.ReasoningTokens, 0))
 	}
-	return max(input+output, u.TotalTokens)
+	return max(satint.Add(input, output), u.TotalTokens)
 }
 
 // Commit reconciles actual token usage against the estimate. Lower actual
@@ -330,9 +334,8 @@ func (r *reservation) Commit(_ context.Context, usage llms.Usage) error {
 	// later Reserve/Stats would refill from before the delta was charged
 	// and erase over-use debt (undercounting traffic).
 	l.refillLocked()
-	delta := effectiveTokens(usage) - r.tokens // >0: used more; <0: refund
-	l.availableTok -= delta
-	l.availableTok = min(l.availableTok, l.maxCapacity)
+	delta := effectiveTokens(usage) - r.tokens // >0: used more; <0: refund (both >= 0, so no overflow)
+	l.availableTok = min(satint.Sub(l.availableTok, delta), l.maxCapacity)
 	return nil
 }
 

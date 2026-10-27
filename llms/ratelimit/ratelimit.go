@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/satint"
 )
 
 // Operation is the transport shape of a call, used by limiters and middleware.
@@ -29,14 +30,14 @@ type UsageUnits struct {
 }
 
 // Tokens is the canonical token count a reservation should hold for these
-// units: TotalTokensMax when set, otherwise InputTokens + OutputTokensMax,
-// never negative. This normalization is exported so distributed Limiter
+// units: TotalTokensMax when set, otherwise InputTokens + OutputTokensMax
+// (saturating at math.MaxInt), never negative. This normalization is exported so distributed Limiter
 // implementations in other packages account identically to the in-memory one
 // rather than re-deriving it.
 func (u UsageUnits) Tokens() int {
 	t := u.TotalTokensMax
 	if t <= 0 {
-		t = u.InputTokens + u.OutputTokensMax
+		t = satint.Add(u.InputTokens, u.OutputTokensMax)
 	}
 	return max(t, 0)
 }

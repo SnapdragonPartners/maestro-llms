@@ -1163,13 +1163,26 @@ permanent alias), `*auth.Credentials` on both Vertex entry points, and one
 [ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md); Gemini chat on Vertex AI
 — see [ADR-0028](docs/adr/0028-gemini-chat-on-vertex.md); on Vertex,
 `WithCredentials` authenticates an injected `WithHTTPClient` — see
-[ADR-0029](docs/adr/0029-vertex-injected-client-auth.md)), and **v0.14.0**
+[ADR-0029](docs/adr/0029-vertex-injected-client-auth.md)), **v0.14.0**
 (toolloop compaction: one `Config.Compact` hook, run before each turn and
 once on overflow, plus `OutcomeCompactionError` and the `KeepLast`/
 `Summarize` policies in `llms/toolloop/compact` — see
 [ADR-0030](docs/adr/0030-toolloop-compaction.md); per-attempt correlation
 for observers: an optional `middleware.ContextObserver` gets each `Event`
 with its context, and `AttemptFromContext` reports the retry attempt
-number — see [ADR-0031](docs/adr/0031-attempt-context-observer.md)).
+number — see [ADR-0031](docs/adr/0031-attempt-context-observer.md)), and
+**v0.15.0**, the last breaking cleanup before v1 (the
+[stability contract](#stability-contract-v1) and its enum-type rules — see
+[ADR-0032](docs/adr/0032-enum-like-types-v1.md); limiter rejections are
+neutral to the circuit, and `Permanent` or canceled ones aren't retried —
+see [ADR-0033](docs/adr/0033-limit-error-classification.md);
+`NewInMemoryLimiter` returns an error, limits are validated, and usage is
+charged from the normalized fields — see
+[ADR-0034](docs/adr/0034-limiter-config-and-charging.md); `openai.New` is
+the chat constructor and `NewEmbeddings` the embeddings one, and
+`anthropicvertex` takes `WithVertex`/`WithBaseURL` — see
+[ADR-0035](docs/adr/0035-provider-naming.md); `RecommendedConfig.Retry` is
+a pointer and nil selects the jittered default — see
+[ADR-0036](docs/adr/0036-recommended-retry-pointer.md)).
 
 MIT — see [`LICENSE`](LICENSE).

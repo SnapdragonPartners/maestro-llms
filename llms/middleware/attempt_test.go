@@ -108,7 +108,7 @@ func (noopReservation) Release(context.Context) error            { return nil }
 func TestContextObserverSeesEachAttemptWithCallerContext(t *testing.T) {
 	rec := &ctxRecorder{}
 	base := &testllm.FakeChatClient{ModelRef: llms.ModelRef{Provider: "p", Name: "m"}, Func: failFirst(2)}
-	c := RecommendedChat(base, RecommendedConfig{Retry: fastRetry(5), Timeout: time.Minute, Observer: rec})
+	c := RecommendedChat(base, RecommendedConfig{Retry: new(fastRetry(5)), Timeout: time.Minute, Observer: rec})
 
 	resp, err := c.Complete(callCtx("c1"), userReq("hi"))
 	if err != nil || resp.Text != "ok" {
@@ -146,7 +146,7 @@ func TestContextObserverAttemptGapOnLimiterRejection(t *testing.T) {
 	// Attempt 1 reaches the provider and fails; attempt 2 is rejected by the
 	// limiter (retryable, so it consumes an attempt); attempt 3 succeeds.
 	lim := &scriptedLimiter{reject: map[int]bool{2: true}}
-	c := RecommendedChat(base, RecommendedConfig{Retry: fastRetry(5), Limiter: lim, Observer: rec})
+	c := RecommendedChat(base, RecommendedConfig{Retry: new(fastRetry(5)), Limiter: lim, Observer: rec})
 
 	if _, err := c.Complete(callCtx("c1"), userReq("hi")); err != nil {
 		t.Fatalf("want success, got %v", err)
@@ -166,7 +166,7 @@ func TestContextObserverDoesNotSeeOuterRejections(t *testing.T) {
 		Err:      provErr(llms.ErrorKindUnavailable, 0),
 	}
 	c := RecommendedChat(base, RecommendedConfig{
-		Retry: fastRetry(3), Circuit: fastCircuit(1, 1, time.Hour), Observer: rec,
+		Retry: new(fastRetry(3)), Circuit: fastCircuit(1, 1, time.Hour), Observer: rec,
 	})
 
 	// Attempt 1 fails and trips the breaker; attempt 2 fast-fails with the
@@ -201,7 +201,7 @@ func TestContextObserverConcurrentCallsDoNotCross(t *testing.T) {
 	// Every call fails once at about the same time; keep the breaker out of
 	// the way so all of them reach their second attempt.
 	c := RecommendedChat(base, RecommendedConfig{
-		Retry: fastRetry(3), Circuit: fastCircuit(1000, 1, time.Second), Observer: rec,
+		Retry: new(fastRetry(3)), Circuit: fastCircuit(1000, 1, time.Second), Observer: rec,
 	})
 
 	const calls = 16
@@ -275,7 +275,7 @@ func TestContextObserverEmbeddingsSeesEachAttempt(t *testing.T) {
 			return llms.EmbeddingResponse{}, nil
 		},
 	}
-	c := RecommendedEmbeddings(base, RecommendedConfig{Retry: fastRetry(3), Observer: rec})
+	c := RecommendedEmbeddings(base, RecommendedConfig{Retry: new(fastRetry(3)), Observer: rec})
 
 	if _, err := c.Embed(callCtx("e1"), llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{{ID: "1", Text: "x"}}}); err != nil {
 		t.Fatalf("want success, got %v", err)

@@ -137,7 +137,7 @@ func TestRecommendedChatImpossibleRequestDoesNotTripCircuit(t *testing.T) {
 	lim := mustNewLimiter(t, ratelimit.Config{TokensPerMinute: 20_000})
 	retry := fastRetry(5)
 	c := RecommendedChat(fake, RecommendedConfig{
-		Retry:   retry,
+		Retry:   &retry,
 		Circuit: CircuitConfig{FailureThreshold: retry.MaxAttempts},
 		Limiter: lim,
 	})
@@ -167,7 +167,7 @@ func TestRecommendedChatTemporaryExhaustionDoesNotTripCircuit(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := RecommendedChat(fake, RecommendedConfig{
-		Retry:   fastRetry(2),
+		Retry:   new(fastRetry(2)),
 		Circuit: CircuitConfig{FailureThreshold: 2, OpenTimeout: time.Minute},
 		Limiter: lim,
 	})
@@ -204,7 +204,7 @@ func heldLimiter(t *testing.T, d time.Duration) *ratelimit.InMemoryLimiter {
 // admitted (Codex PR 1 round 1; ADR-0033 Decision 4).
 func TestRecommendedPerAttemptDeadlineInLimiterStillRetries(t *testing.T) {
 	cfg := func(lim ratelimit.Limiter) RecommendedConfig {
-		return RecommendedConfig{Retry: fastRetry(3), Timeout: 40 * time.Millisecond, Limiter: lim}
+		return RecommendedConfig{Retry: new(fastRetry(3)), Timeout: 40 * time.Millisecond, Limiter: lim}
 	}
 	t.Run("chat", func(t *testing.T) {
 		fake := &testllm.FakeChatClient{Text: "ok"}
@@ -234,7 +234,7 @@ func TestRecommendedPerAttemptDeadlineInLimiterStillRetries(t *testing.T) {
 // caller's context, still matching context.DeadlineExceeded.
 func TestRecommendedCallerDeadlineInLimiterStopsRetry(t *testing.T) {
 	fake := &testllm.FakeChatClient{Text: "ok"}
-	c := RecommendedChat(fake, RecommendedConfig{Retry: fastRetry(50), Limiter: heldLimiter(t, time.Hour)})
+	c := RecommendedChat(fake, RecommendedConfig{Retry: new(fastRetry(50)), Limiter: heldLimiter(t, time.Hour)})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	start := time.Now()

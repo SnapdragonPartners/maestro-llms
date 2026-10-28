@@ -121,7 +121,7 @@ func ExampleContextObserver() {
 	s := &sink{attempts: map[string][]attemptRecord{}}
 	client := &capture{
 		next: middleware.RecommendedChat(fake, middleware.RecommendedConfig{
-			Retry:    middleware.RetryConfig{MaxAttempts: 3, InitialDelay: time.Millisecond},
+			Retry:    new(middleware.RetryConfig{MaxAttempts: 3, InitialDelay: time.Millisecond}),
 			Observer: s,
 		}),
 		sink: s,

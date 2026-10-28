@@ -8,10 +8,12 @@ import (
 // ModelLister is an optional capability a ChatClient may also implement
 // to expose the provider's catalog of available models. Callers and
 // middleware discover it with a type assertion — adding it does NOT widen
-// ChatClient (same pattern as StreamingChatClient). Providers without a
-// list API (or where listing has no consistent meaning, like a future
-// vLLM operator-served endpoint) simply do not implement it; the failed
-// type assertion is the right signal.
+// ChatClient (same pattern as StreamingChatClient). The anthropic, openai,
+// google, ollama and openaicompat clients implement it, and a client
+// without a list API doesn't, so the failed type assertion is the signal.
+// One exception: anthropicvertex returns the base *anthropic.Client, which
+// satisfies ModelLister, but Vertex AI doesn't serve the models endpoint,
+// so ListModels fails there with a bad_request ProviderError.
 //
 // See ADR-0012 for the design and binding non-goals. "Latest in family"
 // helpers live in each provider's package because family naming
@@ -31,7 +33,7 @@ type ModelInfo struct {
 	ID string
 	// Family is the provider-classified family name used by that
 	// provider's LatestInFamily helper. Empty when family parsing is
-	// not applicable (Ollama, vLLM) or the ID does not match a known
+	// not applicable (Ollama, openaicompat) or the ID does not match a known
 	// pattern. Callers should not interpret Family across providers —
 	// it is a per-provider convention.
 	Family string
@@ -39,7 +41,8 @@ type ModelInfo struct {
 	// exposes it. Zero where unavailable (some Gemini list entries
 	// have no date). For Ollama, Created is the LOCAL pull time
 	// (modified_at on the local filesystem), not the provider release
-	// time — read with that caveat.
+	// time. For openaicompat it is whatever the server reports (vLLM
+	// reports when it loaded the model). Read with those caveats.
 	Created time.Time
 	// Raw is the underlying SDK payload (anthropic.ModelInfo, openai.Model,
 	// *genai.Model, etc.). Outside the stability contract; callers that

@@ -26,7 +26,8 @@ type FakeEmbeddingClient struct {
 	// Err, if set (and Func is nil), is returned from every Embed call.
 	Err error
 	// Vectors maps input text to a fixed vector; takes precedence over the
-	// hash fallback for matching inputs.
+	// hash fallback for matching inputs. The slice is returned as stored,
+	// not copied, so a caller that mutates a returned vector changes it here.
 	Vectors map[string][]float32
 	// ModelRef is reported by Model.
 	ModelRef llms.ModelRef

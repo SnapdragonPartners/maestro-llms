@@ -72,8 +72,8 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   capability for surfacing "newer model available in your family"
   prompts to users — applications decide whether to upgrade, the
   toolkit does not. Per-provider `LatestInFamily` helpers know each
-  provider's family-naming convention; Ollama implements list-only
-  (no canonical family). See [ADR-0012](docs/adr/0012-model-lister.md).
+  provider's family-naming convention; Ollama and openaicompat implement
+  list-only (no canonical family). See [ADR-0012](docs/adr/0012-model-lister.md).
 - **Text-level token estimator** (`llms.EstimateTextTokens`): exported
   `func(string) int` for budget-aware chunking, with documented
   **neutral** bias (distinct from the high-biased middleware
@@ -457,7 +457,8 @@ does not auto-update.
 // Discover via type assertion (optional capability — see ADR-0012).
 lister, ok := client.(llms.ModelLister)
 if !ok {
-    // Provider doesn't expose a model list (e.g. future vLLM).
+    // This client has no list API. Every adapter in this module asserts
+    // successfully; on anthropicvertex the call itself fails (see below).
     return
 }
 models, err := lister.ListModels(ctx)
@@ -481,6 +482,8 @@ Per-provider notes:
 - **OpenAI** (`openai.LatestInFamily`): family = ID with trailing `-YYYY-MM-DD` stripped (`gpt-5-2026-03-15` → `gpt-5`; `gpt-5-mini-2025-12-01` → `gpt-5-mini`). Self-filtering by family means embedding/image IDs in the catalog never collide with `gpt-*` queries. Ordered by `Created` (Unix seconds).
 - **Google** (`google.LatestInFamily`): family = `gemini-{pro|flash|nano|ultra}`. The genai list exposes no created date, so ordering uses parsed numeric version from the ID (`gemini-3-pro` > `gemini-2.5-pro` > `gemini-1.5-pro`). `ModelInfo.Created` is zero.
 - **Ollama** (`ListModels` only — **no `LatestInFamily`**): the list is *locally pulled* models via `/api/tags`, not a provider catalog. `ModelInfo.Created` is the local pull time (`modified_at`), not provider release time. `Family` is empty: Ollama tags are community-uploaded under arbitrary names and have no canonical family convention.
+- **openaicompat** (`ListModels` only — **no `LatestInFamily`**): the server's `/v1/models` list. `ModelInfo.Created` is whatever the server reports (vLLM reports when it loaded the model). `Family` is empty: served models use arbitrary HuggingFace-style names.
+- **anthropicvertex**: the client is the base `*anthropic.Client`, so it satisfies `ModelLister`, but Vertex AI doesn't serve the models endpoint and `ListModels` fails with a `bad_request` `ProviderError` (a 404). Don't list through a Vertex client ([#130](https://github.com/SnapdragonPartners/maestro-llms/issues/130)).
 
 Family parsing is intentionally permissive: major-version bumps stay in
 the same family. Callers that want stricter pinning (e.g. "stay within
@@ -1027,9 +1030,20 @@ That applies to `ChatClient`, `EmbeddingClient`, `ModelLister`, `ratelimit.Limit
 Capabilities grow through new optional interfaces, which callers detect with
 a type assertion, as `ModelLister` and `ContextObserver` already do.
 New fields on exported structs and new functional options are additive.
-Don't use unkeyed struct literals for this package's types. A struct that
-is comparable today stays comparable (for example `ModelRef`, often used as
-a map key, and `Usage`), so new fields on those are themselves comparable.
+Don't use unkeyed struct literals for this package's types.
+
+**Comparability is promised for a named list only:** `llms.ModelRef` (often
+used as a map key) and `llms.Usage`. They stay comparable, so any field
+added to them is itself comparable. No other struct is promised to be
+comparable, even if it is today: a minor release may add a slice, map or
+func field to it. Don't compare other structs with `==` or use them as map
+keys.
+
+**Exported function types are covered like interfaces.** The signatures of
+`middleware.ChatMiddleware`, `middleware.EmbeddingMiddleware`,
+`toolloop.Compactor` and each provider's `Option` don't change in v1. The
+structs they take or return (for example `toolloop.CompactInput` and
+`CompactResult`) may gain fields, like any other struct.
 
 **Dependency upgrades don't break the API.** Per
 [ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md), an upgrade that would
@@ -1045,7 +1059,12 @@ its upgrades.
 - `Raw` fields (`ChatResponse.Raw`, `EmbeddingResponse.Raw`,
   `ModelInfo.Raw`): provider- and SDK-specific payloads.
 - Error message text. Match on types, `ErrorKind` and `errors.As`, not
-  strings.
+  strings. That includes the free-form diagnostic `Reason` text of
+  `llms.LimitError` and `bucket.LimitError`.
+- The dynamic type of an SDK error under `ProviderError.Cause` (and so
+  what `errors.As` finds through `Unwrap`): it is whatever the provider's
+  SDK returned, and it may change with an SDK upgrade. The `ProviderError`
+  fields themselves, including `Kind`, are covered.
 - `StopReason` values, which are the provider's own strings, and provider
   model IDs, model families and listing results.
 - Provider-side behavior: what a model or API accepts, returns or rejects.
@@ -1058,9 +1077,13 @@ its upgrades.
   `*auth.Credentials`. The signatures are covered like any other. The
   behavior of those types belongs to their own modules. Nothing else in the
   public API exposes an SDK type.
-- Tuning values that aren't part of a documented semantic: default backoff
-  timings, and the default `TokenEstimator`'s exact numbers (only its bias
-  toward over-reserving is promised).
+- Exact default tuning values that aren't part of a documented semantic:
+  default backoff timings, the default `TokenEstimator`'s exact numbers
+  (only its bias toward over-reserving is promised), and the coefficients
+  `testllm.FakeEmbeddingClient` derives hash vectors from, which may change
+  between releases (within one version, the same input always gives the
+  same vector). The names, types and documented meaning of the identifiers
+  that hold these defaults stay covered.
 - `bucket/postgres` table layout: the `bucket` schema's tables are internal
   to the backend. A minor release may raise `postgres.SchemaVersion` with
   new expand-only migrations. Its release notes open with **"Database

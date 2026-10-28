@@ -45,9 +45,12 @@ func (tc ToolChoice) RequiresTools() bool {
 	return tc.Type == ToolChoiceRequired || tc.Type == ToolChoiceTool
 }
 
-// ToolCall is a model request to invoke a tool. Parameters is the exact
-// provider-emitted JSON, preserved verbatim to avoid lossy map[string]any
-// round-trips; callers unmarshal it into their own typed structs.
+// ToolCall is a model request to invoke a tool. Parameters is the JSON the
+// adapter received, preserved verbatim to avoid lossy map[string]any
+// round-trips; callers unmarshal it into their own typed structs. The one
+// exception is a provider SDK that decodes args itself: the google adapter
+// receives args already rounded through float64, so integers beyond 2^53
+// lose precision there (see that package's doc).
 type ToolCall struct {
 	ID         string
 	Name       string

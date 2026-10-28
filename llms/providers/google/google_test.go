@@ -146,6 +146,53 @@ func TestChatToolCallResponse(t *testing.T) {
 	}
 }
 
+// The genai SDK routes functionCall args through map[string]any in both
+// directions, so integers beyond 2^53 round (divergence G5, documented in
+// doc.go). This pins the documented behavior: integers up to 2^53 survive
+// exactly, and a larger one rounds on decode and on replay. If the rounding
+// assertions start failing, the SDK has stopped rounding: update G5 and the
+// package doc rather than this test's expectations alone.
+func TestToolArgsIntegerPrecision(t *testing.T) {
+	const (
+		safe    = `9007199254740991` // 2^53 - 1
+		big     = `9007199254740993` // 2^53 + 1
+		rounded = `9007199254740992`
+	)
+	var body string
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"role":"model","parts":[`+
+			`{"functionCall":{"id":"c1","name":"f","args":{"safe":`+safe+`,"big":`+big+`}}}]},`+
+			`"finishReason":"STOP"}]}`)
+	})
+	resp, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{
+		llms.UserText("hi"),
+		{Role: llms.RoleAssistant, Content: []llms.ContentPart{{
+			Type: llms.ContentToolCall,
+			ToolCall: &llms.ToolCall{
+				ID: "c0", Name: "f",
+				Parameters: json.RawMessage(`{"safe":` + safe + `,"big":` + big + `}`),
+			},
+		}}},
+		llms.ToolResultMessage(llms.ToolResult{ToolCallID: "c0", Content: "{}"}),
+	}})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(resp.ToolCalls))
+	}
+	got := string(resp.ToolCalls[0].Parameters)
+	if !strings.Contains(got, `"safe":`+safe) || !strings.Contains(got, `"big":`+rounded) {
+		t.Fatalf("decoded args = %s, want safe exact and big rounded to %s", got, rounded)
+	}
+	if !strings.Contains(body, `"safe":`+safe) || !strings.Contains(body, `"big":`+rounded) {
+		t.Fatalf("replayed args not as documented (safe exact, big rounded):\n%s", body)
+	}
+}
+
 func TestToolChoiceRequiredSendsAnyMode(t *testing.T) {
 	var captured map[string]any
 	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {

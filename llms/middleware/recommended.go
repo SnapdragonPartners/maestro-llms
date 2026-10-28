@@ -9,7 +9,8 @@ import (
 
 // RecommendedConfig parameterizes the recommended middleware chain. The zero
 // value is usable: validation/retry/circuit are always applied (with default
-// configs), and the optional layers are skipped.
+// configs, including the jittered DefaultRetryConfig), and the optional
+// layers are skipped.
 type RecommendedConfig struct {
 	// Pointer-bearing interface fields first (fieldalignment).
 
@@ -20,9 +21,12 @@ type RecommendedConfig struct {
 	// Observer, if non-nil, adds the innermost metrics middleware. A
 	// ContextObserver also receives each attempt's context (ADR-0031).
 	Observer Observer
-	// Retry policy. Zero value => default schedule with jitter OFF; use
-	// DefaultRetryConfig() for the recommended jittered policy.
-	Retry RetryConfig
+	// Retry policy. nil => DefaultRetryConfig(), the recommended jittered
+	// policy. A non-nil config is used as given (zero or invalid numeric
+	// fields still take their defaults), so an explicit Jitter of 0 keeps
+	// the backoff deterministic. The config is copied when the chain is
+	// built (ADR-0036).
+	Retry *RetryConfig
 	// Circuit policy. Zero value => DefaultCircuitConfig().
 	Circuit CircuitConfig
 	// Timeout per attempt. <= 0 omits the timeout middleware entirely.
@@ -40,8 +44,8 @@ type RecommendedConfig struct {
 // Applications that need a different order or subset compose ChainChat
 // directly — that remains the primitive; this is just the common default.
 //
-// Validation, retry, and circuit are always included (defaults when their
-// configs are zero). Timeout is included only when cfg.Timeout > 0; rate
+// Validation, retry, and circuit are always included (defaults when
+// cfg.Retry is nil or cfg.Circuit is zero). Timeout is included only when cfg.Timeout > 0; rate
 // limiting only when cfg.Limiter != nil; metrics only when cfg.Observer != nil.
 //
 // Observability scope: because metrics is innermost (spec order), the
@@ -60,7 +64,7 @@ type RecommendedConfig struct {
 // call, and attribute the rest of the logical call's time to backoff and
 // limiter waits (ADR-0031).
 func RecommendedChat(base llms.ChatClient, cfg RecommendedConfig) llms.ChatClient {
-	mws := []ChatMiddleware{ValidationChat(), RetryChat(cfg.Retry)}
+	mws := []ChatMiddleware{ValidationChat(), RetryChat(retryOrDefault(cfg.Retry))}
 	if cfg.Timeout > 0 {
 		mws = append(mws, TimeoutChat(cfg.Timeout))
 	}
@@ -78,7 +82,7 @@ func RecommendedChat(base llms.ChatClient, cfg RecommendedConfig) llms.ChatClien
 // (there is no structural embedding validation — see ADR-0006); the order is
 // otherwise the same: retry -> timeout -> circuit -> rate limit -> metrics.
 func RecommendedEmbeddings(base llms.EmbeddingClient, cfg RecommendedConfig) llms.EmbeddingClient {
-	mws := []EmbeddingMiddleware{RetryEmbeddings(cfg.Retry)}
+	mws := []EmbeddingMiddleware{RetryEmbeddings(retryOrDefault(cfg.Retry))}
 	if cfg.Timeout > 0 {
 		mws = append(mws, TimeoutEmbeddings(cfg.Timeout))
 	}
@@ -90,6 +94,13 @@ func RecommendedEmbeddings(base llms.EmbeddingClient, cfg RecommendedConfig) llm
 		mws = append(mws, MetricsEmbeddings(cfg.Observer))
 	}
 	return ChainEmbeddings(base, mws...)
+}
+
+func retryOrDefault(c *RetryConfig) RetryConfig {
+	if c == nil {
+		return DefaultRetryConfig()
+	}
+	return *c
 }
 
 func estimatorOrDefault(est TokenEstimator) TokenEstimator {

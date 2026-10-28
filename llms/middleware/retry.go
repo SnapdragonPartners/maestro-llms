@@ -15,7 +15,7 @@ import (
 // disabled" — a caller must be able to opt out for deterministic backoff — so
 // RetryConfig{} yields the default backoff schedule with jitter OFF. Use
 // DefaultRetryConfig() (or set Jitter explicitly) for the recommended
-// jittered policy.
+// jittered policy; a nil RecommendedConfig.Retry selects it (ADR-0036).
 type RetryConfig struct {
 	// MaxAttempts is the total number of attempts including the first.
 	MaxAttempts int

@@ -679,7 +679,7 @@ import (
 )
 
 c := middleware.RecommendedChat(client, middleware.RecommendedConfig{
-	Retry:    middleware.DefaultRetryConfig(), // 5 attempts, 1s→30s, ×2, ±10% jitter
+	// Retry: nil => DefaultRetryConfig(): 5 attempts, 1s→30s, ×2, ±10% jitter
 	Timeout:  30 * time.Second,                // per attempt; 0 omits it
 	Circuit:  middleware.DefaultCircuitConfig(),
 	Observer: myObserver,                      // optional; nil omits metrics
@@ -689,7 +689,10 @@ resp, err := c.Complete(ctx, req) // same llms.ChatClient interface
 ```
 
 `RecommendedConfig`'s zero value is usable (validation/retry/circuit on with
-defaults; timeout/rate-limit/metrics opt-in). For a custom order or subset,
+defaults, including the jittered retry policy; timeout/rate-limit/metrics
+opt-in). `Retry` is a pointer so that leaving it out differs from asking for
+no jitter: pass `&cfg` or `new(middleware.RetryConfig{...})` to override it,
+and an explicit `Jitter: 0` keeps the backoff deterministic (ADR-0036). For a custom order or subset,
 `ChainChat` is the primitive:
 
 ```go

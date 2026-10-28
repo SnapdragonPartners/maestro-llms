@@ -162,7 +162,7 @@ type ModelInfo struct {
 }
 ```
 
-Discovery is by type assertion on a `ChatClient`. Providers without a list API simply don't implement it. Per-family upgrade detection (`LatestInFamily`) is a provider-package concern — family naming differs per provider (Anthropic `claude-{opus|sonnet|haiku}`, OpenAI dated-snapshot stripping, Gemini `gemini-{pro|flash|nano|ultra}`) — and is offered as a pure helper plus a one-shot convenience method on the provider's chat client. Ollama implements `ModelLister` only; its list is locally pulled models and "latest in family" has no consistent meaning for community-uploaded tags. See ADR-0012 for binding non-goals.
+Discovery is by type assertion on a `ChatClient`. Providers without a list API simply don't implement it. The exception is `anthropicvertex`: it returns the base `*anthropic.Client`, which satisfies `ModelLister`, but Vertex AI doesn't serve the models endpoint, so `ListModels` fails with a `bad_request` `ProviderError`. Per-family upgrade detection (`LatestInFamily`) is a provider-package concern — family naming differs per provider (Anthropic `claude-{opus|sonnet|haiku}`, OpenAI dated-snapshot stripping, Gemini `gemini-{pro|flash|nano|ultra}`) — and is offered as a pure helper plus a one-shot convenience method on the provider's chat client. Ollama implements `ModelLister` only; its list is locally pulled models and "latest in family" has no consistent meaning for community-uploaded tags. See ADR-0012 for binding non-goals.
 
 ### Model Reference
 
@@ -363,7 +363,7 @@ mandatory functionCall `thought_signature`. Adapters that don't need it leave
 it nil and ignore it, exactly like `ContentPart.CacheBreakpoint`. See
 ADR-0010.
 
-`ToolCall.Parameters` is `json.RawMessage` to preserve exact provider-emitted JSON and avoid lossy `map[string]any` round-trips. Applications can unmarshal into typed structs.
+`ToolCall.Parameters` is `json.RawMessage` to preserve exact provider-emitted JSON and avoid lossy `map[string]any` round-trips. Applications can unmarshal into typed structs. The one exception is a provider SDK that decodes args itself: the genai SDK rounds Gemini tool-call args through float64 in both directions, so integers beyond 2^53 lose precision on the google adapter (divergence G5).
 
 `ToolResult.Content` is a string in v0. This intentionally limits tool results to textual/JSON-string content. Structured or multimodal tool results can be added later by extending `ToolResult` without changing the core round-trip semantics.
 

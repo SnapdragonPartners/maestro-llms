@@ -72,8 +72,8 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   capability for surfacing "newer model available in your family"
   prompts to users — applications decide whether to upgrade, the
   toolkit does not. Per-provider `LatestInFamily` helpers know each
-  provider's family-naming convention; Ollama implements list-only
-  (no canonical family). See [ADR-0012](docs/adr/0012-model-lister.md).
+  provider's family-naming convention; Ollama and openaicompat implement
+  list-only (no canonical family). See [ADR-0012](docs/adr/0012-model-lister.md).
 - **Text-level token estimator** (`llms.EstimateTextTokens`): exported
   `func(string) int` for budget-aware chunking, with documented
   **neutral** bias (distinct from the high-biased middleware
@@ -457,7 +457,8 @@ does not auto-update.
 // Discover via type assertion (optional capability — see ADR-0012).
 lister, ok := client.(llms.ModelLister)
 if !ok {
-    // Provider doesn't expose a model list (e.g. future vLLM).
+    // This client has no list API. Every adapter in this module asserts
+    // successfully; on anthropicvertex the call itself fails (see below).
     return
 }
 models, err := lister.ListModels(ctx)
@@ -481,6 +482,8 @@ Per-provider notes:
 - **OpenAI** (`openai.LatestInFamily`): family = ID with trailing `-YYYY-MM-DD` stripped (`gpt-5-2026-03-15` → `gpt-5`; `gpt-5-mini-2025-12-01` → `gpt-5-mini`). Self-filtering by family means embedding/image IDs in the catalog never collide with `gpt-*` queries. Ordered by `Created` (Unix seconds).
 - **Google** (`google.LatestInFamily`): family = `gemini-{pro|flash|nano|ultra}`. The genai list exposes no created date, so ordering uses parsed numeric version from the ID (`gemini-3-pro` > `gemini-2.5-pro` > `gemini-1.5-pro`). `ModelInfo.Created` is zero.
 - **Ollama** (`ListModels` only — **no `LatestInFamily`**): the list is *locally pulled* models via `/api/tags`, not a provider catalog. `ModelInfo.Created` is the local pull time (`modified_at`), not provider release time. `Family` is empty: Ollama tags are community-uploaded under arbitrary names and have no canonical family convention.
+- **openaicompat** (`ListModels` only — **no `LatestInFamily`**): the server's `/v1/models` list. `ModelInfo.Created` is whatever the server reports (vLLM reports when it loaded the model). `Family` is empty: served models use arbitrary HuggingFace-style names.
+- **anthropicvertex**: the client is the base `*anthropic.Client`, so it satisfies `ModelLister`, but Vertex AI doesn't serve the models endpoint and `ListModels` fails with a `bad_request` `ProviderError` (a 404). Don't list through a Vertex client ([#130](https://github.com/SnapdragonPartners/maestro-llms/issues/130)).
 
 Family parsing is intentionally permissive: major-version bumps stay in
 the same family. Callers that want stricter pinning (e.g. "stay within

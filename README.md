@@ -1027,9 +1027,20 @@ That applies to `ChatClient`, `EmbeddingClient`, `ModelLister`, `ratelimit.Limit
 Capabilities grow through new optional interfaces, which callers detect with
 a type assertion, as `ModelLister` and `ContextObserver` already do.
 New fields on exported structs and new functional options are additive.
-Don't use unkeyed struct literals for this package's types. A struct that
-is comparable today stays comparable (for example `ModelRef`, often used as
-a map key, and `Usage`), so new fields on those are themselves comparable.
+Don't use unkeyed struct literals for this package's types.
+
+**Comparability is promised for a named list only:** `llms.ModelRef` (often
+used as a map key) and `llms.Usage`. They stay comparable, so any field
+added to them is itself comparable. No other struct is promised to be
+comparable, even if it is today: a minor release may add a slice, map or
+func field to it. Don't compare other structs with `==` or use them as map
+keys.
+
+**Exported function types are covered like interfaces.** The signatures of
+`middleware.ChatMiddleware`, `middleware.EmbeddingMiddleware`,
+`toolloop.Compactor` and each provider's `Option` don't change in v1. The
+structs they take or return (for example `toolloop.CompactInput` and
+`CompactResult`) may gain fields, like any other struct.
 
 **Dependency upgrades don't break the API.** Per
 [ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md), an upgrade that would
@@ -1045,7 +1056,12 @@ its upgrades.
 - `Raw` fields (`ChatResponse.Raw`, `EmbeddingResponse.Raw`,
   `ModelInfo.Raw`): provider- and SDK-specific payloads.
 - Error message text. Match on types, `ErrorKind` and `errors.As`, not
-  strings.
+  strings. That includes the free-form diagnostic `Reason` text of
+  `llms.LimitError` and `bucket.LimitError`.
+- The dynamic type of an SDK error under `ProviderError.Cause` (and so
+  what `errors.As` finds through `Unwrap`): it is whatever the provider's
+  SDK returned, and it may change with an SDK upgrade. The `ProviderError`
+  fields themselves, including `Kind`, are covered.
 - `StopReason` values, which are the provider's own strings, and provider
   model IDs, model families and listing results.
 - Provider-side behavior: what a model or API accepts, returns or rejects.
@@ -1058,9 +1074,13 @@ its upgrades.
   `*auth.Credentials`. The signatures are covered like any other. The
   behavior of those types belongs to their own modules. Nothing else in the
   public API exposes an SDK type.
-- Tuning values that aren't part of a documented semantic: default backoff
-  timings, and the default `TokenEstimator`'s exact numbers (only its bias
-  toward over-reserving is promised).
+- Exact default tuning values that aren't part of a documented semantic:
+  default backoff timings, the default `TokenEstimator`'s exact numbers
+  (only its bias toward over-reserving is promised), and the coefficients
+  `testllm.FakeEmbeddingClient` derives hash vectors from, which may change
+  between releases (within one version, the same input always gives the
+  same vector). The names, types and documented meaning of the identifiers
+  that hold these defaults stay covered.
 - `bucket/postgres` table layout: the `bucket` schema's tables are internal
   to the backend. A minor release may raise `postgres.SchemaVersion` with
   new expand-only migrations. Its release notes open with **"Database

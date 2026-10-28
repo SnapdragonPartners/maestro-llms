@@ -23,11 +23,11 @@ import "unicode/utf8"
 // Conflating them would force the wrong bias on at least one consumer.
 // See ADR-0013.
 //
-// Rune-counted rather than byte-counted so the ratio holds for
-// non-ASCII text: `len(s)` would underestimate token count for scripts
-// where one rune spans multiple UTF-8 bytes (CJK, most non-Latin
-// alphabets), which is the opposite of the limiter's intentional
-// byte-based overestimate.
+// Rune-counted rather than byte-counted so the estimate stays neutral for
+// non-ASCII text: `len(s)` counts UTF-8 bytes, so for scripts where one
+// rune spans several bytes (CJK, most non-Latin alphabets) it would
+// inflate the estimate. That inflation is what the limiter's byte-based
+// estimator wants (it must not under-reserve), and what chunking doesn't.
 //
 // Provider-neutral and zero-dependency. A tokenizer-backed,
 // model-aware variant (opt-in, additive) may be added later; this is

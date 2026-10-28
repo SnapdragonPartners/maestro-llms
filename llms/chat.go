@@ -45,7 +45,10 @@ type ChatRequest struct {
 	ToolChoice ToolChoice
 	// Purpose is an app-supplied label; not interpreted by the core package.
 	Purpose Purpose
-	// MaxTokens caps output tokens; zero means provider/model default.
+	// MaxTokens caps output tokens. Zero (or negative) leaves the cap to the
+	// adapter: most omit it and use the provider/model default, but the
+	// Anthropic API requires one, so the anthropic and anthropicvertex
+	// adapters send 4096.
 	MaxTokens int
 	// Temperature: nil means provider/model default; a non-nil 0 means
 	// intentionally deterministic.

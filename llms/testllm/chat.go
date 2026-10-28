@@ -28,7 +28,10 @@ type FakeChatClient struct {
 	ModelRef llms.ModelRef
 	// Responses are returned in order across successive Complete calls. When
 	// exhausted the last response is repeated; if empty, a zero response with
-	// the text from Text is returned.
+	// the text from Text is returned. A response is returned as stored, not
+	// copied: its slices (Message.Content, ToolCalls, Raw payloads) are
+	// shared with this field and with every call that returns the same
+	// entry, so a caller that mutates a response changes the script.
 	Responses []llms.ChatResponse
 	// Text is a convenience: when Responses is empty, every Complete returns
 	// an assistant message with this text.

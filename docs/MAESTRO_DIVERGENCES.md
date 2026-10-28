@@ -10,11 +10,12 @@ Append a row in the PR that introduces the divergence. Do not delete rows;
 mark them `Resolved at cut-over` once validated.
 
 Categories: **Behavioral** (observable output/behavior changes — these need
-cut-over validation) vs **Internal** (no observable change — informational;
-the vLLM rows and G4 are marked **Informational**, the same category) vs
-**API** (renamed or removed identifiers with no behavior change — the
-compiler finds every call site, so the cut-over action is the rename, with no
-runtime validation).
+cut-over validation) vs **Internal** (no observable change) vs
+**Informational** (a new capability or caveat a new consumer should know
+about, which may be observable but changes nothing Maestro relied on; the
+vLLM rows, G4 and G5 use it) vs **API** (renamed or removed identifiers with
+no behavior change — the compiler finds every call site, so the cut-over
+action is the rename, with no runtime validation).
 
 ## Cross-cutting
 
@@ -71,6 +72,7 @@ runtime validation).
 | G2 | Behavioral — RESOLVED (ADR-0007) | Forces `FunctionCallingConfigMode = ANY` when tools present | Honors caller `ToolChoice`; `ToolChoiceRequired` maps to ANY-mode (no name restriction) | Caller controls tool use; forced mode expressible | Same as OC2 for Gemini — set `ToolChoiceRequired` |
 | G3 | Behavioral | `StopReason` hard-coded `"end_turn"`; usage dropped | Real finish reason + usage populated | Accurate stop/accounting | Maestro can now read real finish reasons |
 | G4 | Informational (additive) | Gemini chat speaks only the Gemini API (API key) | `google.New` also runs on Vertex AI via `WithVertex` + `WithCredentials` (app-supplied, no ADC discovery), sharing one backend selector with `NewEmbeddings`; `ListModels` strips the Vertex `publishers/google/models/` prefix (ADR-0028) | Keyless Gemini chat for cloud consumers on the same Vertex identity as Claude and embeddings | None for Maestro (API-key path unchanged) |
+| G5 | Informational (caveat) | Undocumented: every client built on genai gets `functionCall` args as a `map[string]any`, including this adapter as ported | Unchanged, now documented: integers beyond 2^53 in tool-call args round through float64 in both directions (decoded response args, and replayed request args). A wire test (`TestToolArgsIntegerPrecision`) showed decoding the replay with `json.Number` doesn't help, because genai re-encodes through `map[string]any` itself, so there is no adapter fix (#84 PR 5) | `llms.ToolCall.Parameters` promises verbatim JSON; this is the documented exception, caused by the SDK | None for Maestro. Tools whose args carry large integer IDs should declare them as strings |
 
 ## Ollama chat
 

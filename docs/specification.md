@@ -381,10 +381,12 @@ req := llms.ChatRequest{
 }
 ```
 
-Assistant response asks for a tool:
+Assistant response asks for a tool (`resp.Message` has this shape; `Message`
+holds a slice, so it is not comparable with `==`):
 
 ```go
-resp.Message == llms.Message{
+// resp.Message:
+llms.Message{
     Role: llms.RoleAssistant,
     Content: []llms.ContentPart{
         {

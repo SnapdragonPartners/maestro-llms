@@ -63,7 +63,9 @@ type Usage struct {
 // CacheSplit clamps provider-reported cache reads and writes so they are
 // subsets of input: read in [0, input], write in [0, input-read]. Adapters
 // use it so InputTokens - CacheReadTokens - CacheWriteTokens is never
-// negative even when a server reports inconsistent counts (ADR-0023).
+// negative even when a server reports inconsistent counts (ADR-0023). It is
+// exported for authors of ChatClient adapters outside this module, so their
+// Usage keeps the same invariant; applications reading Usage don't need it.
 func CacheSplit(input, read, write int) (cacheRead, cacheWrite int) {
 	input = max(input, 0)
 	cacheRead = min(max(read, 0), input)

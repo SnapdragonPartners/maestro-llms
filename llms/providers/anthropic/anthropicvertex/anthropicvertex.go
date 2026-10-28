@@ -7,7 +7,11 @@
 //
 // It returns the same *anthropic.Client as the base package, so all request/
 // response/tool/cache translation is reused unchanged; only construction,
-// auth, and endpoint differ.
+// auth, and endpoint differ. One consequence: the client has the base
+// package's ListModels, so it satisfies llms.ModelLister, but Vertex AI
+// doesn't serve the Anthropic models endpoint and the call fails with a
+// *llms.ProviderError of kind bad_request (a 404). Don't list models
+// through a Vertex client.
 //
 // Auth and endpoint are app-supplied. The package performs no ADC discovery:
 // the caller passes *auth.Credentials (cloud.google.com/go/auth), and for

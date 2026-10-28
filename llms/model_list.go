@@ -9,9 +9,11 @@ import (
 // to expose the provider's catalog of available models. Callers and
 // middleware discover it with a type assertion — adding it does NOT widen
 // ChatClient (same pattern as StreamingChatClient). The anthropic, openai,
-// google, ollama and openaicompat clients implement it; a client without a
-// list API (anthropicvertex today) does not, and the failed type assertion
-// is the right signal.
+// google, ollama and openaicompat clients implement it, and a client
+// without a list API doesn't, so the failed type assertion is the signal.
+// One exception: anthropicvertex returns the base *anthropic.Client, which
+// satisfies ModelLister, but Vertex AI doesn't serve the models endpoint,
+// so ListModels fails there with a bad_request ProviderError.
 //
 // See ADR-0012 for the design and binding non-goals. "Latest in family"
 // helpers live in each provider's package because family naming

@@ -17,9 +17,9 @@ func TestIntegrationOpenAICachedInput(t *testing.T) {
 	if key == "" {
 		t.Skip("OPENAI_API_KEY not set")
 	}
-	c, err := openai.NewChat(openai.WithAPIKey(key), openai.WithModel("gpt-4o-mini"))
+	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel("gpt-4o-mini"))
 	if err != nil {
-		t.Fatalf("NewChat: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	livetest.CachedInput(t, c, false)
 }

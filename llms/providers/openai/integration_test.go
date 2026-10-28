@@ -59,9 +59,9 @@ func TestIntegrationOpenAIChat(t *testing.T) {
 		model = "gpt-4o-mini"
 	}
 
-	c, err := openai.NewChat(openai.WithAPIKey(key), openai.WithModel(model))
+	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(model))
 	if err != nil {
-		t.Fatalf("NewChat: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 
 	temp := float32(0)
@@ -116,9 +116,9 @@ func TestIntegrationOpenAIEmbeddings(t *testing.T) {
 		model = "text-embedding-3-small"
 	}
 
-	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(model))
+	c, err := openai.NewEmbeddings(openai.WithAPIKey(key), openai.WithModel(model))
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewEmbeddings: %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -163,9 +163,9 @@ func TestIntegrationOpenAIToolUse(t *testing.T) {
 	if key == "" {
 		t.Skip("OPENAI_API_KEY not set")
 	}
-	c, err := openai.NewChat(openai.WithAPIKey(key), openai.WithModel(openaiChatModel()))
+	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(openaiChatModel()))
 	if err != nil {
-		t.Fatalf("NewChat: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	weather := llms.ToolDefinition{
 		Name:        "get_weather",

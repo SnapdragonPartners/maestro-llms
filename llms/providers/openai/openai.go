@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/openai/openai-go/v3"
@@ -13,14 +12,11 @@ import (
 
 const providerName = llms.ProviderOpenAI
 
-// maxBatchInputs caps inputs per request. OpenAI's embeddings endpoint accepts
-// at most 2048 inputs; exceeding it is a caller error. Chunking is the
-// application's responsibility (it owns retry policy, progress, and source
-// IDs), so this is a hard validation error rather than auto-splitting.
-const maxBatchInputs = 2048
-
-// Option configures a Client. Applications own config resolution; this package
-// accepts already-resolved values.
+// Option configures a Client or an EmbeddingClient. The options are shared
+// by both constructors; an option that does not apply to the constructor it
+// is passed to is a config error, never silently ignored (as in the google
+// package). Applications own config resolution; this package accepts
+// already-resolved values.
 type Option func(*settings)
 
 //nolint:govet // fieldalignment: internal one-shot config struct, layout irrelevant.
@@ -32,12 +28,17 @@ type settings struct {
 	dimensions int
 	maxRetries int
 	hasRetries bool
+
+	// Names of the options set that only NewEmbeddings accepts, in order,
+	// for New's error message.
+	embedOnly []string
 }
 
 // WithAPIKey sets the OpenAI API key.
 func WithAPIKey(key string) Option { return func(s *settings) { s.apiKey = key } }
 
-// WithModel sets the embedding model identifier. Unknown/new names are
+// WithModel sets the model identifier (a chat model for New, an embedding
+// model for NewEmbeddings). Unknown/new names are
 // accepted; the package does not gate on a registry.
 func WithModel(model string) Option { return func(s *settings) { s.model = model } }
 
@@ -58,20 +59,13 @@ func WithMaxRetries(n int) Option {
 
 // WithDimensions sets the advisory default dimension reported by
 // DefaultDimensions. A per-request EmbeddingRequest.Dimensions still overrides
-// it when the model supports caller-selected dimensions.
-func WithDimensions(d int) Option { return func(s *settings) { s.dimensions = d } }
-
-// Client is an llms.EmbeddingClient backed by the official OpenAI SDK.
-//
-//nolint:govet // fieldalignment: size dominated by embedded third-party SDK client
-type Client struct {
-	api        openai.Client
-	model      string
-	dimensions int
+// it when the model supports caller-selected dimensions. NewEmbeddings only.
+func WithDimensions(d int) Option {
+	return func(s *settings) {
+		s.dimensions = d
+		s.embedOnly = append(s.embedOnly, "WithDimensions")
+	}
 }
-
-// compile-time assertion lives in the test file (a package-level var would
-// trip gochecknoglobals).
 
 func configErr(msg string) error {
 	return &llms.ProviderError{Provider: providerName, Kind: llms.ErrorKindConfig, Message: msg}
@@ -127,68 +121,4 @@ func (s *settings) requestOptions() []option.RequestOption {
 		retries = s.maxRetries
 	}
 	return append(reqOpts, option.WithMaxRetries(retries))
-}
-
-// New builds an embedding Client. It returns a *llms.ProviderError of kind
-// config when required values are missing or invalid.
-func New(opts ...Option) (*Client, error) {
-	var s settings
-	for _, o := range opts {
-		o(&s)
-	}
-	if err := s.validate(true); err != nil {
-		return nil, err
-	}
-	return &Client{
-		api:        newAPI(s.requestOptions()),
-		model:      s.model,
-		dimensions: s.dimensions,
-	}, nil
-}
-
-// Model returns the model this client targets.
-func (c *Client) Model() llms.ModelRef {
-	return llms.ModelRef{Provider: providerName, Name: c.model}
-}
-
-// DefaultDimensions returns the advisory configured dimension (0 if unset).
-// The authoritative dimension is the length of each returned vector.
-func (c *Client) DefaultDimensions() int { return c.dimensions }
-
-// Embed returns one vector per input, in input order, tagged with input IDs.
-func (c *Client) Embed(ctx context.Context, req llms.EmbeddingRequest) (llms.EmbeddingResponse, error) {
-	if len(req.Inputs) == 0 {
-		return llms.EmbeddingResponse{}, &llms.ProviderError{
-			Provider: providerName, Model: c.model,
-			Kind: llms.ErrorKindBadRequest, Message: "no embedding inputs",
-		}
-	}
-	if len(req.Inputs) > maxBatchInputs {
-		return llms.EmbeddingResponse{}, &llms.ProviderError{
-			Provider: providerName, Model: c.model, Kind: llms.ErrorKindBadRequest,
-			Message: "too many inputs for one request; the application must chunk",
-		}
-	}
-
-	texts := make([]string, len(req.Inputs))
-	for i := range req.Inputs {
-		texts[i] = req.Inputs[i].Text
-	}
-
-	params := openai.EmbeddingNewParams{
-		Model: c.model,
-		Input: openai.EmbeddingNewParamsInputUnion{OfArrayOfStrings: texts},
-	}
-	switch {
-	case req.Dimensions > 0:
-		params.Dimensions = openai.Int(int64(req.Dimensions))
-	case c.dimensions > 0:
-		params.Dimensions = openai.Int(int64(c.dimensions))
-	}
-
-	resp, err := c.api.Embeddings.New(ctx, params)
-	if err != nil {
-		return llms.EmbeddingResponse{}, classifyError(c.model, err)
-	}
-	return c.toResponse(req, resp)
 }

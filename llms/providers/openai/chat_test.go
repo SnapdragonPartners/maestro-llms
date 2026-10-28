@@ -13,21 +13,21 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
-var _ llms.ChatClient = (*ChatClient)(nil)
+var _ llms.ChatClient = (*Client)(nil)
 
 const respTextJSON = `{"id":"resp_1","object":"response","status":"completed","model":"gpt-test",
 "output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed",
  "content":[{"type":"output_text","text":"hello world","annotations":[]}]}],
 "usage":{"input_tokens":11,"output_tokens":7,"total_tokens":18}}`
 
-func newChat(t *testing.T, h http.HandlerFunc) *ChatClient {
+func newChat(t *testing.T, h http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	c, err := NewChat(WithAPIKey("k"), WithModel("gpt-test"),
+	c, err := New(WithAPIKey("k"), WithModel("gpt-test"),
 		WithBaseURL(srv.URL), WithHTTPClient(srv.Client()))
 	if err != nil {
-		t.Fatalf("NewChat: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	return c
 }
@@ -372,17 +372,34 @@ func TestChatBadRequests(t *testing.T) {
 	}
 }
 
-func TestNewChatConfigErrors(t *testing.T) {
+func TestNewConfigErrors(t *testing.T) {
 	for _, opts := range [][]Option{
 		{WithModel("m")},
 		{WithAPIKey("k")},
 		{WithAPIKey("k"), WithModel("m"), WithMaxRetries(-1)},
+		{WithAPIKey("k"), WithModel("m"), WithDimensions(256)},
+		{WithAPIKey("k"), WithModel("m"), WithDimensions(0)}, // set at all, not just nonzero
 	} {
-		_, err := NewChat(opts...)
+		_, err := New(opts...)
 		var pe *llms.ProviderError
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
 			t.Fatalf("opts %v: want config ProviderError, got %v", opts, err)
 		}
+	}
+}
+
+// TestNewRejectsEmbeddingOptions pins ADR-0035: the shared Option set means
+// WithDimensions compiles for New, so the chat constructor must reject it
+// by name rather than silently ignore it.
+func TestNewRejectsEmbeddingOptions(t *testing.T) {
+	_, err := New(WithAPIKey("k"), WithModel("m"), WithDimensions(256))
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig ||
+		!strings.Contains(pe.Message, "WithDimensions applies only to NewEmbeddings") {
+		t.Fatalf("want config error naming WithDimensions, got %v", err)
+	}
+	if _, err := NewEmbeddings(WithAPIKey("k"), WithModel("m"), WithDimensions(256)); err != nil {
+		t.Fatalf("NewEmbeddings with WithDimensions: %v", err)
 	}
 }
 
@@ -466,9 +483,9 @@ func TestEnvironmentDefaultsIgnored(t *testing.T) {
 			Request:    r,
 		}, nil
 	})
-	c, err := NewChat(WithAPIKey("app-key"), WithModel("gpt-test"), WithHTTPClient(&http.Client{Transport: rt}))
+	c, err := New(WithAPIKey("app-key"), WithModel("gpt-test"), WithHTTPClient(&http.Client{Transport: rt}))
 	if err != nil {
-		t.Fatalf("NewChat: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	if _, err := c.Complete(context.Background(), llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}}); err != nil {
 		t.Fatalf("Complete: %v", err)

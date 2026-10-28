@@ -67,11 +67,10 @@ func TestVertexPSCPrecedenceAndMiddleware(t *testing.T) {
 	pscClient := &http.Client{Transport: pscTransport}
 
 	c, err := anthropicvertex.New(
-		anthropicvertex.WithRegion("us-central1"),
-		anthropicvertex.WithProjectID("proj-1"),
+		anthropicvertex.WithVertex("proj-1", "us-central1"),
 		anthropicvertex.WithModel("claude-x"),
 		anthropicvertex.WithCredentials(staticCreds()),
-		anthropicvertex.WithEndpoint(srv.URL), // applied AFTER the Vertex option
+		anthropicvertex.WithBaseURL(srv.URL), // applied AFTER the Vertex option
 		anthropicvertex.WithHTTPClient(pscClient),
 	)
 	if err != nil {
@@ -114,8 +113,7 @@ func TestVertexPSCPrecedenceAndMiddleware(t *testing.T) {
 
 func TestNewConfigValidation(t *testing.T) {
 	base := []anthropicvertex.Option{
-		anthropicvertex.WithRegion("us-central1"),
-		anthropicvertex.WithProjectID("p"),
+		anthropicvertex.WithVertex("p", "us-central1"),
 		anthropicvertex.WithModel("m"),
 		anthropicvertex.WithCredentials(staticCreds()),
 	}
@@ -124,19 +122,29 @@ func TestNewConfigValidation(t *testing.T) {
 		out = append(out, base[:i]...)
 		return append(out, base[i+1:]...)
 	}
-	for i, name := range []string{"region", "projectID", "model", "credentials"} {
+	for i, name := range []string{"vertex", "model", "credentials"} {
 		_, err := anthropicvertex.New(drop(i)...)
 		var pe *llms.ProviderError
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
 			t.Fatalf("missing %s: want a config *ProviderError, got %v", name, err)
 		}
 	}
+	// WithVertex needs both halves, as google.WithVertex does (ADR-0035).
+	for name, v := range map[string]anthropicvertex.Option{
+		"empty project":  anthropicvertex.WithVertex("", "us-central1"),
+		"empty location": anthropicvertex.WithVertex("p", ""),
+	} {
+		_, err := anthropicvertex.New(v, anthropicvertex.WithModel("m"), anthropicvertex.WithCredentials(staticCreds()))
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
+			t.Fatalf("%s: want a config *ProviderError, got %v", name, err)
+		}
+	}
 
 	// Non-nil Credentials with a nil TokenProvider must be rejected: they
 	// cannot mint tokens, and must never fall back to ambient ADC.
 	_, err := anthropicvertex.New(
-		anthropicvertex.WithRegion("us-central1"),
-		anthropicvertex.WithProjectID("p"),
+		anthropicvertex.WithVertex("p", "us-central1"),
 		anthropicvertex.WithModel("m"),
 		anthropicvertex.WithCredentials(&auth.Credentials{}),
 	)
@@ -159,11 +167,10 @@ func TestAuthCredentialsSignRequests(t *testing.T) {
 	defer srv.Close()
 
 	c, err := anthropicvertex.New(
-		anthropicvertex.WithRegion("us-central1"),
-		anthropicvertex.WithProjectID("proj-1"),
+		anthropicvertex.WithVertex("proj-1", "us-central1"),
 		anthropicvertex.WithModel("claude-x"),
 		anthropicvertex.WithCredentials(staticCreds()),
-		anthropicvertex.WithEndpoint(srv.URL),
+		anthropicvertex.WithBaseURL(srv.URL),
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -198,11 +205,10 @@ func TestInjectedDefaultClientHonored(t *testing.T) {
 
 	creds := staticCreds()
 	c, err := anthropicvertex.New(
-		anthropicvertex.WithRegion("us-central1"),
-		anthropicvertex.WithProjectID("proj-1"),
+		anthropicvertex.WithVertex("proj-1", "us-central1"),
 		anthropicvertex.WithModel("claude-x"),
 		anthropicvertex.WithCredentials(creds),
-		anthropicvertex.WithEndpoint(srv.URL),
+		anthropicvertex.WithBaseURL(srv.URL),
 		anthropicvertex.WithHTTPClient(http.DefaultClient),
 	)
 	if err != nil {

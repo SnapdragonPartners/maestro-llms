@@ -17,9 +17,9 @@ func newOpenAIToolLoopClient(t *testing.T) llms.ChatClient {
 	if key == "" {
 		t.Skip("OPENAI_API_KEY not set")
 	}
-	c, err := openai.NewChat(openai.WithAPIKey(key), openai.WithModel(openaiChatModel()))
+	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(openaiChatModel()))
 	if err != nil {
-		t.Fatalf("NewChat: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	return c
 }
@@ -49,9 +49,9 @@ func TestIntegrationOpenAICompactSummarize(t *testing.T) {
 	if model == "" {
 		model = "gpt-4.1-mini"
 	}
-	summarizer, err := openai.NewChat(openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")), openai.WithModel(model))
+	summarizer, err := openai.New(openai.WithAPIKey(os.Getenv("OPENAI_API_KEY")), openai.WithModel(model))
 	if err != nil {
-		t.Fatalf("NewChat: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	livetest.CompactSummarize(t, loop, summarizer)
 }

@@ -4,7 +4,6 @@ package anthropicvertex_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -60,7 +59,6 @@ func TestIntegrationVertexAnthropicReasoningReplay(t *testing.T) {
 	}
 	region := envOr("VERTEX_REGION", "global")
 	model := envOr("VERTEX_ANTHROPIC_REASONING_MODEL", "claude-opus-5-5")
-	ctx := context.Background()
 	creds, err := credentials.DetectDefault(&credentials.DetectOptions{
 		Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
 	})
@@ -69,9 +67,7 @@ func TestIntegrationVertexAnthropicReasoningReplay(t *testing.T) {
 	}
 	hc := &http.Client{Transport: enforceThinkingBinding{base: http.DefaultTransport}}
 	c, err := anthropicvertex.New(
-		anthropicvertex.WithContext(ctx),
-		anthropicvertex.WithProjectID(project),
-		anthropicvertex.WithRegion(region),
+		anthropicvertex.WithVertex(project, region),
 		anthropicvertex.WithModel(model),
 		anthropicvertex.WithCredentials(creds),
 		anthropicvertex.WithHTTPClient(hc),

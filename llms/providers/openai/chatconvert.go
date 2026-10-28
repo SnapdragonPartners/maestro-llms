@@ -20,7 +20,7 @@ func chatBadRequest(model, msg string) *llms.ProviderError {
 }
 
 // systemText joins the (text-only, in v0) system parts.
-func (c *ChatClient) systemText(req llms.ChatRequest) (string, *llms.ProviderError) {
+func (c *Client) systemText(req llms.ChatRequest) (string, *llms.ProviderError) {
 	var b strings.Builder
 	for i := range req.System {
 		p := req.System[i]
@@ -50,7 +50,7 @@ func roleFor(r llms.Role) (responses.EasyInputMessageRole, bool) {
 // Unlike Anthropic, the Responses API takes an ordered item list with no
 // strict alternation requirement: text -> message item; assistant tool_call
 // -> function_call item; tool result -> function_call_output item.
-func (c *ChatClient) buildInput(req llms.ChatRequest) ([]responses.ResponseInputItemUnionParam, *llms.ProviderError) {
+func (c *Client) buildInput(req llms.ChatRequest) ([]responses.ResponseInputItemUnionParam, *llms.ProviderError) {
 	// Drop other providers' reasoning parts (ADR-0021); none is ours to replay.
 	req.Messages = llms.ReasoningFrom(providerName, req.Messages)
 	var items []responses.ResponseInputItemUnionParam
@@ -92,7 +92,7 @@ func (c *ChatClient) buildInput(req llms.ChatRequest) ([]responses.ResponseInput
 	return items, nil
 }
 
-func (c *ChatClient) buildTools(req llms.ChatRequest) ([]responses.ToolUnionParam, *llms.ProviderError) {
+func (c *Client) buildTools(req llms.ChatRequest) ([]responses.ToolUnionParam, *llms.ProviderError) {
 	if len(req.Tools) == 0 {
 		return nil, nil
 	}
@@ -131,7 +131,7 @@ func (c *ChatClient) buildTools(req llms.ChatRequest) ([]responses.ToolUnionPara
 	return tools, nil
 }
 
-func (c *ChatClient) toolChoice(req llms.ChatRequest) (responses.ResponseNewParamsToolChoiceUnion, bool, *llms.ProviderError) {
+func (c *Client) toolChoice(req llms.ChatRequest) (responses.ResponseNewParamsToolChoiceUnion, bool, *llms.ProviderError) {
 	tc := req.ToolChoice
 	if len(req.Tools) == 0 {
 		if tc.RequiresTools() {
@@ -168,7 +168,7 @@ func (c *ChatClient) toolChoice(req llms.ChatRequest) (responses.ResponseNewPara
 	}
 }
 
-func (c *ChatClient) toParams(req llms.ChatRequest) (responses.ResponseNewParams, error) {
+func (c *Client) toParams(req llms.ChatRequest) (responses.ResponseNewParams, error) {
 	sys, perr := c.systemText(req)
 	if perr != nil {
 		return responses.ResponseNewParams{}, perr

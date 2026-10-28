@@ -14,9 +14,9 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
-var _ llms.EmbeddingClient = (*Client)(nil)
+var _ llms.EmbeddingClient = (*EmbeddingClient)(nil)
 
-func newClient(t *testing.T, handler http.HandlerFunc, opts ...Option) *Client {
+func newClient(t *testing.T, handler http.HandlerFunc, opts ...Option) *EmbeddingClient {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
@@ -26,9 +26,9 @@ func newClient(t *testing.T, handler http.HandlerFunc, opts ...Option) *Client {
 		WithBaseURL(srv.URL),
 		WithHTTPClient(srv.Client()),
 	}
-	c, err := New(append(base, opts...)...)
+	c, err := NewEmbeddings(append(base, opts...)...)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatalf("NewEmbeddings: %v", err)
 	}
 	return c
 }
@@ -263,14 +263,14 @@ func TestDuplicateIndexRejected(t *testing.T) {
 	}
 }
 
-func TestNewConfigErrors(t *testing.T) {
+func TestNewEmbeddingsConfigErrors(t *testing.T) {
 	for _, opts := range [][]Option{
 		{WithModel("m")},  // no key
 		{WithAPIKey("k")}, // no model
 		{WithAPIKey("k"), WithModel("m"), WithMaxRetries(-1)},
 		{WithAPIKey("k"), WithModel("m"), WithDimensions(-1)},
 	} {
-		_, err := New(opts...)
+		_, err := NewEmbeddings(opts...)
 		var pe *llms.ProviderError
 		if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
 			t.Fatalf("opts %v: want config ProviderError, got %v", opts, err)

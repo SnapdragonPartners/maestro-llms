@@ -10,7 +10,7 @@ import (
 // Results are placed by the provider-reported Index so output order matches
 // input order regardless of how the API returns them, and each vector carries
 // its input ID for defensive matching.
-func (c *Client) toResponse(req llms.EmbeddingRequest, resp *openai.CreateEmbeddingResponse) (llms.EmbeddingResponse, error) {
+func (c *EmbeddingClient) toResponse(req llms.EmbeddingRequest, resp *openai.CreateEmbeddingResponse) (llms.EmbeddingResponse, error) {
 	if len(resp.Data) != len(req.Inputs) {
 		return llms.EmbeddingResponse{}, &llms.ProviderError{
 			Provider: providerName, Model: c.model, Kind: llms.ErrorKindUnknown,

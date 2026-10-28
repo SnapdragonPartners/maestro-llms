@@ -131,7 +131,7 @@ func openAIOption(ctx context.Context, logf func(string, ...any)) (ModelOption, 
 	if key == "" {
 		return ModelOption{}, false
 	}
-	c, err := openai.NewChat(
+	c, err := openai.New(
 		openai.WithAPIKey(key),
 		openai.WithModel("gpt-4o-mini"),
 	)

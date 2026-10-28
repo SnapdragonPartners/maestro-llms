@@ -35,7 +35,7 @@ func familyOf(id string) string {
 // deliberately does not filter (see ADR-0012): LatestInFamily is
 // self-filtering by family-prefix, and callers wanting only chat-capable
 // models filter the result themselves (`gpt-`, `o1`, `o3`, … prefixes).
-func (c *ChatClient) ListModels(ctx context.Context) ([]llms.ModelInfo, error) {
+func (c *Client) ListModels(ctx context.Context) ([]llms.ModelInfo, error) {
 	page, err := c.api.Models.List(ctx)
 	if err != nil {
 		return nil, classifyError(c.model, err)
@@ -63,7 +63,7 @@ func (c *ChatClient) ListModels(ctx context.Context) ([]llms.ModelInfo, error) {
 // currentID is already the newest in its family, no family member is
 // listed, or models is empty.
 //
-// Pure helper (no I/O). For one-shot use see ChatClient.LatestInFamily.
+// Pure helper (no I/O). For one-shot use see Client.LatestInFamily.
 func LatestInFamily(currentID string, models []llms.ModelInfo) (llms.ModelInfo, bool) {
 	fam := familyOf(currentID)
 	if fam == "" {
@@ -100,7 +100,7 @@ func LatestInFamily(currentID string, models []llms.ModelInfo) (llms.ModelInfo, 
 // LatestInFamily is the one-shot convenience: fetches the catalog and
 // runs the pure-function check in one call. Apps making repeated checks
 // should cache the ListModels result and call the package-level helper.
-func (c *ChatClient) LatestInFamily(ctx context.Context, currentID string) (llms.ModelInfo, bool, error) {
+func (c *Client) LatestInFamily(ctx context.Context, currentID string) (llms.ModelInfo, bool, error) {
 	models, err := c.ListModels(ctx)
 	if err != nil {
 		return llms.ModelInfo{}, false, err

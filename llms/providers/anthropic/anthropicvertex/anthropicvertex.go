@@ -11,14 +11,16 @@
 //
 // Auth and endpoint are app-supplied. The package performs no ADC discovery:
 // the caller passes *auth.Credentials (cloud.google.com/go/auth), and for
-// Private Service Connect a custom endpoint and *http.Client.
+// Private Service Connect a custom base URL and *http.Client. The option
+// names match the google package's Vertex options (WithVertex, WithBaseURL;
+// ADR-0035).
 //
 // Precedence (ADR-0029, amending ADR-0009): vertex.WithCredentials installs
 // the Vertex request middleware (path rewrite to the rawPredict shape +
 // anthropic_version injection), its own oauth2 HTTP client and the regional
 // base URL. The caller's PSC client is applied BEFORE it, so the SDK wraps
 // that client's transport with the credentials (on a shallow copy; the
-// caller's client is not mutated); the caller's endpoint is applied AFTER
+// caller's client is not mutated); the caller's base URL is applied AFTER
 // it, so it wins over the regional URL. So:
 //
 //   - the Vertex path/version middleware ALWAYS applies;
@@ -50,24 +52,20 @@ type Option func(*settings)
 
 //nolint:govet // fieldalignment: internal one-shot config struct, layout irrelevant.
 type settings struct {
-	ctx        context.Context //nolint:containedctx // construction-time ctx for the SDK auth client
-	region     string
-	projectID  string
+	project    string
+	location   string
 	model      string
 	creds      *auth.Credentials
-	endpoint   string
+	baseURL    string
 	httpClient *http.Client
 }
 
-// WithContext sets the context used to build the Vertex auth client; defaults
-// to context.Background().
-func WithContext(ctx context.Context) Option { return func(s *settings) { s.ctx = ctx } }
-
-// WithRegion sets the Vertex region (e.g. "us-central1", "global"). Required.
-func WithRegion(r string) Option { return func(s *settings) { s.region = r } }
-
-// WithProjectID sets the GCP project ID. Required (the Vertex path includes it).
-func WithProjectID(p string) Option { return func(s *settings) { s.projectID = p } }
+// WithVertex sets the GCP project and Vertex location (e.g. "us-central1",
+// "global"), as google.WithVertex does. Required, with both values
+// non-empty: the Vertex path includes them.
+func WithVertex(project, location string) Option {
+	return func(s *settings) { s.project, s.location = project, location }
+}
 
 // WithModel sets the Vertex Anthropic model identifier (Vertex naming, e.g.
 // "claude-sonnet-4@20250514"). Required.
@@ -81,9 +79,10 @@ func WithModel(m string) Option { return func(s *settings) { s.model = m } }
 // authenticate requests sent through a WithHTTPClient client (ADR-0029).
 func WithCredentials(c *auth.Credentials) Option { return func(s *settings) { s.creds = c } }
 
-// WithEndpoint overrides the base URL (Private Service Connect endpoint).
-// Applied after the Vertex option so it wins over the regional URL.
-func WithEndpoint(url string) Option { return func(s *settings) { s.endpoint = url } }
+// WithBaseURL overrides the base URL (Private Service Connect endpoint,
+// proxies, tests). Applied after the Vertex option so it wins over the
+// regional URL.
+func WithBaseURL(u string) Option { return func(s *settings) { s.baseURL = u } }
 
 // WithHTTPClient injects the network client for PSC (dialer, custom CA,
 // proxy, observability). It needs no Google auth of its own: the SDK wraps a
@@ -102,16 +101,11 @@ func New(opts ...Option) (*anthropic.Client, error) {
 	for _, o := range opts {
 		o(&s)
 	}
-	if s.ctx == nil {
-		s.ctx = context.Background()
-	}
 	// vertex.WithCredentials panics on an empty region or nil creds; validate
 	// up front and return a typed config error instead.
 	switch {
-	case s.region == "":
-		return nil, cfgErr("missing Vertex region")
-	case s.projectID == "":
-		return nil, cfgErr("missing GCP project ID")
+	case s.project == "" || s.location == "":
+		return nil, cfgErr("WithVertex requires a non-empty project and location")
 	case s.model == "":
 		return nil, cfgErr("missing model")
 	case s.creds == nil:
@@ -131,7 +125,7 @@ func New(opts ...Option) (*anthropic.Client, error) {
 	// Order is load-bearing (ADR-0029): the caller's PSC client BEFORE the
 	// Vertex option, which wraps it with the credentials (the SDK's
 	// documented behavior; passed after, it would replace the authenticated
-	// client and drop auth). The PSC endpoint AFTER it, so it wins over the
+	// client and drop auth). The PSC base URL AFTER it, so it wins over the
 	// regional URL. The Vertex middleware applies either way.
 	// The client is passed as a shallow copy because the SDK treats the
 	// pointer http.DefaultClient as "no client" and would substitute its
@@ -141,9 +135,12 @@ func New(opts ...Option) (*anthropic.Client, error) {
 		hc := *s.httpClient
 		reqOpts = append(reqOpts, option.WithHTTPClient(&hc))
 	}
-	reqOpts = append(reqOpts, vertex.WithCredentials(s.ctx, s.region, s.projectID, creds))
-	if s.endpoint != "" {
-		reqOpts = append(reqOpts, option.WithBaseURL(s.endpoint))
+	// The context only builds the SDK's HTTP client from the converted token
+	// source; no discovery or network call happens here, so a caller context
+	// would have nothing to cancel (ADR-0035 removed WithContext).
+	reqOpts = append(reqOpts, vertex.WithCredentials(context.Background(), s.location, s.project, creds))
+	if s.baseURL != "" {
+		reqOpts = append(reqOpts, option.WithBaseURL(s.baseURL))
 	}
 
 	c, err := anthropic.New(anthropic.WithModel(s.model), anthropic.WithRequestOptions(reqOpts...))

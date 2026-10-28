@@ -11,8 +11,8 @@ mark them `Resolved at cut-over` once validated.
 
 Categories: **Behavioral** (observable output/behavior changes — these need
 cut-over validation) vs **Internal** (no observable change — informational;
-rows for paths Maestro never had are marked **Informational**, the same
-category) vs **API** (renamed or removed identifiers with no behavior change — the
+the vLLM rows and G4 are marked **Informational**, the same category) vs
+**API** (renamed or removed identifiers with no behavior change — the
 compiler finds every call site, so the cut-over action is the rename, with no
 runtime validation).
 

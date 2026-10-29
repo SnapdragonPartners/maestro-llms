@@ -920,8 +920,10 @@ request options. Thinking blocks round-trip as `reasoning` parts
 No embeddings.
 
 `llms/providers/anthropic/anthropicvertex`: the same chat client on Vertex AI.
-`New` takes `WithVertex(project, location)` or `WithBaseURL`, plus
-app-supplied `WithCredentials`, and returns `*anthropic.Client`
+`New` requires `WithVertex(project, location)`, because both appear in the
+Vertex request path, and app-supplied `WithCredentials`. `WithBaseURL` is an
+optional endpoint override (for example a Private Service Connect endpoint),
+not an alternative to `WithVertex`. `New` returns `*anthropic.Client`
 ([ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md),
 [ADR-0035](adr/0035-provider-naming.md)).
 
@@ -984,11 +986,17 @@ The package does not know:
 - whether it was read from env, Secret Manager, KMS, a desktop config file, or a database
 - whether the active model is admin-managed or hardcoded
 
-Applications own config resolution. Provider clients do not discover
-credentials or endpoints on their own: the Anthropic and OpenAI-family
-clients ignore their SDKs' environment defaults (`ANTHROPIC_*`, `OPENAI_*`;
-divergences A6 and X6), and the Vertex backends perform no Application
-Default Credentials discovery ([ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md)).
+Applications own config resolution. Provider clients never discover
+credentials on their own: every key or credential comes from an option, and
+the Vertex backends perform no Application Default Credentials discovery
+([ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md)). The
+Anthropic and OpenAI-family clients (`anthropic`, `anthropicvertex`,
+`openai`, `openaicompat`) also ignore their SDKs' environment defaults
+(`ANTHROPIC_*`, `OPENAI_*`), endpoints included (divergences A6 and X6).
+The `google` package does not yet extend that to endpoints: when
+`WithBaseURL` is unset, the genai SDK still honors `GOOGLE_GEMINI_BASE_URL`
+or `GOOGLE_VERTEX_BASE_URL`, so an application that must pin the Google
+endpoint passes `WithBaseURL`.
 
 HTTP injection is needed for tests, proxies, observability, and app-managed timeout policy.
 

@@ -27,7 +27,7 @@ const (
 )
 
 // DefaultEstimator is an approximate, provider-neutral TokenEstimator based on
-// character counts. It does not tokenize; it trades accuracy for zero
+// UTF-8 byte counts. It does not tokenize; it trades accuracy for zero
 // dependencies and a safe upward bias. Provider-specific estimators may be
 // added later.
 type DefaultEstimator struct{}

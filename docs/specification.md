@@ -836,9 +836,9 @@ type Reservation interface {
 Semantics:
 
 - `Reserve` is called before the provider request.
-- `Commit` records actual usage when the provider call succeeds or returns usage.
+- `Commit` records actual usage after a successful provider call that reports it.
 - `Release` frees any leased concurrency/request slot.
-- Middleware calls `Commit` when actual usage is available (any usage that reports a token field) and always calls `Release`.
+- Middleware calls `Commit` when the call succeeds and reports usage (any usage with a token field), and always calls `Release`. On a failed call, or a success with no usage reported, the reservation keeps the estimate: overcounting is the safe direction.
 - Implementations must make repeated `Release` safe.
 - Implementations must make `Release` safe after `Commit`.
 - Middleware calls `Release` with a context that survives request cancellation, such as `context.WithoutCancel(ctx)` or a bounded background context.
@@ -888,7 +888,7 @@ type TokenEstimator interface {
 }
 ```
 
-`DefaultEstimator` is approximate and character-based. Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added.
+`DefaultEstimator` is approximate and byte-based (a low bytes-per-token divisor, so non-ASCII text over-reserves further). Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added.
 
 A separate, exported text-level helper is available at the core level for consumers that need to estimate the token count of a standalone string (budget-aware chunking, ad-hoc inspection) without going through the request-shaped interface (ADR-0013):
 

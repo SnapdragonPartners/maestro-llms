@@ -501,3 +501,5 @@ change.
   `llms/ratelimit/memory.go` (refill and Adjust semantics, ported);
   `llms/middleware/ratelimit.go` (Release on `context.WithoutCancel`).
 - ADR-0003: middleware is Complete/Embed-only; streaming is unaffected.
+
+Note (2026-10-29): the specification was refreshed as the v1 contract in #84 step 4 (PR #133). Its "Distributed limiter implementation" section is now the "Shared limiter" part of "Rate Limiting"; the pre-v1 text is [`docs/specification.md` at 30b2b93](https://github.com/SnapdragonPartners/maestro-llms/blob/30b2b930370c50593d09eef4c5303682da25e231/docs/specification.md).

@@ -1026,8 +1026,9 @@ executors, append the matching tool results, and repeat. `Run` returns an
 `Outcome` whose `Kind` says why it stopped: a final answer, an empty response,
 a terminal tool, the iteration limit, a provider error, a context-window
 overflow it could not recover from, an executor or compaction error, or the
-loop's context being canceled or reaching its deadline. Configuration is
-validated before any provider call. The decisions of record are
+loop's context being canceled or reaching its deadline. A rejected
+configuration is reported as `OutcomeToolError` with a `*ConfigError` in
+`Err`, before any provider call; `Run` returns no separate error. The decisions of record are
 [ADR-0011](adr/0011-toolloop-helper.md) (scope and non-goals; the full
 proposal is [`toolloop-proposal.md`](toolloop-proposal.md)),
 [ADR-0017](adr/0017-toolloop-terminal-tools.md) (terminal tools, executed limit turn),

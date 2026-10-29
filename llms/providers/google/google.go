@@ -58,7 +58,9 @@ func WithAPIKey(key string) Option { return func(s *settings) { s.apiKey = key }
 func WithModel(model string) Option { return func(s *settings) { s.model = model } }
 
 // WithBaseURL overrides the API base URL (Private Service Connect endpoint,
-// proxies, tests).
+// proxies, tests). Without it the backend's public endpoint is used; the
+// genai SDK's GOOGLE_GEMINI_BASE_URL / GOOGLE_VERTEX_BASE_URL environment
+// variables are never consulted (divergence G6).
 func WithBaseURL(u string) Option { return func(s *settings) { s.baseURL = u } }
 
 // WithHTTPClient injects the HTTP client (PSC dialer / custom CA, timeouts,
@@ -197,13 +199,14 @@ func (s *settings) clientConfig() (*genai.ClientConfig, error) {
 	return cc, nil
 }
 
-// applyTransport applies WithBaseURL and WithHTTPClient to cc. On Vertex the
-// injected client is authenticated with the credentials: genai uses
-// Credentials only for a client it builds itself, so the client would
-// otherwise send no auth (ADR-0029).
+// applyTransport applies WithBaseURL (or the backend's default endpoint) and
+// WithHTTPClient to cc. On Vertex the injected client is authenticated with
+// the credentials: genai uses Credentials only for a client it builds
+// itself, so the client would otherwise send no auth (ADR-0029).
 func (s *settings) applyTransport(cc *genai.ClientConfig) error {
-	if s.baseURL != "" {
-		cc.HTTPOptions.BaseURL = s.baseURL
+	cc.HTTPOptions.BaseURL = s.baseURL
+	if cc.HTTPOptions.BaseURL == "" {
+		cc.HTTPOptions.BaseURL = defaultBaseURL(cc.Backend, cc.Location)
 	}
 	if s.httpClient == nil {
 		return nil
@@ -217,6 +220,27 @@ func (s *settings) applyTransport(cc *genai.ClientConfig) error {
 		cc.HTTPClient = hc
 	}
 	return nil
+}
+
+// defaultBaseURL is the endpoint genai v1.75 picks when it is given no base
+// URL and finds none in the environment: the public Gemini API, or the
+// Vertex endpoint for the location (global, multi-region "us"/"eu", or
+// regional). The package always sets it explicitly, because with an empty
+// HTTPOptions.BaseURL genai first consults GOOGLE_GEMINI_BASE_URL /
+// GOOGLE_VERTEX_BASE_URL and the process-wide genai.SetDefaultBaseURLs, and
+// ambient state must not redirect traffic (divergence G6, as A6/X6).
+func defaultBaseURL(backend genai.Backend, location string) string {
+	if backend != genai.BackendVertexAI {
+		return "https://generativelanguage.googleapis.com/"
+	}
+	switch location {
+	case "global":
+		return "https://aiplatform.googleapis.com/"
+	case "us", "eu":
+		return "https://aiplatform." + location + ".rep.googleapis.com/"
+	default:
+		return "https://" + location + "-aiplatform.googleapis.com/"
+	}
 }
 
 // authorizeClient returns a shallow copy of c whose transport attaches

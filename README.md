@@ -1174,8 +1174,10 @@ number — see [ADR-0031](docs/adr/0031-attempt-context-observer.md)), and
 **v0.15.0**, the last breaking cleanup before v1 (the
 [stability contract](#stability-contract-v1) and its enum-type rules — see
 [ADR-0032](docs/adr/0032-enum-like-types-v1.md); limiter rejections are
-neutral to the circuit, and `Permanent` or canceled ones aren't retried —
-see [ADR-0033](docs/adr/0033-limit-error-classification.md);
+neutral to the circuit, and `Permanent` or canceled ones aren't retried;
+`llms.LimitError` and `bucket.LimitError` gain `Permanent` and a wrapped
+`Cause`, so comparing their values with `==` can panic (match with
+`errors.As`) — see [ADR-0033](docs/adr/0033-limit-error-classification.md);
 `NewInMemoryLimiter` returns an error, limits are validated, and usage is
 charged from the normalized fields — see
 [ADR-0034](docs/adr/0034-limiter-config-and-charging.md); `openai.New` is
@@ -1183,6 +1185,10 @@ the chat constructor and `NewEmbeddings` the embeddings one, and
 `anthropicvertex` takes `WithVertex`/`WithBaseURL` — see
 [ADR-0035](docs/adr/0035-provider-naming.md); `RecommendedConfig.Retry` is
 a pointer and nil selects the jittered default — see
-[ADR-0036](docs/adr/0036-recommended-retry-pointer.md)).
+[ADR-0036](docs/adr/0036-recommended-retry-pointer.md); contract
+corrections: comparability is promised only for `ModelRef` and `Usage`,
+and Google tool-call integers beyond 2^53 round in the genai SDK —
+[#129](https://github.com/SnapdragonPartners/maestro-llms/pull/129),
+divergence G5).
 
 MIT — see [`LICENSE`](LICENSE).

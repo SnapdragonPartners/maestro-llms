@@ -17,7 +17,7 @@ const (
 )
 
 // ContentPartType is the discriminant for ContentPart. The set is intentionally
-// small in v0 and may grow (e.g. images) without changing the request contract.
+// small and may grow (e.g. images) without changing the request contract.
 type ContentPartType string
 
 const (

@@ -19,14 +19,14 @@ func chatBadRequest(model, msg string) *llms.ProviderError {
 	}
 }
 
-// systemText joins the (text-only, in v0) system parts into a single string
+// systemText joins the (text-only) system parts into a single string
 // suitable for prepending as a system-role message.
 func (c *Client) systemText(req llms.ChatRequest) (string, *llms.ProviderError) {
 	var b strings.Builder
 	for i := range req.System {
 		p := req.System[i]
 		if p.Type != llms.ContentText {
-			return "", chatBadRequest(c.model, "system parts must be text-only in v0")
+			return "", chatBadRequest(c.model, "system parts must be text-only")
 		}
 		if b.Len() > 0 {
 			b.WriteString("\n\n")

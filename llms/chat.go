@@ -34,7 +34,7 @@ type StreamChunk struct {
 // ChatRequest is a provider-neutral completion request.
 type ChatRequest struct {
 	// System carries system/developer instructions, normalized per provider
-	// adapter. In v0 these parts must be text-only. System instructions are
+	// adapter. These parts must be text-only. System instructions are
 	// not legal as mid-conversation Messages.
 	System []ContentPart
 	// Messages is the ordered conversation.
@@ -106,7 +106,7 @@ type ReasoningConfig struct {
 }
 
 // StopReason is the provider-reported reason a response ended. Values are
-// provider-specific strings; the core package does not normalize them in v0.
+// provider-specific strings; the core package does not normalize them.
 type StopReason string
 
 // ChatResponse is a provider-neutral completion response.

@@ -53,7 +53,7 @@ func (c *validationChat) Complete(ctx context.Context, req llms.ChatRequest) (ll
 func validateChatRequest(req llms.ChatRequest) error {
 	for i := range req.System {
 		if t := req.System[i].Type; t != llms.ContentText {
-			return &ValidationError{fmt.Sprintf("System part %d: only text is allowed in v0, got %q", i, t)}
+			return &ValidationError{fmt.Sprintf("System part %d: only text is allowed, got %q", i, t)}
 		}
 	}
 	return ValidateMessages(req.Messages)

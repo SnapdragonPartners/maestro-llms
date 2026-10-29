@@ -66,7 +66,7 @@ type ToolCall struct {
 }
 
 // ToolResult is the result of executing a ToolCall, sent back in a RoleTool
-// message. Content is a string in v0 (textual or JSON-string); structured or
+// message. Content is a string (textual or JSON-string); structured or
 // multimodal results may be added later without changing round-trip semantics.
 type ToolResult struct {
 	ToolCallID string

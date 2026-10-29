@@ -1,98 +1,137 @@
 # maestro-llms Specification
 
-Status: Draft  
-Date: 2026-05-15  
-Intended repo/package name: `maestro-llms`
+Status: Accepted, the v1 contract  
+Date: 2026-10-29 (first drafted 2026-05-15)  
+Module: `github.com/SnapdragonPartners/maestro-llms`
 
-Compatibility: the v1 stability contract (what is covered, what may grow, what is not covered) is the README section ["Stability contract (v1)"](../README.md#stability-contract-v1). The v1 refresh of this document is tracked in #83.
+This document specifies what the package does. Three other documents sit
+beside it:
+
+- The README section ["Stability contract (v1)"](../README.md#stability-contract-v1)
+  is the compatibility promise: which packages and semantics are covered,
+  which enum-like types may grow, and what is not covered. The semantics
+  specified here are covered by it.
+- The [ADR log](adr/README.md) records why each significant decision was
+  made and what was rejected. Where an ADR amended or replaced part of the
+  original design, the section below states the current rule and links the
+  ADR. An accepted ADR is part of the contract; where this document and an
+  ADR disagree, the later ADR wins and this document is the one to fix.
+- [`MAESTRO_DIVERGENCES.md`](MAESTRO_DIVERGENCES.md) lists every place the
+  package intentionally behaves differently from Maestro's original
+  implementation.
+
+The v0 drafts of this document, including the original milestones, roadmap
+and extraction plan, are in the git history. The README section "Versioning
+& license" summarizes what each v0.x release shipped.
 
 ## Purpose
 
-`maestro-llms` is a small open source Go toolkit for working with LLM and embedding providers behind stable application-facing interfaces.
+`maestro-llms` is a small open source Go toolkit for working with LLM and
+embedding providers behind stable application-facing interfaces.
 
-It is intended to be shared by:
+It is shared by applications with deliberately different needs, including:
 
 - **Maestro**, a desktop/local orchestration app with in-process rate limiting.
-- **Morris**, a cloud-deployed family-office app with shared/distributed rate limiting, operational secrets, audit, and content-classification rules.
+- **Morris**, a cloud-deployed family-office app with shared/distributed rate
+  limiting, operational secrets, audit, and content-classification rules.
+- **maestro-cms**, a content service that does budget-aware text chunking for
+  embeddings.
 
-The package should extract common provider and middleware functionality without importing product-specific assumptions from either application.
+The package provides common provider and middleware functionality without
+importing product-specific assumptions from any application.
 
 ## Goals
 
 1. Provide stable chat/completion and embedding abstractions.
 2. Support multiple providers through optional provider packages.
 3. Normalize messages, tool calls, tool results, usage metadata, and provider errors.
-4. Support middleware composition for retries, timeout, logging hooks, metrics hooks, validation, and rate limiting.
-5. Let applications plug in their own configuration, secret resolution, logging, audit, and rate-limit storage.
-6. Keep the core package small enough that it remains useful outside Maestro and Morris.
+4. Support middleware composition for retries, timeout, circuit breaking, metrics hooks, validation, and rate limiting.
+5. Let applications plug in their own configuration, secret resolution, logging, audit, and rate-limit policy.
+6. Keep the core package small enough that it remains useful outside its first consumers.
 
 ## Non-Goals
 
-- No Maestro agent concepts.
+- No Maestro agent concepts. `llms/toolloop` is a tool loop, not an agent
+  loop ([ADR-0011](adr/0011-toolloop-helper.md)).
 - No Morris tenant/user/content authorization concepts.
-- No built-in database schema.
-- No built-in secret store.
+- No application database schema. The one schema the package owns is
+  `bucket/postgres`'s own limiter state, in a dedicated `bucket` schema
+  ([ADR-0025](adr/0025-bucket-distributed-limiter.md)).
+- No built-in secret store, and no implicit credential discovery (see
+  [Configuration Boundary](#configuration-boundary)).
 - No built-in audit taxonomy.
 - No application config file format.
 - No prompt management system.
 - No retrieval/RAG framework.
-- No required streaming support in v0.
-
-Streaming can be added later, but the initial API should not block on it.
+- No streaming yet. `StreamingChatClient` is a forward declaration, outside
+  the v1 contract until streaming is designed
+  ([ADR-0003](adr/0003-middleware-complete-only-defer-streaming.md)).
 
 ## Normative Clarifications From Engineering Review
 
-The current Maestro implementation is a working, tested reference for tool calls across Anthropic, OpenAI, Google, and Ollama. The extraction should use that implementation to resolve provider-specific behavior, while still removing Maestro-specific orchestration, config, and logging assumptions.
+The Maestro implementation was the tested reference for tool calls across
+Anthropic, OpenAI, Google, and Ollama, and the extraction used it to resolve
+provider-specific behavior while removing Maestro-specific orchestration,
+config, and logging assumptions.
 
-The following decisions are normative for v0.1:
+The following decisions are normative:
 
 - Tool-call round trips must be unambiguous and round-trippable.
 - Multi-tool-call assistant turns must be unambiguous and round-trippable.
 - System instructions live in a dedicated `ChatRequest.System` field, not arbitrary mid-list messages.
-- v0 system instructions are text-only.
+- System instructions are text-only.
 - `Temperature` must distinguish unset from intentional `0.0`.
-- Future streaming support is a separate optional interface, not a future method added to `ChatClient`.
+- Streaming support is a separate optional interface, not a method added to `ChatClient`.
 - Local limiter rejections are distinct from provider `429` errors.
 - Limiter release must work after request context cancellation.
-- Retry middleware should wrap rate-limit middleware by default so each provider attempt gets its own reservation.
+- Retry middleware wraps rate-limit middleware by default so each provider attempt gets its own reservation.
 - Provider clients, middleware wrappers, fakes, and in-memory limiters are safe for concurrent use unless explicitly documented otherwise.
-- Unknown model names must not fail solely because the optional model registry does not know them.
+- Unknown model names must not fail solely because the package does not know them.
 
 ## Package Shape
 
-Possible module:
-
 ```text
 github.com/SnapdragonPartners/maestro-llms
-```
-
-Suggested package layout:
-
-```text
-maestro-llms/
-  llms/                 core interfaces and shared types
-  llms/middleware/      provider-neutral middleware
-  llms/ratelimit/       limiter interfaces and optional in-memory limiter
+  llms/                     core interfaces and shared types
+  llms/middleware/          provider-neutral middleware, chain helpers, Recommended*
+  llms/ratelimit/           Limiter/Reservation interfaces, in-memory limiter, FromBucket
+  llms/toolloop/            synchronous tool-loop helper
+  llms/toolloop/compact/    ready-made compaction policies for the tool loop
+  llms/testllm/             deterministic fakes
   llms/providers/
-    anthropic/
-    openai/
-    google/
-    ollama/
-  llms/testllm/         deterministic fakes and test helpers
+    anthropic/              Anthropic Messages API (chat)
+    anthropic/anthropicvertex/  Anthropic on Vertex AI (chat)
+    openai/                 OpenAI Responses API (chat) and embeddings
+    google/                 Gemini chat and embeddings, Gemini API or Vertex AI
+    ollama/                 Ollama /api/chat (chat), no SDK
+    openaicompat/           any OpenAI Chat Completions server (chat)
+    vllm/                   deprecated alias of openaicompat
+  bucket/                   generic per-key token/concurrency limiter (no llms import)
+  bucket/memory/            in-process backend
+  bucket/postgres/          shared PostgreSQL backend
 ```
 
-Provider packages should be imported only by applications that need them. The core package should not force every downstream app to pull every provider SDK unless that is unavoidable.
+Provider packages are leaf imports: an application imports only the
+providers it uses, and the core `llms` package pulls in no provider SDK. A
+Vertex backend that would add a dependency lives in its own leaf package, as
+`anthropicvertex` does ([ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md)).
 
 ## Core Concepts
 
 ### Provider
 
-A provider is an external service family, such as:
+A provider is a wire protocol and API family, identified by
+`llms.ProviderID`:
 
-- `anthropic`
+- `anthropic` (including Anthropic on Vertex AI)
 - `openai`
-- `google`
+- `google` (the Gemini API and Gemini on Vertex AI)
 - `ollama`
+- `openaicompat` (any server speaking OpenAI Chat Completions, such as vLLM)
+
+`ProviderID` names the adapter, not the deployment
+([ADR-0021](adr/0021-reasoning-content-part.md)). It is an open set that may
+grow; the core compares it only for equality.
 
 ### Model
 
@@ -103,20 +142,22 @@ A model is a provider-specific model identifier, such as:
 - `text-embedding-...`
 - `gemini-...`
 
-The package may include a lightweight model registry for known defaults and token limits, but applications must be able to pass unknown/new model names without waiting for package releases.
+Applications pass model names through unchanged. Unknown or new model names
+are never rejected because the package does not know them.
 
 ### Purpose
 
-Applications should be able to label a call purpose without the package needing to understand app semantics:
+Applications can label a call purpose without the package needing to
+understand app semantics:
 
 ```go
 type Purpose string
 
 const (
-    PurposeChat          Purpose = "chat"
-    PurposeEmbedding     Purpose = "embedding"
+    PurposeChat           Purpose = "chat"
+    PurposeEmbedding      Purpose = "embedding"
     PurposeClassification Purpose = "classification"
-    PurposeSummarization Purpose = "summarization"
+    PurposeSummarization  Purpose = "summarization"
 )
 ```
 
@@ -128,7 +169,7 @@ Applications may pass custom purposes.
 
 ## Chat API
 
-Initial v0 should support synchronous completion only.
+`ChatClient` is synchronous.
 
 ```go
 type ChatClient interface {
@@ -137,7 +178,7 @@ type ChatClient interface {
 }
 ```
 
-Future streaming support should be a separate optional capability:
+Streaming, when it is designed, is a separate optional capability:
 
 ```go
 type StreamingChatClient interface {
@@ -145,9 +186,13 @@ type StreamingChatClient interface {
 }
 ```
 
-Callers and middleware should discover streaming with a type assertion. Adding `Stream` to `ChatClient` later would be a breaking change for every provider, fake, and middleware.
+Callers and middleware discover streaming with a type assertion, because
+adding `Stream` to `ChatClient` would break every provider, fake, and
+middleware. No adapter implements it yet, and `StreamingChatClient` and
+`StreamChunk` are outside the v1 contract until streaming is designed
+([ADR-0003](adr/0003-middleware-complete-only-defer-streaming.md)).
 
-Model listing is an additional optional capability (v0.6 / ADR-0012):
+Model listing is an additional optional capability ([ADR-0012](adr/0012-model-lister.md)):
 
 ```go
 type ModelLister interface {
@@ -162,7 +207,7 @@ type ModelInfo struct {
 }
 ```
 
-Discovery is by type assertion on a `ChatClient`. Providers without a list API simply don't implement it. The exception is `anthropicvertex`: it returns the base `*anthropic.Client`, which satisfies `ModelLister`, but Vertex AI doesn't serve the models endpoint, so `ListModels` fails with a `bad_request` `ProviderError`. Per-family upgrade detection (`LatestInFamily`) is a provider-package concern — family naming differs per provider (Anthropic `claude-{opus|sonnet|haiku}`, OpenAI dated-snapshot stripping, Gemini `gemini-{pro|flash|nano|ultra}`) — and is offered as a pure helper plus a one-shot convenience method on the provider's chat client. Ollama implements `ModelLister` only; its list is locally pulled models and "latest in family" has no consistent meaning for community-uploaded tags. See ADR-0012 for binding non-goals.
+Discovery is by type assertion on a `ChatClient`. Providers without a list API simply don't implement it. The exception is `anthropicvertex`: it returns the base `*anthropic.Client`, which satisfies `ModelLister`, but Vertex AI doesn't serve the models endpoint, so `ListModels` fails with a `bad_request` `ProviderError`. Per-family upgrade detection (`LatestInFamily`) is a provider-package concern — family naming differs per provider (Anthropic `claude-{opus|sonnet|haiku}`, OpenAI dated-snapshot stripping, Gemini `gemini-{pro|flash|nano|ultra}`) — and is offered as a pure helper plus a one-shot convenience method on the provider's chat client. Ollama and `openaicompat` implement `ModelLister` only: their lists are locally available models, and "latest in family" has no consistent meaning for community or HuggingFace-style identifiers. See ADR-0012 for binding non-goals.
 
 ### Model Reference
 
@@ -186,6 +231,8 @@ const (
     ProviderVLLM         = ProviderOpenAICompat // Deprecated alias (ADR-0027)
 )
 ```
+
+`ModelRef` is promised to stay comparable, so it can be a map key.
 
 ### Chat Request
 
@@ -224,11 +271,13 @@ See ADR-0022 for the per-provider tables.
 
 `Metadata` is app-supplied, provider-neutral context for middleware and logging. It must not be sent to providers unless a middleware or provider explicitly chooses to use a key.
 
-`System` carries system/developer instructions and is normalized by each provider adapter. Anthropic receives it as the top-level system parameter; OpenAI-compatible providers receive it in the provider-appropriate system/developer slot; Google and Ollama adapters translate it according to their supported request shape.
+`ProviderParams` is the per-request escape hatch for provider body fields the neutral request doesn't model. Each adapter reads only its own `ProviderID`'s entry and deep-merges it into the wire request after mapping: objects merge, anything else replaces, so an entry can override a mapped field. Keys and values pass through as the provider defines them and are outside the stability contract. See [ADR-0024](adr/0024-provider-params.md).
+
+`System` carries system/developer instructions and is normalized by each provider adapter. Anthropic receives it as the top-level system parameter; OpenAI and `openaicompat` receive it in the provider-appropriate system/developer slot; Google and Ollama adapters translate it according to their supported request shape.
 
 System instructions are not legal as arbitrary mid-conversation `Messages`. Multiple `System` parts are legal and preserve order; providers may join them when their API requires one string.
 
-In v0, `System` parts must be text-only. Validation middleware and provider adapters should reject `tool_call`, `tool_result`, or future multimodal parts in the system field unless the spec is deliberately extended.
+`System` parts must be text-only. Validation middleware (with a `ValidationError`) and provider adapters (with a `bad_request` `ProviderError`) reject any other part type in the system field (`tool_call`, `tool_result`, `reasoning`, or a future multimodal type), unless this specification is deliberately extended.
 
 `Temperature == nil` means "use provider/model default." `Temperature != nil && *Temperature == 0` means intentionally deterministic.
 
@@ -302,7 +351,8 @@ Provider mapping:
 
 - Anthropic: `RoleTool` / `tool_result` parts are encoded as user-role tool-result content blocks because Anthropic models tool results as user messages.
 - OpenAI: `RoleTool` maps to tool-role messages.
-- Google/Ollama: provider adapters use the existing Maestro-tested tool-call mapping for that provider.
+- OpenAI Chat Completions (`openaicompat`): `RoleTool` maps to tool-role messages.
+- Google/Ollama: provider adapters use the Maestro-tested tool-call mapping for that provider.
 
 The top-level conversation model remains one app-neutral representation. The content shape also allows later multimodal expansion without changing the top-level request contract.
 
@@ -334,9 +384,11 @@ const (
 `ToolChoiceRequired` forces the model to call at least one of the offered
 tools but lets it pick which; `ToolChoiceTool` forces a specific named tool
 (`Name` required). `Required` maps to Anthropic `any`, OpenAI `required`,
-Gemini ANY-mode. Ollama has no `tool_choice`, so a `Required` (or `Tool`)
+Gemini ANY-mode ([ADR-0007](adr/0007-toolchoice-required.md)). Ollama has no `tool_choice`, so a `Required` (or `Tool`)
 choice is best-effort there — tools are offered, the model decides — and
 adapters must not silently lose caller intent (see MAESTRO_DIVERGENCES).
+With no tools offered, adapters omit `tool_choice` from the wire request
+(divergence X7).
 
 ```go
 type ToolCall struct {
@@ -365,7 +417,7 @@ ADR-0010.
 
 `ToolCall.Parameters` is `json.RawMessage` to preserve exact provider-emitted JSON and avoid lossy `map[string]any` round-trips. Applications can unmarshal into typed structs. The one exception is a provider SDK that decodes args itself: the genai SDK rounds Gemini tool-call args through float64 in both directions, so integers beyond 2^53 lose precision on the google adapter (divergence G5).
 
-`ToolResult.Content` is a string in v0. This intentionally limits tool results to textual/JSON-string content. Structured or multimodal tool results can be added later by extending `ToolResult` without changing the core round-trip semantics.
+`ToolResult.Content` is a string. This intentionally limits tool results to textual/JSON-string content. Structured or multimodal tool results, if added, extend `ToolResult` with new fields without changing the core round-trip semantics.
 
 ### Worked Tool Exchange
 
@@ -457,9 +509,10 @@ This is the app-neutral representation. Provider adapters split or merge as requ
 
 - Anthropic: encode all tool-result parts as tool-result content blocks in one user-role message.
 - OpenAI: split a multi-result `RoleTool` message into one tool-role wire message per `tool_call_id`.
-- Google/Ollama: use the existing Maestro-tested mapping for that provider.
+- `openaicompat`: likewise one tool-role wire message per `tool_call_id`.
+- Google/Ollama: use the Maestro-tested mapping for that provider.
 
-Every tool call in an assistant turn must receive a corresponding tool result before the next provider call. Validation middleware should reject missing, duplicate, or orphaned tool results.
+Every tool call in an assistant turn must receive a corresponding tool result before the next provider call. Validation middleware rejects missing, duplicate, or orphaned tool results ([ADR-0006](adr/0006-validation-error.md)).
 
 ### Chat Response
 
@@ -479,15 +532,15 @@ type ChatResponse struct {
 type StopReason string
 ```
 
-`Raw` is optional provider-specific data for advanced callers. Middleware should not depend on it.
+`Raw` is optional provider-specific data for advanced callers. Middleware does not depend on it.
+
+`StopReason` values are the provider's own strings; the core package does not normalize them.
 
 `Text` and `ToolCalls` are convenience mirrors derived from `Message`. Providers must populate `Message` as the source of truth. If mirrors are present, tests should assert that they match `Message`. Helper methods may be added later so callers can avoid relying on duplicated fields.
 
 `Raw` is outside the stability contract. Applications that depend on it accept provider-package breakage risk.
 
 ## Embeddings API
-
-Embeddings are required in v0.
 
 ```go
 type EmbeddingClient interface {
@@ -540,18 +593,17 @@ The response must preserve input ordering. IDs are included so callers can defen
 
 `DefaultDimensions` is advisory. Some providers/models support caller-selected dimensions, so `EmbeddingRequest.Dimensions` may override the model default when the provider supports it. The true dimension is always the length of each returned vector.
 
-Provider clients should return a typed validation/config error when `Inputs` exceeds the provider or model batch limit. Automatic chunking is intentionally outside v0 provider clients; applications own chunking because they also own retry policy, progress reporting, source IDs, and ingestion transaction boundaries.
+Provider clients return a typed validation/config error when `Inputs` exceeds the provider or model batch limit. Automatic chunking is intentionally outside provider clients; applications own chunking because they also own retry policy, progress reporting, source IDs, and ingestion transaction boundaries.
 
-### v0.4 (ADR-0009): task-typed embeddings, Vertex, single-input models
+### Task-typed embeddings, Vertex, single-input models
 
-`Task`/`Title` (shown in the types above) are **implemented in v0.4 core**:
-provider-neutral, advisory, honored only where the provider supports them
-(Gemini retrieval-document/-query etc.) and ignored elsewhere (OpenAI). They
-are *not* app context smuggled through `Metadata` — task type materially
-changes the vectors for retrieval.
+These rules come from [ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md),
+as amended by ADR-0027, ADR-0028 and ADR-0029.
 
-The remaining v0.4 behavior below is **implemented** (Anthropic-on-Vertex via
-the `anthropicvertex` package, and the Gemini/Vertex embeddings client):
+`Task`/`Title` (shown in the types above) are provider-neutral and advisory,
+honored only where the provider supports them (Gemini retrieval-document/-query
+etc.) and ignored elsewhere (OpenAI). They are *not* app context smuggled
+through `Metadata` — task type materially changes the vectors for retrieval.
 
 `gemini-embedding-001` accepts **one input per call**: this is simply the
 "batch limit" rule above with a limit of 1 — the client returns a typed
@@ -569,9 +621,12 @@ truncation (Vertex-only); `AutoTruncate=false` requires `MaxInputBytes>0` or
 construction fails, so the API can never *look* safe while Vertex silently
 truncates (ADR-0009 implementation refinement).
 
-Anthropic and Gemini-embedding access via **Vertex AI** is a separate-package
-backend (`anthropic/anthropicvertex`) plus a low-level
-`anthropic.WithRequestOptions` escape hatch, preserving leaf imports.
+Anthropic access via **Vertex AI** is a separate-package backend
+(`anthropic/anthropicvertex`) plus a low-level `anthropic.WithRequestOptions`
+escape hatch, preserving leaf imports. Gemini chat and embeddings reach
+Vertex AI through the `google` package itself (`WithVertex` +
+`WithCredentials`), with one backend selector shared by `New` and
+`NewEmbeddings` ([ADR-0028](adr/0028-gemini-chat-on-vertex.md)).
 Credentials and the endpoint (for PSC) are **app-supplied** — the package
 exposes endpoint/base-URL override and HTTP-client/transport injection; it
 performs no ADC discovery. Networking (PSC, DNS, VPC-SC, IAM) is the
@@ -581,33 +636,39 @@ Both Vertex entry points take the same credential type,
 `*cloud.google.com/go/auth.Credentials` (ADR-0027); `anthropicvertex`
 converts it internally. The Google chat and embeddings constructors share
 one functional-option type, and an option a constructor does not accept is
-a config error, never ignored.
+a config error, never ignored. On Vertex, `WithCredentials` authenticates an
+injected `WithHTTPClient` on a copy; the application's client and
+credentials are never mutated ([ADR-0029](adr/0029-vertex-injected-client-auth.md)).
 
 ## Usage Metadata
 
-Usage should be normalized across chat and embeddings.
+Usage is normalized across chat and embeddings.
 
 ```go
 type Usage struct {
-    InputTokens       int
-    OutputTokens      int
-    TotalTokens       int
-    EmbeddingTokens   int
-    CacheReadTokens   int
-    CacheWriteTokens  int
-    ProviderRequestID string
+    InputTokens          int
+    OutputTokens         int
+    TotalTokens          int
+    ReasoningTokens      int
+    BillableOutputTokens int
+    EmbeddingTokens      int
+    CacheReadTokens      int
+    CacheWriteTokens     int
+    ProviderRequestID    string
 }
 ```
 
-If a provider does not return a field, leave it zero. Middleware can estimate tokens before a call; provider clients should fill actual usage when available.
+If a provider does not return a field, it is left zero. Middleware can estimate tokens before a call; provider clients fill actual usage when available. `Usage` is promised to stay comparable.
+
+`OutputTokens` is the visible assistant output only. `ReasoningTokens` is the separately metered thinking output of reasoning models, which does not appear in the response; it is zero where the provider does not expose the split. `BillableOutputTokens` is what the provider charges as output, `OutputTokens + ReasoningTokens` on every adapter. See [ADR-0016](adr/0016-usage-reasoning-tokens.md) and, for Anthropic's `output_tokens_details.thinking_tokens`, [ADR-0018](adr/0018-anthropic-thinking-tokens.md).
 
 `CacheReadTokens` and `CacheWriteTokens` cover provider prompt-cache accounting: Anthropic cache reads and creation, OpenAI `cached_tokens` / `cache_write_tokens`, and Gemini `cachedContentTokenCount`. Providers that do not expose cache token accounting should leave these fields zero.
 
-`InputTokens` is all input the provider processed, **including** cached tokens, on every provider. `CacheReadTokens` and `CacheWriteTokens` are subsets of it, so `InputTokens − CacheReadTokens − CacheWriteTokens` is the uncached remainder and is never negative. Anthropic's wire `input_tokens` excludes cache reads and writes, so its adapter adds them. See ADR-0023.
+`InputTokens` is all input the provider processed, **including** cached tokens, on every provider. `CacheReadTokens` and `CacheWriteTokens` are subsets of it, so `InputTokens − CacheReadTokens − CacheWriteTokens` is the uncached remainder and is never negative (`llms.CacheSplit` clamps inconsistent provider counts). Anthropic's wire `input_tokens` excludes cache reads and writes, so its adapter adds them. See [ADR-0023](adr/0023-usage-input-includes-cache.md).
 
 ## Errors
 
-Provider errors should be classified.
+Provider errors are classified.
 
 ```go
 type ErrorKind string
@@ -635,38 +696,47 @@ type ProviderError struct {
 }
 ```
 
-Applications should be able to use `errors.As` to inspect `ProviderError`.
+Applications use `errors.As` to inspect `ProviderError`. `Cause` holds the underlying SDK or transport error; its dynamic type is outside the stability contract.
+
+`ErrorKind` may grow in minor releases ([ADR-0032](adr/0032-enum-like-types-v1.md)), so a switch over it needs a `default` case.
 
 Retry guidance:
 
 - `rate_limited`, `timeout`, and `unavailable` are normally retryable.
 - `auth`, `config`, `bad_request`, `content_policy`, and `context_length` are normally not retryable.
 - `context_length` means the input does not fit the model's context window; the caller must shorten the conversation before retrying. Adapters report it only for a deterministic provider signal and otherwise leave the error `bad_request` (ADR-0026).
-- `RetryAfter` should capture provider `Retry-After` headers when available.
+- `RetryAfter` captures provider `Retry-After` headers when available.
 
-Local limiter rejections should not be represented as provider errors. Use a separate error type:
+`llms.Retryable(err)` is the single retry classifier, and `llms.RetryAfter(err)` the matching backoff hint; both understand `*ProviderError` and `*LimitError`, and treat any other error as not retryable with no hint ([ADR-0004](adr/0004-retry-circuit-reuse-llms-retryable.md)).
+
+Local limiter rejections are not represented as provider errors. They use a separate error type:
 
 ```go
 type LimitError struct {
-    Provider ProviderID
-    Model    string
-    Reason   string
+    Cause      error // context error when the limiter's context ended the wait
+    Provider   ProviderID
+    Model      string
+    Reason     string // diagnostic text, not covered by the contract
     RetryAfter time.Duration
+    Permanent  bool   // not admissible under the limits in force
 }
 ```
 
-This lets retry/circuit middleware distinguish "we throttled locally before making a provider call" from "the provider returned 429."
+This lets retry/circuit middleware distinguish "we throttled locally before making a provider call" from "the provider returned 429." A `LimitError` is never evidence that the provider is unhealthy, so the circuit breaker treats it as neutral. It is retryable unless it is `Permanent` or its `Cause` is a cancellation; a deadline `Cause` stays retryable, because the deadline may be a per-attempt one ([ADR-0033](adr/0033-limit-error-classification.md)). `bucket.LimitError` carries the same `Permanent` and `Cause`, and `ratelimit.FromBucket` keeps both.
+
+The `middleware` package adds two more error types, both non-retryable: `middleware.ValidationError` for a structurally invalid request ([ADR-0006](adr/0006-validation-error.md)) and `middleware.CircuitOpenError` for a fast-fail while the circuit is open ([ADR-0005](adr/0005-circuit-open-error.md)).
 
 ## Middleware
 
-The package should support middleware composition separately for chat and embeddings.
+Middleware composes separately for chat and embeddings.
 
 ```go
-type ChatMiddleware func(ChatClient) ChatClient
-type EmbeddingMiddleware func(EmbeddingClient) EmbeddingClient
+// package middleware
+type ChatMiddleware func(llms.ChatClient) llms.ChatClient
+type EmbeddingMiddleware func(llms.EmbeddingClient) llms.EmbeddingClient
 
-func ChainChat(base ChatClient, mws ...ChatMiddleware) ChatClient
-func ChainEmbeddings(base EmbeddingClient, mws ...EmbeddingMiddleware) EmbeddingClient
+func ChainChat(base llms.ChatClient, mws ...ChatMiddleware) llms.ChatClient
+func ChainEmbeddings(base llms.EmbeddingClient, mws ...EmbeddingMiddleware) llms.EmbeddingClient
 ```
 
 The first middleware argument is outermost:
@@ -676,17 +746,18 @@ ChainChat(base, A, B, C)
 // call order: A -> B -> C -> base
 ```
 
-Initial middleware candidates:
+The package ships these middleware, each as a chat and (except validation) an embedding variant:
 
-- timeout
-- retry
-- circuit breaker
-- rate limit
-- metrics hooks
-- request/response validation
-- token estimation
+- `ValidationChat`: structural checks only ([ADR-0006](adr/0006-validation-error.md))
+- `RetryChat` / `RetryEmbeddings`: classified by `llms.Retryable` ([ADR-0004](adr/0004-retry-circuit-reuse-llms-retryable.md))
+- `TimeoutChat` / `TimeoutEmbeddings`
+- `CircuitChat` / `CircuitEmbeddings` ([ADR-0005](adr/0005-circuit-open-error.md))
+- `RateLimitChat` / `RateLimitEmbeddings`, over a `ratelimit.Limiter` and a `TokenEstimator`
+- `MetricsChat` / `MetricsEmbeddings`, over an `Observer`
 
-Logging and metrics should use narrow callback interfaces, not a specific logging package.
+Every middleware wraps `Complete` and `Embed` only. A wrapper does not forward the optional `StreamingChatClient` capability, so it is undiscoverable through a chain; streaming-aware middleware needs a superseding ADR ([ADR-0003](adr/0003-middleware-complete-only-defer-streaming.md)).
+
+Logging and metrics use narrow callback interfaces, not a specific logging package. `Observer` receives one `Event` per call the metrics middleware wraps, carrying provider-neutral facts and no request or response content. An `Observer` that also implements the optional `ContextObserver` receives each `Event` with that call's context instead, and `AttemptFromContext` reads the retry attempt number the retry middleware puts there ([ADR-0031](adr/0031-attempt-context-observer.md)).
 
 Recommended order for most apps:
 
@@ -700,7 +771,9 @@ Recommended order for most apps:
 
 With this default, each retry attempt flows through timeout, circuit breaker, and rate-limit reservation independently. That is intentional: retries are real provider traffic and should be gated by the same limiter as first attempts.
 
-Applications may change the order, but the package documentation should explain tradeoffs. In particular:
+`RecommendedChat` and `RecommendedEmbeddings` build exactly this order from a `RecommendedConfig`: validation (chat only; there is no structural embedding validation), retry and circuit always; timeout, rate limiting and metrics only when configured. A nil `RecommendedConfig.Retry` selects the jittered `DefaultRetryConfig()` ([ADR-0036](adr/0036-recommended-retry-pointer.md)). Because metrics is innermost, its `Observer` sees each real provider attempt but not outer rejections; an application that also wants those adds a second, outer `MetricsChat` with `ChainChat`.
+
+Applications may change the order with `ChainChat`/`ChainEmbeddings`. The tradeoffs:
 
 - Retry outside rate limiting means each provider attempt consumes a reservation.
 - Rate limiting outside retry means one reservation covers all attempts and can undercount provider traffic.
@@ -709,13 +782,13 @@ Applications may change the order, but the package documentation should explain 
 
 ## Rate Limiting
 
-The package should define rate-limit interfaces and provide an optional in-memory implementation for local/desktop apps. Cloud apps must be able to plug in distributed implementations.
+The package defines the rate-limit interfaces, an in-memory implementation for local/desktop apps, and a shared implementation for multi-instance apps. Applications can also plug in their own.
 
 ### Design Requirement
 
 The rate limiter must not assume process-local state is authoritative.
 
-Maestro can use an in-memory limiter. Morris needs a PostgreSQL-backed or otherwise shared limiter because Cloud Run can run multiple instances. The same middleware should work with both.
+Maestro can use an in-memory limiter. Morris needs a PostgreSQL-backed or otherwise shared limiter because Cloud Run can run multiple instances. The same middleware works with both.
 
 ### Reservation Interface
 
@@ -725,13 +798,13 @@ type Limiter interface {
 }
 
 type ReservationRequest struct {
-    Provider       ProviderID
+    Provider       llms.ProviderID
     Model          string
     Operation      Operation
-    Purpose        Purpose
-    EstimatedUnits UsageUnits
-    Subject        Subject
+    Purpose        llms.Purpose
     Metadata       map[string]string
+    Subject        Subject
+    EstimatedUnits UsageUnits
 }
 
 type Operation string
@@ -755,7 +828,7 @@ type Subject struct {
 }
 
 type Reservation interface {
-    Commit(ctx context.Context, usage Usage) error
+    Commit(ctx context.Context, usage llms.Usage) error
     Release(ctx context.Context) error
 }
 ```
@@ -765,10 +838,10 @@ Semantics:
 - `Reserve` is called before the provider request.
 - `Commit` records actual usage when the provider call succeeds or returns usage.
 - `Release` frees any leased concurrency/request slot.
-- Middleware should call `Commit` when actual usage is available and always call `Release`.
+- Middleware calls `Commit` when actual usage is available (any usage that reports a token field) and always calls `Release`.
 - Implementations must make repeated `Release` safe.
 - Implementations must make `Release` safe after `Commit`.
-- Middleware should call `Release` with a context that survives request cancellation, such as `context.WithoutCancel(ctx)` or a bounded background context.
+- Middleware calls `Release` with a context that survives request cancellation, such as `context.WithoutCancel(ctx)` or a bounded background context.
 
 Reconciliation contract:
 
@@ -778,15 +851,16 @@ Reconciliation contract:
 - If actual usage is higher than estimated, implementations should charge the delta if the backend supports it.
 - A failed delta charge must not erase the fact that the provider call already happened; implementations should return an error so the application can audit/account for the mismatch.
 - Concurrency leases are released by `Release`, not by `Commit`.
-- **Amended by ADR-0034 (2026-10-26):** the toolkit's limiters charge `max(InputTokens, EmbeddingTokens)` plus `BillableOutputTokens` (or `OutputTokens + ReasoningTokens` when it is unset), with `TotalTokens`, a provider-specific aggregate, as a floor. Middleware commits any usage that reports a token field. `NewInMemoryLimiter` returns an error for limits `bucket.Limits.Validate` rejects.
+- The toolkit's limiters charge `max(InputTokens, EmbeddingTokens)` plus `BillableOutputTokens` (or `OutputTokens + ReasoningTokens` when it is unset), with `TotalTokens`, a provider-specific aggregate, as a floor, using saturating integer arithmetic ([ADR-0034](adr/0034-limiter-config-and-charging.md)).
 
-In-memory limiter implementation:
+In-memory limiter (`ratelimit.NewInMemoryLimiter`):
 
 - appropriate for Maestro/local tests
 - token bucket and concurrency semaphore
-- optional stats interface
+- configuration is validated: `NewInMemoryLimiter` returns an error for limits `bucket.Limits.Validate` rejects ([ADR-0034](adr/0034-limiter-config-and-charging.md))
+- implements the optional stats interface
 
-Stats should be a separate optional interface:
+Stats is a separate optional interface:
 
 ```go
 type LimiterStats interface {
@@ -796,23 +870,25 @@ type LimiterStats interface {
 
 Consumers discover it with a type assertion. Core `Limiter` stays minimal so distributed implementations are not forced to support stats before they need them.
 
-Distributed limiter implementation:
+Shared limiter ([ADR-0025](adr/0025-bucket-distributed-limiter.md), which replaced the original plan for Morris to build its own first):
 
-- **Amended by ADR-0025 (2026-10-18):** the shared limiter ships here, not in Morris first, because Maestro, Morris and buggrit all need it at once. It is the generic top-level `bucket` package (which does not import `llms`) with `bucket/memory` and `bucket/postgres` backends; `ratelimit.FromBucket` adapts it to `Limiter`, so the middleware is unchanged.
+- The generic top-level `bucket` package, which does not import `llms`: `Acquire(ctx, key, tokens)` returns a `Lease` with `Adjust`, `Release` and `Lost`. Backends are `bucket/memory` (in process) and `bucket/postgres` (shared across instances).
+- `ratelimit.FromBucket(l, key)` adapts any `bucket.Limiter` to `Limiter`, so the middleware is unchanged. `key` is the application's policy for mapping a request to a bucket key. A bucket lease is exactly one concurrency slot.
+- `bucket/postgres` keeps limits in the database (`Ensure`), holds concurrency slots as renewed lease rows, treats `MaxWait` as a hard deadline, and fails closed. Its tables live in a dedicated `bucket` schema with versioned migrations; a database behind `postgres.SchemaVersion` gets a `*postgres.SchemaError` rather than wrong behavior.
 - PostgreSQL only for now; other SQL dialects or Redis would be further `bucket/<backend>` packages behind the same interface.
 
 ## Token Estimation
 
-The package should define a token estimator interface.
+The rate-limit middleware sizes each reservation with a `middleware.TokenEstimator`:
 
 ```go
 type TokenEstimator interface {
-    EstimateChat(req ChatRequest) UsageUnits
-    EstimateEmbeddings(req EmbeddingRequest) UsageUnits
+    EstimateChat(req llms.ChatRequest) ratelimit.UsageUnits
+    EstimateEmbeddings(req llms.EmbeddingRequest) ratelimit.UsageUnits
 }
 ```
 
-Default estimator can be approximate. Provider-specific estimators may be added. Overestimation is safer for rate limiting than underestimation.
+`DefaultEstimator` is approximate and character-based. Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added.
 
 A separate, exported text-level helper is available at the core level for consumers that need to estimate the token count of a standalone string (budget-aware chunking, ad-hoc inspection) without going through the request-shaped interface (ADR-0013):
 
@@ -820,109 +896,99 @@ A separate, exported text-level helper is available at the core level for consum
 func EstimateTextTokens(s string) int
 ```
 
-Bias is intentionally **neutral** (~4 chars/token, rune-counted) — distinct from the request-shaped estimator's high bias — because over-estimating during chunking produces smaller-than-necessary chunks and thus more downstream API calls. The two estimators serve different purposes and should not be consolidated.
+Bias is intentionally **neutral** (rune count divided by 4, rounded up; the formula is covered by the contract because callers persist chunk boundaries built on it) — distinct from the request-shaped estimator's high bias — because over-estimating during chunking produces smaller-than-necessary chunks and thus more downstream API calls. The two estimators serve different purposes and should not be consolidated.
 
 ## Provider Clients
 
-Initial provider support:
+Every provider package exposes `New(opts ...Option)`, which returns its chat
+client and an error; an embeddings-capable package also exposes
+`NewEmbeddings(opts ...Option)`. Missing or invalid configuration is a
+`config` `ProviderError` from the constructor. Where chat and embeddings
+share one option type (`openai`, `google`), an option the constructor does
+not accept is also a config error, never ignored
+([ADR-0027](adr/0027-pre-v1-api-cleanup.md), [ADR-0035](adr/0035-provider-naming.md)).
+Every chat client supports tool calls, usage metadata, error
+classification, and an injectable `*http.Client`.
 
 ### Anthropic
 
-Required for Morris chat and already useful in Maestro.
+`llms/providers/anthropic`: chat over the Anthropic Messages API.
+`WithRequestOptions` is the low-level escape hatch that takes anthropic-sdk-go
+request options. Thinking blocks round-trip as `reasoning` parts
+([ADR-0021](adr/0021-reasoning-content-part.md)), and `CacheBreakpoint` maps to
+`cache_control: ephemeral` ([ADR-0008](adr/0008-prompt-cache-hint.md)).
+No embeddings.
 
-Package:
-
-```text
-llms/providers/anthropic
-```
-
-Expected:
-
-- chat completion
-- tool calls
-- usage metadata when available
-- error classification
-- injectable HTTP client or transport where the SDK/provider shape allows it
-
-Embeddings are not required.
+`llms/providers/anthropic/anthropicvertex`: the same chat client on Vertex AI.
+`New` takes `WithVertex(project, location)` or `WithBaseURL`, plus
+app-supplied `WithCredentials`, and returns `*anthropic.Client`
+([ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md),
+[ADR-0035](adr/0035-provider-naming.md)).
 
 ### OpenAI
 
-Required for Morris embeddings.
-
-Package:
-
-```text
-llms/providers/openai
-```
-
-Expected:
-
-- embeddings (delivered in v0.1)
-- chat via the OpenAI **Responses API**, not Chat Completions: OpenAI is
-  deprecating Chat Completions, and Maestro's tested client already uses
-  Responses. Required for the Maestro cut-over (v0.2), not optional.
-- tool calls (with chat)
-- usage metadata
-- error classification
-- injectable HTTP client or transport where the SDK/provider shape allows it
+`llms/providers/openai`: `New` is chat via the OpenAI **Responses API**, not
+Chat Completions (OpenAI is deprecating Chat Completions, and Maestro's
+tested client already used Responses). `NewEmbeddings` is the embeddings
+client; `WithDimensions` is embeddings-only, and `New` rejects it
+([ADR-0035](adr/0035-provider-naming.md)).
 
 ### Google
 
-Chat client, required for the Maestro cut-over (v0.2). Extracted from
-Maestro's tested `google.golang.org/genai` implementation. Not needed by
-Morris.
+`llms/providers/google`: Gemini chat (`New`) and embeddings
+(`NewEmbeddings`), extracted from Maestro's tested `google.golang.org/genai`
+implementation. Both run on the Gemini API with an API key or on Vertex AI
+with `WithVertex` + `WithCredentials`, through one shared backend selector
+([ADR-0028](adr/0028-gemini-chat-on-vertex.md)). Gemini 3's
+`thought_signature` round-trips through `ToolCall.ProviderSignature`
+([ADR-0010](adr/0010-toolcall-provider-signature.md)).
 
 ### Ollama
 
-Chat client for local development, required for the Maestro cut-over
-(v0.2). Extracted from Maestro's tested `github.com/ollama/ollama/api`
-implementation. Not needed by Morris.
+`llms/providers/ollama`: chat for local models over Ollama's `/api/chat`
+JSON endpoint. It is a hand-rolled `net/http` client rather than the
+`github.com/ollama/ollama` SDK, whose server-side advisories would otherwise
+be attributed to every consumer ([ADR-0002](adr/0002-ollama-no-sdk-hand-rolled-client.md)).
+No API key.
 
-### vLLM
+### OpenAI-compatible
 
-Chat client for self-hosted GPU inference (v0.7 / ADR-0015). Speaks the
-OpenAI-compatible Chat Completions endpoint (`/v1/chat/completions`),
-NOT the Responses API used by the sibling `openai` package. Uses the
-openai-go SDK pointed at a configurable base URL; no new dependency.
-API key is optional (vLLM's default deployment has no auth). Implements
-`ModelLister` but not `LatestInFamily` — HuggingFace-style model
-identifiers have no canonical family convention (same shape as Ollama).
-`ModelInfo.Created` is the model load time on the vLLM instance, not
-the upstream release date.
+`llms/providers/openaicompat`: chat for any server or gateway that speaks the
+OpenAI Chat Completions endpoint (`/v1/chat/completions`), such as self-hosted
+vLLM or a hosted router, NOT the Responses API used by the sibling `openai`
+package. It uses the openai-go SDK pointed at a required base URL that
+includes the API version path (for example `http://localhost:8000/v1`). The API key is optional (vLLM's default deployment
+has no auth). Implements `ModelLister` but not `LatestInFamily`; on vLLM,
+`ModelInfo.Created` is the model load time on the instance, not the upstream
+release date ([ADR-0015](adr/0015-vllm-provider.md)).
+
+`llms/providers/vllm` is a deprecated alias of `openaicompat`, kept for the
+life of v1 and in export parity with it ([ADR-0027](adr/0027-pre-v1-api-cleanup.md)).
 
 ## Configuration Boundary
 
-The package should accept already-resolved provider configs.
+The package accepts already-resolved configuration. There is no shared
+config struct: each provider package takes functional options.
 
 ```go
-type ProviderConfig struct {
-    Provider ProviderID
-    Model    string
-    APIKey   string
-    BaseURL  string
-    Headers  map[string]string
-    HTTPClient *http.Client
-}
-```
-
-The package should not know:
-
-- where the API key came from
-- whether it was read from env, Secret Manager, KMS, a desktop config file, or a database
-- whether the active model is admin-managed or hardcoded
-
-Applications own config resolution.
-
-Provider packages should expose an options pattern rather than a large constructor matrix:
-
-```go
-client := anthropic.New(
+client, err := anthropic.New(
     anthropic.WithAPIKey(apiKey),
     anthropic.WithModel(model),
     anthropic.WithHTTPClient(httpClient),
 )
 ```
+
+The package does not know:
+
+- where the API key came from
+- whether it was read from env, Secret Manager, KMS, a desktop config file, or a database
+- whether the active model is admin-managed or hardcoded
+
+Applications own config resolution. Provider clients do not discover
+credentials or endpoints on their own: the Anthropic and OpenAI-family
+clients ignore their SDKs' environment defaults (`ANTHROPIC_*`, `OPENAI_*`;
+divergences A6 and X6), and the Vertex backends perform no Application
+Default Credentials discovery ([ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md)).
 
 HTTP injection is needed for tests, proxies, observability, and app-managed timeout policy.
 
@@ -936,49 +1002,63 @@ Key convention:
 - provider-owned keys use `provider.<name>.*`
 - application-owned keys should use an application prefix, such as `maestro.*` or `morris.*`
 
-Middleware that needs private typed state should prefer context values with unexported key types rather than mutating shared metadata.
+Middleware that needs private typed state uses context values with unexported key types rather than mutating shared metadata.
 
 ## Concurrency
 
-All core clients, middleware wrappers, fakes, and in-memory limiters should be safe for concurrent use unless explicitly documented otherwise.
+All core clients, middleware wrappers, fakes, and in-memory limiters are safe for concurrent use unless explicitly documented otherwise.
 
-Provider clients should avoid mutable request-scoped state on the client struct. Middleware that tracks metrics or limiter state must synchronize access.
+Provider clients avoid mutable request-scoped state on the client struct. Middleware that tracks metrics or limiter state synchronizes access.
 
-## Optional Model Registry
+## Tool Loop
 
-The package may include a model registry for informational metadata:
+`llms/toolloop` is a small synchronous helper over a `ChatClient`: send the
+request, execute every tool call the model emits with application-supplied
+executors, append the matching tool results, and repeat. `Run` returns an
+`Outcome` whose `Kind` says why it stopped: a final answer, an empty response,
+a terminal tool, the iteration limit, a provider error, a context-window
+overflow it could not recover from, an executor or compaction error, or the
+loop's context being canceled or reaching its deadline. Configuration is
+validated before any provider call. The decisions of record are
+[ADR-0011](adr/0011-toolloop-helper.md) (scope and non-goals; the full
+proposal is [`toolloop-proposal.md`](toolloop-proposal.md)),
+[ADR-0017](adr/0017-toolloop-terminal-tools.md) (terminal tools, executed limit turn),
+[ADR-0019](adr/0019-toolloop-deadline-and-no-iteration-limit.md) (deadline, `NoIterationLimit`),
+[ADR-0020](adr/0020-toolloop-empty-response.md) (empty response),
+[ADR-0026](adr/0026-context-length-error-kind.md) (context exceeded), and
+[ADR-0030](adr/0030-toolloop-compaction.md) (the `Compact` hook and the
+`llms/toolloop/compact` policies). `OutcomeKind` may grow, each new kind by
+its own ADR, so a switch over it needs a `default` case
+([ADR-0032](adr/0032-enum-like-types-v1.md)).
 
-- provider
-- context window
-- maximum output tokens
-- default embedding dimensions
-- rough pricing
-- rough token-estimation hints
+## Model Metadata
 
-Hard invariant: unknown model names must not fail solely because the registry does not know them. The registry is additive and advisory.
+The package ships no model registry. If one is added, it is informational
+only (context window, maximum output tokens, default embedding dimensions,
+rough pricing, token-estimation hints).
+
+Hard invariant: unknown model names must not fail solely because the package does not know them. Any registry is additive and advisory.
 
 ## Test Support
 
-The package should include deterministic test clients.
+`llms/testllm` provides deterministic, concurrency-safe fakes,
+`FakeChatClient` and `FakeEmbeddingClient`, plus `TextResponse` and
+`ToolCallResponse` helpers.
 
-```go
-type FakeChatClient struct { ... }
-type FakeEmbeddingClient struct { ... }
-```
-
-Needed behavior:
+They support:
 
 - fixed response text
-- scripted tool calls
-- scripted errors
+- scripted responses, including tool calls
+- scripted errors, or a `Func` that takes full control
 - usage metadata injection
-- deterministic embeddings by input text or configured vector map
+- request recording for assertions (`ProviderParams` recorded in their JSON form)
+- deterministic embeddings by input text or a configured vector map
 
-This is important because both Maestro and Morris need most tests to run without real provider calls.
+Most consumer tests run without real provider calls, so the fakes' correctness gates everything downstream.
 
 ## Security And Privacy
 
-The package should be careful by default:
+The package is careful by default:
 
 - never log API keys
 - never log request content in middleware by default
@@ -986,125 +1066,37 @@ The package should be careful by default:
 - keep raw provider responses optional
 - avoid global mutable config
 
-Morris will apply stricter content classification and audit rules outside the package.
+Morris applies stricter content classification and audit rules outside the package.
 
 ## Versioning
 
-Use semantic versioning.
+Semantic versioning. From v1.0.0, anything the README
+["Stability contract (v1)"](../README.md#stability-contract-v1) covers,
+including the semantics in this document and the accepted ADRs, changes
+incompatibly only in a new major version with a `/v2` import path. New
+capabilities arrive as optional interfaces, new struct fields, new options,
+and new values of the enum-like types the contract lists.
 
-Milestones (reprioritized 2026-05-15 — see "Roadmap Update" below; the
-original sequencing was Morris-first, but the Maestro cut-over gates on the
-full chat provider set, so chat parity moves ahead of resilience
-middleware).
-
-### v0.1 — delivered (tagged v0.1.0)
-
-- core chat and embeddings interfaces
-- OpenAI embeddings provider
-- Anthropic chat provider
-- middleware chaining
-- rate limiter interfaces
-- in-memory limiter
-- deterministic fakes
-
-### v0.2 — Maestro chat parity (next; gates the Maestro cut-over)
-
-- OpenAI chat provider via the Responses API
-- Google chat provider (genai), extracted from Maestro
-- Ollama chat provider, extracted from Maestro
-- shared internal provider error-classifier helper (introduced here, with
-  four providers, rather than deferred — anthropic/openai are migrated onto
-  it)
-- Maestro consumes the package in one clean cut-over once all four chat
-  providers + embeddings are in (no incremental adoption)
-
-### v0.3 — resilience middleware
-
-- retry/timeout/circuit middleware
-- metrics hook interfaces
-- richer provider error classification
-
-### v0.4
-
-- optional streaming interfaces (`StreamingChatClient`)
-- optional generic Redis/Postgres limiter if it can stay app-neutral (delivered for Postgres as `bucket/postgres`, ADR-0025)
-
-## Roadmap Update — 2026-05-15
-
-v0.1.0 shipped (steps 1–9 below, all merged; live-verified against the real
-Anthropic and OpenAI APIs). Two decisions reshape what comes next:
-
-- **Maestro adoption is a single clean cut-over, not incremental.** Maestro
-  will not route some providers through the package while keeping its own
-  for others — too hard to test. Therefore the cut-over is blocked until the
-  *entire* chat provider set Maestro uses (Anthropic ✓, OpenAI, Google,
-  Ollama) plus embeddings is available.
-- **Consequently, provider chat parity is reprioritized ahead of the
-  resilience middleware.** The original milestones were Morris-first
-  (Anthropic chat + OpenAI embeddings is all Morris needs now). Following
-  that order would strand the Maestro cut-over behind retry/timeout/circuit
-  work it does not need. So v0.2 is now the three remaining chat providers
-  (OpenAI via Responses API, Google, Ollama) + the shared error-classifier;
-  resilience middleware slips to v0.3.
-
-These providers are extractions from Maestro's tested implementations, not
-greenfield, which lowers risk. They reuse the Anthropic provider's
-structure (options pattern, httptest-based unit tests, build-tagged live
-test, typed-error classification).
-
-## Extraction Plan
-
-1. Create new `maestro-llms` repository.
-2. Copy/adapt Maestro core LLM types into app-neutral names.
-3. Remove Maestro agent/config/logging dependencies.
-4. Add embedding interfaces before porting providers.
-5. Extract Anthropic chat provider.
-6. Extract OpenAI provider with embeddings first.
-7. Extract middleware chain.
-8. Define limiter interfaces and adapt Maestro in-memory limiter.
-9. Add fakes and tests.
-10. Extract remaining Maestro chat providers (OpenAI Responses API, Google,
-    Ollama) + shared internal error-classifier helper. (v0.2)
-11. Update Maestro to consume the package in one clean cut-over once step 10
-    is complete.
-12. Add Morris dependency (Morris needs only Anthropic chat + OpenAI
-    embeddings, both already in v0.1, so this is not blocked by step 10).
+A significant structural decision lands an ADR in the same change. A change
+to a section of this document either updates the section or, for a decision
+that replaces one recorded here, adds an ADR and links it from the section.
 
 ## Open Questions
 
-1. Which provider-specific raw response fields, if any, should get normalized instead of left in `Raw`?
+1. Which provider-specific raw response fields, if any, should get normalized instead of left in `Raw`? Any answer is additive: a new normalized field.
 
 Resolved by review:
 
 - Module path is `github.com/SnapdragonPartners/maestro-llms`.
-- Core package import name should be `llms`.
-- OpenAI embeddings and Anthropic chat are required in v0.1 (delivered).
-- OpenAI chat ships in v0.2 via the **Responses API** (not Chat
-  Completions — OpenAI is deprecating it and Maestro already uses
-  Responses).
-- Google and Ollama chat providers move from v0.3 to v0.2: the Maestro
-  cut-over needs the full chat set and is a single clean cut-over, not
-  incremental.
+- Core package import name is `llms`.
+- OpenAI chat uses the **Responses API** (not Chat Completions — OpenAI is
+  deprecating it and Maestro already used Responses). Chat Completions
+  servers are served by `openaicompat`.
 - Provider constructor shape is a functional options pattern
-  (`New(WithAPIKey, WithModel, WithBaseURL, WithHTTPClient, ...)`),
-  validated against the v0.1 anthropic/openai providers.
-- Shared provider error-classifier is introduced in v0.2 (four providers),
-  not deferred to v0.3.
-- Model registry is allowed but strictly optional/advisory.
+  (`New(WithAPIKey, WithModel, WithBaseURL, WithHTTPClient, ...)`, returning
+  the client and an error).
+- Provider error classification goes through one shared internal helper,
+  not a classifier per adapter.
+- Model metadata is strictly optional/advisory.
 - `Raw any` is opt-in and outside the stability contract.
 - Limiter stats are a separate optional interface.
-
-## Initial Recommendation
-
-Proceed with a small extraction focused on what Morris and Maestro both need immediately:
-
-- app-neutral chat interface
-- app-neutral embeddings interface
-- Anthropic chat client
-- OpenAI embeddings client
-- middleware chain
-- limiter reservation interface
-- in-memory limiter for Maestro
-- fakes for tests
-
-Do not include streaming in v0.1. Do not include Morris distributed rate limiting in the shared package yet; Morris should implement the `Limiter` interface with PostgreSQL in its own codebase first. If that implementation later proves app-neutral, promote it into `maestro-llms`. (Superseded by ADR-0025: the shared limiter was built here directly as the generic `bucket` package.)

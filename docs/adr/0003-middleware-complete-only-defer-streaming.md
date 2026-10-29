@@ -92,3 +92,5 @@ explicitly streaming-free.)
 - `llms/middleware/ratelimit.go` — pre-existing `Complete`-only precedent
 - ADR-0001 (this log's process)
 - Supersedes the "(v0.3)" streaming parenthetical in `llms/chat.go` doc comment
+
+Note (2026-10-29): the specification was refreshed as the v1 contract in #84 step 4 (PR #133). The spec line numbers above refer to the pre-v1 draft, [`docs/specification.md` at 30b2b93](https://github.com/SnapdragonPartners/maestro-llms/blob/30b2b930370c50593d09eef4c5303682da25e231/docs/specification.md). In the current spec, streaming is under "Chat API" and the recommended order under "Middleware".

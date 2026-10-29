@@ -19,14 +19,14 @@ func badRequest(model, msg string) *llms.ProviderError {
 	}
 }
 
-// systemText extracts the system prompt from req.System. v0 system parts must
+// systemText extracts the system prompt from req.System. System parts must
 // be text-only.
 func (c *Client) systemText(req llms.ChatRequest) (string, *llms.ProviderError) {
 	var b strings.Builder
 	for i := range req.System {
 		p := req.System[i]
 		if p.Type != llms.ContentText {
-			return "", badRequest(c.model, "system parts must be text-only in v0")
+			return "", badRequest(c.model, "system parts must be text-only")
 		}
 		if b.Len() > 0 {
 			b.WriteString("\n\n")

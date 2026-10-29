@@ -70,3 +70,5 @@ leaving no app-neutral structural rule to enforce.
 - `docs/MAESTRO_DIVERGENCES.md` — M3
 - ADR-0005 (distinct non-retryable middleware error, same shape), ADR-0004,
   ADR-0001
+
+Note (2026-10-29): the specification was refreshed as the v1 contract in #84 step 4 (PR #133). The spec line numbers above refer to the pre-v1 draft, [`docs/specification.md` at 30b2b93](https://github.com/SnapdragonPartners/maestro-llms/blob/30b2b930370c50593d09eef4c5303682da25e231/docs/specification.md). In the current spec, the text-only `System` rule is under "Chat Request", tool-result pairing under "Multi-Tool-Call Turns", and embeddings chunking under "Embedding Response".

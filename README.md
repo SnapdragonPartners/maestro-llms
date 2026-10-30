@@ -646,6 +646,14 @@ it with `WithCredentials` and never mutates your client
 ([ADR-0029](docs/adr/0029-vertex-injected-client-auth.md)). That matches every
 direct provider, where an injected client never removes auth.
 
+The endpoint likewise comes only from options. Without `WithBaseURL`, the
+`google` clients use the backend's public endpoint (the Gemini API, or the
+Vertex global / `us`/`eu` multi-region / regional endpoint for the
+`WithVertex` location). They never read `GOOGLE_GEMINI_BASE_URL` /
+`GOOGLE_VERTEX_BASE_URL` or a process-wide `genai.SetDefaultBaseURLs`
+(divergence G6, as X6 for `OPENAI_*`), so a PSC or gateway host must be
+passed as `WithBaseURL`.
+
 `gemini-embedding-001` is single-input: a multi-input request is rejected with
 a typed `bad_request` (the toolkit never fans out — the app owns chunking).
 `google.WithAPIKey` instead selects the direct Gemini API rather than Vertex;
@@ -935,7 +943,7 @@ credentials/host are present (so any subset works).
 |---|---|---|
 | Anthropic | `ANTHROPIC_API_KEY`, else `MAESTRO_ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-haiku-4-5-20251001`) |
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-4o-mini`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`) |
-| Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`) |
+| Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`), `GOOGLE_EMBEDDINGS_MODEL` (`gemini-embedding-001`) |
 | Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`) |
 | vLLM | `MAESTRO_VLLM` (full base URL incl. `/v1`, e.g. `http://my-vllm:8000/v1`); optional `MAESTRO_VLLM_API_KEY` | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
 | LunaRoute (via `openaicompat`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`glm-5.3,deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`) |

@@ -941,10 +941,10 @@ credentials/host are present (so any subset works).
 
 | Provider | Key / host (skipped if unset) | Model override (default) |
 |---|---|---|
-| Anthropic | `ANTHROPIC_API_KEY`, else `MAESTRO_ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-haiku-4-5-20251001`) |
-| OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-4o-mini`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`) |
-| Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`), `GOOGLE_EMBEDDINGS_MODEL` (`gemini-embedding-001`) |
-| Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`) |
+| Anthropic | `ANTHROPIC_API_KEY`, else `MAESTRO_ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-haiku-4-5-20251001`); reasoning tests: `ANTHROPIC_THINKING_MODEL` and `ANTHROPIC_BUDGET_MODEL` (both `claude-haiku-4-5-20251001`), `ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`) |
+| OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-4o-mini`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`), `OPENAI_REASONING_MODEL` (`gpt-5-mini`), `OPENAI_SUMMARY_MODEL` (`gpt-4.1-mini`) |
+| Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`), `GOOGLE_EMBEDDINGS_MODEL` (`gemini-embedding-001`), `GOOGLE_LEVEL_MODEL` (`gemini-3-flash-preview`) |
+| Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`); reasoning test: `OLLAMA_THINK_MODEL` (`gpt-oss:20b`) |
 | vLLM | `MAESTRO_VLLM` (full base URL incl. `/v1`, e.g. `http://my-vllm:8000/v1`); optional `MAESTRO_VLLM_API_KEY` | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
 | LunaRoute (via `openaicompat`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`glm-5.3,deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`) |
 | Vertex AI (`anthropicvertex`, `google` with `WithVertex`) | `VERTEX_PROJECT` plus Application Default Credentials (`gcloud auth application-default login`; the tests load ADC themselves, the toolkit never does) | Claude: `VERTEX_REGION` (`global`), `VERTEX_ANTHROPIC_MODEL` (`claude-opus-4-6`), `VERTEX_ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`). Gemini: `VERTEX_GEMINI_LOCATION` (`global`), `VERTEX_GEMINI_MODEL` (`gemini-2.5-flash`), `VERTEX_GEMINI_LEVEL_MODEL` (`gemini-3-flash-preview`), `VERTEX_EMBEDDINGS_LOCATION` (`us-central1`), `VERTEX_EMBEDDINGS_MODEL` (`gemini-embedding-001`) |

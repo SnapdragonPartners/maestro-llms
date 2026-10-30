@@ -141,3 +141,31 @@ func TestIntegrationGoogleToolUse(t *testing.T) {
 	}
 	t.Logf("OK tool-use: call=%s(%s) -> final=%q", tc.Name, tc.Parameters, final.Text)
 }
+
+// TestIntegrationGoogleEmbeddings embeds one input on the Gemini API
+// backend (the Vertex path is TestIntegrationVertexGeminiEmbeddings).
+//
+//	GOOGLE_EMBEDDINGS_MODEL   default "gemini-embedding-001"
+func TestIntegrationGoogleEmbeddings(t *testing.T) {
+	m := os.Getenv("GOOGLE_EMBEDDINGS_MODEL")
+	if m == "" {
+		m = "gemini-embedding-001"
+	}
+	c, err := google.NewEmbeddings(google.WithAPIKey(apiKey(t)), google.WithModel(m),
+		google.WithMaxInputBytes(8192))
+	if err != nil {
+		t.Fatalf("NewEmbeddings: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	resp, err := c.Embed(ctx, llms.EmbeddingRequest{
+		Inputs: []llms.EmbeddingInput{{ID: "fox", Text: "The quick brown fox jumps over the lazy dog."}},
+	})
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if len(resp.Vectors) != 1 || len(resp.Vectors[0].Values) == 0 || resp.Vectors[0].ID != "fox" {
+		t.Fatalf("unexpected vectors: %+v", resp.Vectors)
+	}
+	t.Logf("OK embeddings: model=%s dims=%d", m, len(resp.Vectors[0].Values))
+}

@@ -646,6 +646,14 @@ it with `WithCredentials` and never mutates your client
 ([ADR-0029](docs/adr/0029-vertex-injected-client-auth.md)). That matches every
 direct provider, where an injected client never removes auth.
 
+The endpoint likewise comes only from options. Without `WithBaseURL`, the
+`google` clients use the backend's public endpoint (the Gemini API, or the
+Vertex global / `us`/`eu` multi-region / regional endpoint for the
+`WithVertex` location). They never read `GOOGLE_GEMINI_BASE_URL` /
+`GOOGLE_VERTEX_BASE_URL` or a process-wide `genai.SetDefaultBaseURLs`
+(divergence G6, as X6 for `OPENAI_*`), so a PSC or gateway host must be
+passed as `WithBaseURL`.
+
 `gemini-embedding-001` is single-input: a multi-input request is rejected with
 a typed `bad_request` (the toolkit never fans out — the app owns chunking).
 `google.WithAPIKey` instead selects the direct Gemini API rather than Vertex;
@@ -933,16 +941,18 @@ credentials/host are present (so any subset works).
 
 | Provider | Key / host (skipped if unset) | Model override (default) |
 |---|---|---|
-| Anthropic | `ANTHROPIC_API_KEY`, else `MAESTRO_ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-haiku-4-5-20251001`) |
-| OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-4o-mini`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`) |
-| Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`) |
-| Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`) |
+| Anthropic | `ANTHROPIC_API_KEY`, else `MAESTRO_ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-haiku-4-5-20251001`); reasoning tests: `ANTHROPIC_THINKING_MODEL` and `ANTHROPIC_BUDGET_MODEL` (both `claude-haiku-4-5-20251001`), `ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`) |
+| OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-4o-mini`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`), `OPENAI_REASONING_MODEL` (`gpt-5-mini`), `OPENAI_SUMMARY_MODEL` (`gpt-4.1-mini`) |
+| Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`), `GOOGLE_EMBEDDINGS_MODEL` (`gemini-embedding-001`), `GOOGLE_LEVEL_MODEL` (`gemini-3-flash-preview`) |
+| Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`); reasoning test: `OLLAMA_THINK_MODEL` (`gpt-oss:20b`) |
 | vLLM | `MAESTRO_VLLM` (full base URL incl. `/v1`, e.g. `http://my-vllm:8000/v1`); optional `MAESTRO_VLLM_API_KEY` | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
 | LunaRoute (via `openaicompat`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`glm-5.3,deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`) |
+| Vertex AI (`anthropicvertex`, `google` with `WithVertex`) | `VERTEX_PROJECT` plus Application Default Credentials (`gcloud auth application-default login`; the tests load ADC themselves, the toolkit never does) | Claude: `VERTEX_REGION` (`global`), `VERTEX_ANTHROPIC_MODEL` (`claude-opus-4-6`), `VERTEX_ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`). Gemini: `VERTEX_GEMINI_LOCATION` (`global`), `VERTEX_GEMINI_MODEL` (`gemini-2.5-flash`), `VERTEX_GEMINI_LEVEL_MODEL` (`gemini-3-flash-preview`), `VERTEX_EMBEDDINGS_LOCATION` (`us-central1`), `VERTEX_EMBEDDINGS_MODEL` (`gemini-embedding-001`) |
 
 ```sh
 MAESTRO_ANTHROPIC_API_KEY=sk-ant-… OPENAI_API_KEY=sk-… GEMINI_API_KEY=… make test-integration
 MAESTRO_VLLM=http://100.x.x.x:8000/v1 make test-integration   # vLLM live test against your own instance
+VERTEX_PROJECT=my-gcp-project make test-integration      # Vertex Claude + Gemini live tests (needs ADC)
 ```
 
 The `MAESTRO_ANTHROPIC_API_KEY` fallback lets you keep `ANTHROPIC_API_KEY`

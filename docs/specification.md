@@ -990,13 +990,11 @@ Applications own config resolution. Provider clients never discover
 credentials on their own: every key or credential comes from an option, and
 the Vertex backends perform no Application Default Credentials discovery
 ([ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md)). The
-Anthropic and OpenAI-family clients (`anthropic`, `anthropicvertex`,
-`openai`, `openaicompat`) also ignore their SDKs' environment defaults
-(`ANTHROPIC_*`, `OPENAI_*`), endpoints included (divergences A6 and X6).
-The `google` package does not yet extend that to endpoints: when
-`WithBaseURL` is unset, the genai SDK still honors `GOOGLE_GEMINI_BASE_URL`
-or `GOOGLE_VERTEX_BASE_URL`, so an application that must pin the Google
-endpoint passes `WithBaseURL`.
+SDK-backed clients (`anthropic`, `anthropicvertex`, `openai`,
+`openaicompat`, `google`) also ignore their SDKs' environment defaults
+(`ANTHROPIC_*`, `OPENAI_*`, `GOOGLE_*`/`GEMINI_API_KEY`), endpoints
+included: without `WithBaseURL`, a client uses its backend's public
+endpoint, never one from the environment (divergences A6, X6 and G6).
 
 HTTP injection is needed for tests, proxies, observability, and app-managed timeout policy.
 

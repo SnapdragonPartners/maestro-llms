@@ -458,7 +458,7 @@ does not auto-update.
 lister, ok := client.(llms.ModelLister)
 if !ok {
     // This client has no list API. Every adapter in this module asserts
-    // successfully; on anthropicvertex the call itself fails (see below).
+    // successfully; on Vertex AI the call itself fails fast (see below).
     return
 }
 models, err := lister.ListModels(ctx)
@@ -483,7 +483,7 @@ Per-provider notes:
 - **Google** (`google.LatestInFamily`): family = `gemini-{pro|flash|nano|ultra}`. The genai list exposes no created date, so ordering uses parsed numeric version from the ID (`gemini-3-pro` > `gemini-2.5-pro` > `gemini-1.5-pro`). `ModelInfo.Created` is zero.
 - **Ollama** (`ListModels` only — **no `LatestInFamily`**): the list is *locally pulled* models via `/api/tags`, not a provider catalog. `ModelInfo.Created` is the local pull time (`modified_at`), not provider release time. `Family` is empty: Ollama tags are community-uploaded under arbitrary names and have no canonical family convention.
 - **openaicompat** (`ListModels` only — **no `LatestInFamily`**): the server's `/v1/models` list. `ModelInfo.Created` is whatever the server reports (vLLM reports when it loaded the model). `Family` is empty: served models use arbitrary HuggingFace-style names.
-- **anthropicvertex**: the client is the base `*anthropic.Client`, so it satisfies `ModelLister`, but Vertex AI doesn't serve the models endpoint and `ListModels` fails with a `bad_request` `ProviderError` (a 404). Don't list through a Vertex client ([#130](https://github.com/SnapdragonPartners/maestro-llms/issues/130)).
+- **Vertex AI** (`anthropicvertex`, and `google` with `WithVertex`): the client satisfies `ModelLister`, but `ListModels` (and the one-shot `LatestInFamily`) fail fast, without a request, with a `config` `ProviderError`. Vertex's Model Garden catalog lists what exists, not what your project can call, so keep the models a Vertex project can use in your own configuration ([ADR-0037](docs/adr/0037-no-model-listing-on-vertex.md)).
 
 Family parsing is intentionally permissive: major-version bumps stay in
 the same family. Callers that want stricter pinning (e.g. "stay within

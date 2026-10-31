@@ -3,7 +3,10 @@ package google
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
+
+	"cloud.google.com/go/auth"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
@@ -206,5 +209,32 @@ func TestStripPrefixBothBackends(t *testing.T) {
 		if got := stripPrefix(in); got != want {
 			t.Errorf("stripPrefix(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// ADR-0037: on Vertex, ListModels and the LatestInFamily one-shot fail fast
+// with a config error and send no request.
+func TestListModelsFailsFastOnVertex(t *testing.T) {
+	rt := &recordingTransport{}
+	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
+	c, err := New(WithModel("gemini-test"), WithVertex("proj", "global"), WithCredentials(creds),
+		WithHTTPClient(&http.Client{Transport: rt}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, listErr := c.ListModels(context.Background())
+	_, _, latestErr := c.LatestInFamily(context.Background(), "gemini-2.5-flash")
+	for name, err := range map[string]error{"ListModels": listErr, "LatestInFamily": latestErr} {
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) {
+			t.Fatalf("%s: want *llms.ProviderError, got %T: %v", name, err, err)
+		}
+		if pe.Kind != llms.ErrorKindConfig || pe.Provider != llms.ProviderGoogle || pe.Model != "gemini-test" ||
+			pe.Message != "model listing is not supported on Vertex AI" {
+			t.Errorf("%s: got %+v, want a config error naming Vertex AI", name, pe)
+		}
+	}
+	if n := len(rt.take()); n != 0 {
+		t.Fatalf("sent %d requests, want none", n)
 	}
 }

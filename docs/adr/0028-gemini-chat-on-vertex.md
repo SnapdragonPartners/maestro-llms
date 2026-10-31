@@ -1,6 +1,6 @@
 # 0028. Gemini chat on Vertex AI
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0037](0037-no-model-listing-on-vertex.md) (`ListModels` no longer lists on Vertex; it fails fast with a config error)
 - **Date:** 2026-10-18
 
 ## Context

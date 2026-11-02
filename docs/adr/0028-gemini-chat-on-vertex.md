@@ -83,3 +83,12 @@ Checked against genai v1.75 and live on Vertex (`morris-qa`, location
   the Vertex backend, an injected `WithHTTPClient` is authenticated with
   `WithCredentials` (a shallow copy; the caller's client is not mutated), so
   it needs no Google auth of its own.
+- **ADR-0037 (#130):** `ListModels` no longer lists on the Vertex backend. It
+  fails fast with a `config` `ProviderError`, without a request, because
+  the publisher catalog says nothing about which models a project can call.
+  So the "Model listing strips the Vertex prefix" decision and its
+  backend-audit row now describe only that `stripPrefix` and the pure
+  `familyOf` / `LatestInFamily` helpers still accept
+  `publishers/google/models/<id>` names (for a list an app builds itself),
+  and the live listing test (`TestIntegrationVertexGeminiListModels`)
+  asserts the fast failure instead of listing.

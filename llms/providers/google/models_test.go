@@ -198,8 +198,9 @@ func idsOf(ms []llms.ModelInfo) []string {
 	return out
 }
 
-// ADR-0028: Vertex lists "publishers/google/models/<id>"; both backends'
-// prefixes strip to a bare ID usable as WithModel.
+// ADR-0028: both backends' name prefixes strip to a bare ID usable as
+// WithModel. ListModels no longer lists on Vertex (ADR-0037), but the
+// Vertex prefix still strips for a list an app builds itself.
 func TestStripPrefixBothBackends(t *testing.T) {
 	for in, want := range map[string]string{
 		"models/gemini-2.5-flash":                   "gemini-2.5-flash",

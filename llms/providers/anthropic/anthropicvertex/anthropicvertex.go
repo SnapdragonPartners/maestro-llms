@@ -8,10 +8,11 @@
 // It returns the same *anthropic.Client as the base package, so all request/
 // response/tool/cache translation is reused unchanged; only construction,
 // auth, and endpoint differ. One consequence: the client has the base
-// package's ListModels, so it satisfies llms.ModelLister, but Vertex AI
-// doesn't serve the Anthropic models endpoint and the call fails with a
-// *llms.ProviderError of kind bad_request (a 404). Don't list models
-// through a Vertex client.
+// package's ListModels, so it satisfies llms.ModelLister, but on Vertex the
+// call fails fast, without a request, with a *llms.ProviderError of kind
+// config (ADR-0037). Vertex doesn't serve the Anthropic models endpoint, and
+// its Model Garden catalog lists what exists on Vertex, not what the project
+// can call, so there is nothing useful to list.
 //
 // Auth and endpoint are app-supplied. The package performs no ADC discovery:
 // the caller passes *auth.Credentials (cloud.google.com/go/auth), and for
@@ -46,6 +47,7 @@ import (
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic/internal/backend"
 )
 
 const providerName = llms.ProviderAnthropic
@@ -146,6 +148,8 @@ func New(opts ...Option) (*anthropic.Client, error) {
 	if s.baseURL != "" {
 		reqOpts = append(reqOpts, option.WithBaseURL(s.baseURL))
 	}
+	// A signal to the base package, not an SDK option: ListModels fails fast.
+	reqOpts = append(reqOpts, backend.NoModelListing("Vertex AI"))
 
 	c, err := anthropic.New(anthropic.WithModel(s.model), anthropic.WithRequestOptions(reqOpts...))
 	if err != nil {

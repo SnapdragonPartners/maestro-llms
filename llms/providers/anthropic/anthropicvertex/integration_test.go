@@ -5,6 +5,7 @@ package anthropicvertex_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -133,4 +134,19 @@ func TestIntegrationVertexAnthropicToolLoopConvergence(t *testing.T) {
 
 func TestIntegrationVertexAnthropicCompactSummarize(t *testing.T) {
 	livetest.CompactSummarize(t, newVertexClient(t), nil)
+}
+
+// ADR-0037: a real Vertex client satisfies llms.ModelLister, but ListModels
+// fails fast with a config error instead of a network 404.
+func TestIntegrationVertexListModelsFailsFast(t *testing.T) {
+	lister, ok := newVertexClient(t).(llms.ModelLister)
+	if !ok {
+		t.Fatal("the Vertex client should still satisfy llms.ModelLister")
+	}
+	_, err := lister.ListModels(context.Background())
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
+		t.Fatalf("ListModels on Vertex: got %v, want a config ProviderError", err)
+	}
+	t.Logf("OK Vertex ListModels fails fast: %v", err)
 }

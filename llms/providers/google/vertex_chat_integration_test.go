@@ -5,15 +5,13 @@ package google_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"cloud.google.com/go/auth/credentials"
-	"google.golang.org/genai"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/internal/livetest"
@@ -211,36 +209,14 @@ func TestIntegrationVertexGeminiCompactSummarize(t *testing.T) {
 	livetest.CompactSummarize(t, newVertexGemini(t, vertexModel()), nil)
 }
 
-// ADR-0012 on Vertex: the publisher catalog lists with stripped IDs that
-// round-trip into WithModel.
+// ADR-0037 on Vertex: ListModels fails fast with a config error against a
+// real Vertex client (ADR-0012's listing applies to the Gemini API only).
 func TestIntegrationVertexGeminiListModels(t *testing.T) {
 	c := newVertexGemini(t, vertexModel())
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	models, err := c.ListModels(ctx)
-	if err != nil {
-		t.Fatalf("ListModels: %v", err)
+	_, err := c.ListModels(context.Background())
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig {
+		t.Fatalf("ListModels on Vertex: got %v, want a config ProviderError", err)
 	}
-	// The raw name carries the Vertex publisher prefix; the ID must not.
-	if raw, ok := models[0].Raw.(*genai.Model); ok {
-		t.Logf("raw name %q -> ID %q", raw.Name, models[0].ID)
-	}
-	gemini := 0
-	for i := range models {
-		if strings.Contains(models[i].ID, "/") {
-			t.Fatalf("ID %q still has a resource prefix", models[i].ID)
-		}
-		if models[i].Family != "" {
-			gemini++
-		}
-		if i < 5 {
-			t.Logf("model %q family=%q", models[i].ID, models[i].Family)
-		}
-	}
-	if gemini == 0 {
-		t.Fatalf("no Gemini-family models among %d listed", len(models))
-	}
-	newer, ok := google.LatestInFamily("gemini-1.5-flash", models)
-	t.Logf("OK Vertex ListModels: %d models, %d Gemini; latest flash after 1.5: %q (%v)",
-		len(models), gemini, newer.ID, ok)
+	t.Logf("OK Vertex ListModels fails fast: %v", err)
 }

@@ -46,7 +46,7 @@ Copy `0001`'s structure as the template.
 | [0009](0009-vertex-backend-psc-and-gemini-embeddings.md) | Vertex backend (Anthropic + Gemini embeddings), PSC injection, task-typed embeddings — design of record; v0.4 implementation | Accepted; amended by 0027, 0028, 0029 |
 | [0010](0010-toolcall-provider-signature.md) | Round-trip opaque provider state via `ToolCall.ProviderSignature` (Gemini 3 thought_signature) | Accepted |
 | [0011](0011-toolloop-helper.md) | Tool loop helper — scope, API, and non-goals | Accepted; partially superseded by 0017; amended by 0019, 0020, 0026, 0030 |
-| [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted |
+| [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted; amended by 0037 |
 | [0013](0013-text-token-estimator.md) | Text-level token estimator (`EstimateTextTokens`) — neutral-biased free function distinct from the high-biased middleware estimator | Accepted |
 | [0015](0015-vllm-provider.md) | vLLM provider — leaf package, OpenAI Chat Completions wire shape (no auth allowed, no `LatestInFamily`, `Created` is local load time) | Accepted; amended by 0027, 0035 |
 | [0016](0016-usage-reasoning-tokens.md) | `Usage.ReasoningTokens` — surface reasoning-model thinking budget alongside visible output | Accepted; partially superseded by 0018; amended by 0034 |
@@ -61,7 +61,7 @@ Copy `0001`'s structure as the template.
 | [0025](0025-bucket-distributed-limiter.md) | Generic `bucket` limiter with a Postgres backend (lease rows + renewal for slots; FIFO queue planned, not MVP) | Accepted; amended by 0033, 0034 |
 | [0026](0026-context-length-error-kind.md) | Context-window overflow: `ErrorKindContextLength` (deterministic provider signals only) and toolloop `OutcomeContextExceeded` | Accepted; amended by 0030, 0032 |
 | [0027](0027-pre-v1-api-cleanup.md) | Pre-v1 API cleanup: `openaicompat` package (`vllm` a permanent alias), `*auth.Credentials` for both Vertex entry points, one `google.Option` for chat and embeddings | Accepted; amended by 0028 |
-| [0028](0028-gemini-chat-on-vertex.md) | Gemini chat on Vertex AI: `google.New` accepts `WithVertex`/`WithCredentials`, one backend selector for chat and embeddings, Vertex model-listing prefix | Accepted; amended by 0029 |
+| [0028](0028-gemini-chat-on-vertex.md) | Gemini chat on Vertex AI: `google.New` accepts `WithVertex`/`WithCredentials`, one backend selector for chat and embeddings, Vertex model-listing prefix | Accepted; amended by 0029, 0037 |
 | [0029](0029-vertex-injected-client-auth.md) | Vertex: `WithCredentials` authenticates an injected `WithHTTPClient` (network-only on every provider; caller's client never mutated) | Accepted; amended by 0035 |
 | [0030](0030-toolloop-compaction.md) | Tool loop compaction: one `Compact` hook (before each turn, and once on overflow), `OutcomeCompactionError`, separate `CompactionUsage`, `KeepLast`/`Summarize` in the `compact` leaf | Accepted; amended by 0032 |
 | [0031](0031-attempt-context-observer.md) | Per-attempt correlation: optional `ContextObserver` (each `Event` with its context) and the retry attempt number via `AttemptFromContext`; no chain-order change | Accepted; amended by 0033 |
@@ -70,3 +70,4 @@ Copy `0001`'s structure as the template.
 | [0034](0034-limiter-config-and-charging.md) | Limiter configuration is validated (`NewInMemoryLimiter` returns an error; `bucket.Limits.Validate` rejects non-finite and overflowing values); usage is charged from the normalized fields with `TotalTokens` as a floor | Accepted |
 | [0035](0035-provider-naming.md) | Provider naming: `openai.New` is chat and `NewEmbeddings` embeddings (`New` rejects `WithDimensions`); `anthropicvertex` takes `WithVertex(project, location)`/`WithBaseURL`, no `WithContext`; a test keeps `vllm` in export parity with `openaicompat` | Accepted |
 | [0036](0036-recommended-retry-pointer.md) | `RecommendedConfig.Retry` is `*RetryConfig`: nil selects the jittered `DefaultRetryConfig()`, an explicit config keeps `Jitter: 0` (off); copied when the chain is built | Accepted |
+| [0037](0037-no-model-listing-on-vertex.md) | No model listing on Vertex AI: `ListModels` (and the one-shot `LatestInFamily`) fail fast with a config error on `anthropicvertex` and Gemini-on-Vertex; the catalog and quotas don't say what a project can call | Accepted |

@@ -99,7 +99,8 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 - **No cost/pricing, no story/request attribution, no agent policy.** The
   metrics `Observer` emits provider-neutral facts only; pricing and
   attribution belong to the application.
-- **Pre-1.0.** v0.x minor versions may break.
+- **Semantic versioning from v1.0.0.** The
+  [stability contract](#stability-contract-v1) says what is covered.
 
 ## Install
 
@@ -970,9 +971,8 @@ already settled, and don't "fix" a deliberate limitation an ADR explains.
 
 ## Stability contract (v1)
 
-This section is the compatibility promise that takes effect at **v1.0.0**.
-Until then, v0.x minor versions may still break (tracked in
-[#84](https://github.com/SnapdragonPartners/maestro-llms/issues/84)). From
+This section is the compatibility promise, in effect since **v1.0.0**
+([#84](https://github.com/SnapdragonPartners/maestro-llms/issues/84)). From
 v1.0.0 on, anything this section covers changes incompatibly only in a new
 major version with a `/v2` import path. Deprecated identifiers stay for the
 life of v1.
@@ -1116,8 +1116,9 @@ and should keep it on a supported, patched release.
 
 ## Versioning & license
 
-Pre-1.0; v0.x minor versions may break. The v1 promise is the
-[stability contract](#stability-contract-v1) above. Shipped lines: **v0.1.0** (core +
+Semantic versioning from v1.0.0: the promise is the
+[stability contract](#stability-contract-v1) above. Before v1, v0.x minor
+versions could break. Shipped lines: **v0.1.0** (core +
 Anthropic chat + OpenAI embeddings), **v0.2.0** (OpenAI/Google/Ollama chat +
 error classifier), **v0.3.0** (full middleware set + `Recommended*`),
 **v0.4.0** (Anthropic-on-Vertex + Gemini/Vertex embeddings, PSC
@@ -1180,7 +1181,7 @@ once on overflow, plus `OutcomeCompactionError` and the `KeepLast`/
 [ADR-0030](docs/adr/0030-toolloop-compaction.md); per-attempt correlation
 for observers: an optional `middleware.ContextObserver` gets each `Event`
 with its context, and `AttemptFromContext` reports the retry attempt
-number — see [ADR-0031](docs/adr/0031-attempt-context-observer.md)), and
+number — see [ADR-0031](docs/adr/0031-attempt-context-observer.md)),
 **v0.15.0**, the last breaking cleanup before v1 (the
 [stability contract](#stability-contract-v1) and its enum-type rules — see
 [ADR-0032](docs/adr/0032-enum-like-types-v1.md); limiter rejections are
@@ -1199,6 +1200,15 @@ a pointer and nil selects the jittered default — see
 corrections: comparability is promised only for `ModelRef` and `Usage`,
 and Google tool-call integers beyond 2^53 round in the genai SDK —
 [#129](https://github.com/SnapdragonPartners/maestro-llms/pull/129),
-divergence G5).
+divergence G5), and **v1.0.0**, the first stable line: the
+[stability contract](#stability-contract-v1) takes effect, with no API
+change from v0.15.0 and two behavioral fixes. `google.New` and
+`NewEmbeddings` no longer read `GOOGLE_GEMINI_BASE_URL`,
+`GOOGLE_VERTEX_BASE_URL` or `genai.SetDefaultBaseURLs`; pass `WithBaseURL`
+to redirect Google traffic
+([#132](https://github.com/SnapdragonPartners/maestro-llms/issues/132),
+divergence G6). On Vertex AI, `ListModels` and `LatestInFamily` fail fast
+with a `config` error instead of a 404 or the Model Garden catalog — see
+[ADR-0037](docs/adr/0037-no-model-listing-on-vertex.md).
 
 MIT — see [`LICENSE`](LICENSE).

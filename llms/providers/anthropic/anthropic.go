@@ -8,6 +8,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic/internal/backend"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
@@ -73,12 +74,16 @@ func WithRequestOptions(opts ...option.RequestOption) Option {
 
 // Client is an llms.ChatClient backed by the official Anthropic SDK. Its size
 // is dominated by the embedded third-party anthropic.Client, so reordering our
-// two fields cannot meaningfully change layout.
+// fields cannot meaningfully change layout.
 //
 //nolint:govet // fieldalignment: size dominated by embedded third-party SDK client
 type Client struct {
 	api   anthropic.Client
 	model string
+	// noListing names the backend when it does not serve the models
+	// endpoint (set by anthropicvertex, ADR-0037); ListModels then fails
+	// fast. Empty for the Anthropic API.
+	noListing string
 }
 
 // compile-time assertion lives in the test file (a package-level var would
@@ -91,6 +96,18 @@ func New(opts ...Option) (*Client, error) {
 	for _, o := range opts {
 		o(&s)
 	}
+	// Backend markers (internal/backend) are signals for this package, not
+	// SDK options: take them out before anything counts or applies them.
+	var noListing string
+	reqExtra := make([]option.RequestOption, 0, len(s.extraReqOpts))
+	for _, o := range s.extraReqOpts {
+		if name, ok := backend.NoModelListingBackend(o); ok {
+			noListing = name
+			continue
+		}
+		reqExtra = append(reqExtra, o)
+	}
+	s.extraReqOpts = reqExtra
 	// The API key is required UNLESS the caller supplied request options:
 	// those carry the caller's own auth (e.g. Vertex), so the key is theirs
 	// to own, not ours to demand.
@@ -127,7 +144,7 @@ func New(opts ...Option) (*Client, error) {
 	// Caller-supplied options last: they win over the derived ones.
 	reqOpts = append(reqOpts, s.extraReqOpts...)
 
-	return &Client{api: anthropic.NewClient(reqOpts...), model: s.model}, nil
+	return &Client{api: anthropic.NewClient(reqOpts...), model: s.model, noListing: noListing}, nil
 }
 
 // Model returns the model this client targets.

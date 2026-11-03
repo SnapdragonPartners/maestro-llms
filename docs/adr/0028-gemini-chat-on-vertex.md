@@ -1,6 +1,6 @@
 # 0028. Gemini chat on Vertex AI
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0037](0037-no-model-listing-on-vertex.md) (`ListModels` no longer lists on Vertex; it fails fast with a config error)
 - **Date:** 2026-10-18
 
 ## Context
@@ -83,3 +83,14 @@ Checked against genai v1.75 and live on Vertex (`morris-qa`, location
   the Vertex backend, an injected `WithHTTPClient` is authenticated with
   `WithCredentials` (a shallow copy; the caller's client is not mutated), so
   it needs no Google auth of its own.
+- **ADR-0037 (#130):** `ListModels` no longer lists on the Vertex backend. It
+  fails fast with a `config` `ProviderError`, without a request, because
+  the publisher catalog says nothing about which models a project can call.
+  This supersedes the listing part of the "Model listing strips the Vertex
+  prefix" decision, the model-listing row of the backend audit, and the
+  "listing" item in the live-test coverage under Consequences. What
+  survives is `stripPrefix` plus the pure `familyOf` / `LatestInFamily`
+  helpers, which still accept `publishers/google/models/<id>` names (for a
+  list an app builds itself). The live listing test
+  (`TestIntegrationVertexGeminiListModels`) now asserts the fast failure
+  instead of listing.

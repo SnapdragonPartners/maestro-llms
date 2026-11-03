@@ -11,9 +11,10 @@ import (
 // ChatClient (same pattern as StreamingChatClient). The anthropic, openai,
 // google, ollama and openaicompat clients implement it, and a client
 // without a list API doesn't, so the failed type assertion is the signal.
-// One exception: anthropicvertex returns the base *anthropic.Client, which
-// satisfies ModelLister, but Vertex AI doesn't serve the models endpoint,
-// so ListModels fails there with a bad_request ProviderError.
+// One exception: on Vertex AI (anthropicvertex, and google with
+// WithVertex) the client satisfies ModelLister, but ListModels fails fast,
+// without a request, with a config ProviderError (ADR-0037). Vertex offers
+// no list of the models a project can call.
 //
 // See ADR-0012 for the design and binding non-goals. "Latest in family"
 // helpers live in each provider's package because family naming

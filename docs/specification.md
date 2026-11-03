@@ -22,7 +22,7 @@ beside it:
 
 The v0 drafts of this document, including the original milestones, roadmap
 and extraction plan, are in the git history. The README section "Versioning
-& license" summarizes what each v0.x release shipped.
+& license" summarizes what each release shipped.
 
 ## Purpose
 

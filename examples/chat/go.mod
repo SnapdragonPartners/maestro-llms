@@ -6,7 +6,7 @@ toolchain go1.26.10
 
 // During development this example resolves the toolkit from the parent
 // worktree. When the example is copied out of the monorepo, replace the
-// directive below with a pinned version (e.g. v0.7.0+).
+// directive below with a pinned version (e.g. v1.0.0+).
 replace github.com/SnapdragonPartners/maestro-llms => ../..
 
 require github.com/SnapdragonPartners/maestro-llms v0.0.0

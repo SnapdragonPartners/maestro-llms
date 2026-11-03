@@ -3,10 +3,13 @@ package anthropic
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic/internal/backend"
 )
 
 const modelsListJSON = `{
@@ -180,4 +183,42 @@ func tm(s string) time.Time {
 		panic(err)
 	}
 	return t
+}
+
+// ADR-0037: the backend marker is a signal for New, not an SDK option. It
+// must not count as caller-supplied auth, chat must still work with it, and
+// ListModels must fail fast without a request.
+func TestNoModelListingMarker(t *testing.T) {
+	_, err := New(WithModel("claude-test"), WithRequestOptions(backend.NoModelListing("X")))
+	var pe *llms.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig || pe.Message != "missing API key" {
+		t.Fatalf("marker alone must not relax the API key requirement; got %v", err)
+	}
+
+	var listHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			listHits++
+		}
+		respondJSON(t, 200, textMsgJSON, nil)(w, r)
+	}))
+	defer srv.Close()
+	c, err := New(WithAPIKey("k"), WithModel("claude-test"), WithBaseURL(srv.URL),
+		WithRequestOptions(backend.NoModelListing("Test Backend")))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err = c.Complete(context.Background(), llms.ChatRequest{
+		Messages: []llms.Message{llms.UserText("hi")},
+	}); err != nil {
+		t.Fatalf("Complete with the marker set: %v", err)
+	}
+	_, err = c.ListModels(context.Background())
+	if !errors.As(err, &pe) || pe.Kind != llms.ErrorKindConfig ||
+		pe.Message != "model listing is not supported on Test Backend" || pe.Model != "claude-test" {
+		t.Fatalf("ListModels: got %v, want a fast config error naming the backend", err)
+	}
+	if listHits != 0 {
+		t.Fatalf("models endpoint received %d requests, want none", listHits)
+	}
 }

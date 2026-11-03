@@ -7,14 +7,16 @@ import (
 	"strconv"
 	"strings"
 
+	"google.golang.org/genai"
+
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 )
 
 // Resource-path prefixes on Model.Name, by backend. We strip them so
 // ModelInfo.ID is directly usable as WithModel(newer.ID). The Gemini API
-// lists "models/<id>"; Vertex lists the Google publisher catalog as
-// "publishers/google/models/<id>" (genai queries base models, never tuned
-// ones, ADR-0028).
+// lists "models/<id>". Vertex names the Google publisher catalog
+// "publishers/google/models/<id>" (ADR-0028); ListModels no longer lists on
+// Vertex (ADR-0037), but the pure helpers still accept those names.
 const (
 	resourcePrefix       = "models/"
 	vertexResourcePrefix = "publishers/google/models/"
@@ -71,10 +73,20 @@ func versionOf(id string) float64 {
 	return v
 }
 
-// ListModels returns the catalog the genai SDK exposes. Implements
+// ListModels returns the Gemini API's model catalog. Implements
 // llms.ModelLister. ModelInfo.Created is left zero because the genai
 // list does not expose a creation timestamp.
+//
+// On Vertex AI it fails fast, without a request, with a *llms.ProviderError
+// of kind config (ADR-0037): the Vertex list is the Model Garden publisher
+// catalog, which says nothing about which models the project can call.
 func (c *Client) ListModels(ctx context.Context) ([]llms.ModelInfo, error) {
+	if c.api.ClientConfig().Backend == genai.BackendVertexAI {
+		return nil, &llms.ProviderError{
+			Provider: providerName, Model: c.model, Kind: llms.ErrorKindConfig,
+			Message: "model listing is not supported on Vertex AI",
+		}
+	}
 	// Size is unknown up front (iterator); a small initial capacity avoids
 	// the early-append re-grows for the common case (a few dozen models).
 	out := make([]llms.ModelInfo, 0, 32)

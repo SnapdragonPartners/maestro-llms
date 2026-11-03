@@ -76,5 +76,5 @@ listing the env vars it looks for and exits 1.
 This module imports the toolkit via a local `replace` directive so it
 always uses your worktree copy. If you copy this demo elsewhere, drop
 the `replace` and add a real version pin (`go get
-github.com/SnapdragonPartners/maestro-llms@v0.7.0` or whatever is
+github.com/SnapdragonPartners/maestro-llms@v1.0.0` or whatever is
 current).

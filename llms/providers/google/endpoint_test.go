@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -62,9 +63,10 @@ func setAmbientGoogleEnv(t *testing.T) {
 // Divergence G6 (#132): the endpoint comes from options only. With every
 // genai environment default pointing at a decoy, and separately with the
 // process-wide genai.SetDefaultBaseURLs (which genai consults before the
-// environment) set too, chat, embeddings and ListModels on both backends
-// still go to the backend's default endpoint, or to WithBaseURL when set,
-// with the app-supplied credentials only.
+// environment) set too, chat and embeddings on both backends, and
+// ListModels on the Gemini API, still go to the backend's default endpoint,
+// or to WithBaseURL when set, with the app-supplied credentials only. On
+// Vertex, ListModels sends nothing (ADR-0037).
 func TestEndpointIgnoresAmbientGoogleEnv(t *testing.T) {
 	setAmbientGoogleEnv(t)
 	t.Run("environment", testEndpointFromOptionsOnly)
@@ -112,11 +114,19 @@ func testEndpointFromOptionsOnly(t *testing.T) {
 			// Every call fails on the recorded 404; only the request matters.
 			_, _ = chat.Complete(ctx, llms.ChatRequest{Messages: []llms.Message{llms.UserText("hi")}})
 			_, _ = emb.Embed(ctx, llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{{Text: "hi"}}})
-			_, _ = chat.ListModels(ctx)
+			_, listErr := chat.ListModels(ctx)
 
 			reqs := rt.take()
-			if len(reqs) != 3 {
-				t.Fatalf("recorded %d requests, want 3 (chat, embed, list)", len(reqs))
+			want := 3 // chat, embed, list
+			if tc.vertex {
+				want = 2 // ListModels fails fast on Vertex (ADR-0037)
+				var pe *llms.ProviderError
+				if !errors.As(listErr, &pe) || pe.Kind != llms.ErrorKindConfig {
+					t.Errorf("Vertex ListModels: got %v, want a config ProviderError", listErr)
+				}
+			}
+			if len(reqs) != want {
+				t.Fatalf("recorded %d requests, want %d", len(reqs), want)
 			}
 			for _, r := range reqs {
 				if r.URL.Host != tc.wantHost {

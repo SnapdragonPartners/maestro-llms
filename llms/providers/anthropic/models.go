@@ -42,7 +42,17 @@ func familyOf(id string) string {
 
 // ListModels returns the catalog the Anthropic API exposes via
 // /v1/models, auto-paging through cursors. Implements llms.ModelLister.
+//
+// On a backend that does not serve that endpoint (Vertex AI, through
+// anthropicvertex) it fails fast, without a request, with a
+// *llms.ProviderError of kind config (ADR-0037).
 func (c *Client) ListModels(ctx context.Context) ([]llms.ModelInfo, error) {
+	if c.noListing != "" {
+		return nil, &llms.ProviderError{
+			Provider: providerName, Model: c.model, Kind: llms.ErrorKindConfig,
+			Message: "model listing is not supported on " + c.noListing,
+		}
+	}
 	iter := c.api.Models.ListAutoPaging(ctx, anthropic.ModelListParams{})
 	var out []llms.ModelInfo
 	for iter.Next() {

@@ -1,6 +1,6 @@
 # 0012. Model listing & per-family upgrade detection
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0037](0037-no-model-listing-on-vertex.md) (on Vertex AI, `ListModels` fails fast with a config error, so the type assertion is not a promise there)
 - **Date:** 2026-05-30
 
 ## Context

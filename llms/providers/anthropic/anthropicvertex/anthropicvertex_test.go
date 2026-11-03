@@ -232,3 +232,42 @@ func TestInjectedDefaultClientHonored(t *testing.T) {
 		t.Fatalf("the caller's credentials were mutated: TokenProvider is now %T", creds.TokenProvider)
 	}
 }
+
+// ADR-0037: on Vertex, ListModels (and the LatestInFamily one-shot) fail
+// fast with a config error and send no request.
+func TestListModelsFailsFastOnVertex(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c, err := anthropicvertex.New(
+		anthropicvertex.WithVertex("proj-1", "global"),
+		anthropicvertex.WithModel("claude-x"),
+		anthropicvertex.WithCredentials(staticCreds()),
+		anthropicvertex.WithBaseURL(srv.URL),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var lister llms.ModelLister = c
+	_, listErr := lister.ListModels(context.Background())
+	_, _, latestErr := c.LatestInFamily(context.Background(), "claude-x")
+	for name, err := range map[string]error{"ListModels": listErr, "LatestInFamily": latestErr} {
+		var pe *llms.ProviderError
+		if !errors.As(err, &pe) {
+			t.Fatalf("%s: want *llms.ProviderError, got %T: %v", name, err, err)
+		}
+		if pe.Kind != llms.ErrorKindConfig || pe.Provider != llms.ProviderAnthropic || pe.Model != "claude-x" {
+			t.Errorf("%s: got %+v, want kind config, provider anthropic, model claude-x", name, pe)
+		}
+		if pe.Message != "model listing is not supported on Vertex AI" {
+			t.Errorf("%s: message %q", name, pe.Message)
+		}
+	}
+	if hits != 0 {
+		t.Fatalf("server received %d requests, want none", hits)
+	}
+}

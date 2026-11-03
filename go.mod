@@ -10,7 +10,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.84.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/openai/openai-go/v3 v3.85.1
-	google.golang.org/genai v1.75.0
+	google.golang.org/genai v1.77.0
 )
 
 require (

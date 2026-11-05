@@ -8,8 +8,14 @@
 // first user message, normally the task statement) is always kept. A turn
 // starts at an assistant message and includes its tool-result message, plus
 // any user messages immediately before it (its prompt), so a cut never
-// separates a tool call from its result. User messages after the last turn
-// (a prompt not yet answered) are always kept. The compacted transcript has
+// separates a tool call from its result. Two prompts are always kept
+// (ADR-0038): user messages after the last turn (a prompt not yet
+// answered), and the in-flight prompt, the last user messages before the
+// assistant turns that are still answering them (the transcript does not
+// end with an assistant message). A chat app that sends the conversation so
+// far plus a new question has its new question pinned this way, while the
+// older questions and answers are dropped or summarized first; in an agent
+// loop the in-flight prompt is usually the head. The compacted transcript has
 // every reasoning part removed (llms.WithoutReasoning, ADR-0021), since an
 // edited history can invalidate the reasoning that follows the edit.
 //
@@ -31,17 +37,17 @@ import (
 )
 
 // KeepLastConfig configures KeepLast. Turns is the number of most recent
-// turns kept after the head; zero keeps only the head (and any unanswered
-// prompt). AtTokens is the before-turn threshold; zero compacts only on
-// overflow.
+// turns kept after the head; zero keeps only the head (and the unanswered
+// and in-flight prompts). AtTokens is the before-turn threshold; zero
+// compacts only on overflow.
 type KeepLastConfig struct {
 	Turns    int
 	AtTokens int
 }
 
-// KeepLast returns a Compactor that keeps the head and the last cfg.Turns
-// turns and drops the rest. It makes no provider calls. It returns an
-// error for negative fields.
+// KeepLast returns a Compactor that keeps the head, the in-flight prompt and
+// the last cfg.Turns turns, and drops the rest. It makes no provider calls.
+// It returns an error for negative fields.
 func KeepLast(cfg KeepLastConfig) (toolloop.Compactor, error) {
 	if cfg.Turns < 0 || cfg.AtTokens < 0 {
 		return nil, errors.New("compact: KeepLastConfig.Turns and AtTokens must not be negative")
@@ -50,14 +56,11 @@ func KeepLast(cfg KeepLastConfig) (toolloop.Compactor, error) {
 		if !due(&in, cfg.AtTokens) {
 			return toolloop.CompactResult{}, nil
 		}
-		head, cut := split(in.Messages, cfg.Turns)
-		if cut <= head {
+		s := split(in.Messages, cfg.Turns)
+		if !s.drops() {
 			return toolloop.CompactResult{}, nil
 		}
-		out := make([]llms.Message, 0, head+len(in.Messages)-cut)
-		out = append(out, in.Messages[:head]...)
-		out = append(out, in.Messages[cut:]...)
-		return toolloop.CompactResult{Messages: llms.WithoutReasoning(out)}, nil
+		return toolloop.CompactResult{Messages: llms.WithoutReasoning(s.kept(in.Messages, nil))}, nil
 	}, nil
 }
 
@@ -106,13 +109,14 @@ type SummarizeConfig struct {
 	TruncateRunes int
 }
 
-// Summarize returns a Compactor that keeps the head and the last
-// cfg.KeepTurns turns, and replaces the turns before them with one user
-// message carrying a summary from cfg.Client. Summaries roll: a previous
-// summary is among the dropped messages on the next compaction, so it is
-// sent in full as the existing summary to update, apart from the new turns,
-// and the default prompt asks for an updated summary. The dropped turns are sent to
-// the summarizer as plain text (roles, tool names, arguments and results),
+// Summarize returns a Compactor that keeps the head, the in-flight prompt
+// and the last cfg.KeepTurns turns, and replaces the other turns with one
+// user message, right after the head, carrying a summary from cfg.Client.
+// Summaries roll: a previous summary is among the dropped messages on the
+// next compaction, so it is sent in full as the existing summary to update,
+// apart from the new turns, and the default prompt asks for an updated
+// summary. The dropped turns are sent to the summarizer as plain text
+// (roles, tool names, arguments and results),
 // not as structured messages, so the request needs no tool definitions and
 // no provider-bound tool-call IDs, signatures or reasoning. A summarizer
 // error, or an empty summary, is returned as the Compactor's error, so the
@@ -138,13 +142,13 @@ func Summarize(cfg SummarizeConfig) (toolloop.Compactor, error) {
 		if !due(&in, cfg.AtTokens) {
 			return toolloop.CompactResult{}, nil
 		}
-		head, cut := split(in.Messages, cfg.KeepTurns)
-		if cut <= head {
+		s := split(in.Messages, cfg.KeepTurns)
+		if !s.drops() {
 			return toolloop.CompactResult{}, nil
 		}
 		resp, err := cfg.Client.Complete(ctx, llms.ChatRequest{
 			System:    []llms.ContentPart{llms.Text(prompt)},
-			Messages:  []llms.Message{llms.UserText(render(in.Messages[head:cut], limit))},
+			Messages:  []llms.Message{llms.UserText(render(s.dropped(in.Messages), limit))},
 			MaxTokens: cfg.MaxTokens,
 			Purpose:   cfg.Purpose,
 		})
@@ -155,10 +159,7 @@ func Summarize(cfg SummarizeConfig) (toolloop.Compactor, error) {
 		if summary == "" {
 			return toolloop.CompactResult{Usage: resp.Usage}, fmt.Errorf("compact: summarizer returned no text (stop reason %q)", resp.StopReason)
 		}
-		out := make([]llms.Message, 0, head+1+len(in.Messages)-cut)
-		out = append(out, in.Messages[:head]...)
-		out = append(out, llms.UserText(summaryHeader+summary))
-		out = append(out, in.Messages[cut:]...)
+		out := s.kept(in.Messages, []llms.Message{llms.UserText(summaryHeader + summary)})
 		return toolloop.CompactResult{Messages: llms.WithoutReasoning(out), Usage: resp.Usage}, nil
 	}, nil
 }
@@ -172,11 +173,35 @@ func due(in *toolloop.CompactInput, atTokens int) bool {
 	return atTokens > 0 && in.LastUsage.InputTokens+in.LastUsage.OutputTokens >= atTokens
 }
 
-// split returns the head length and the index of the first message kept
-// after it when keeping the last keep turns. Messages [head, cut) are the
-// ones to drop; cut <= head means there is nothing to drop.
-func split(msgs []llms.Message, keep int) (head, cut int) {
-	head = len(msgs)
+// span is the cut rule applied to a transcript. msgs[:head] is the head and
+// msgs[cut:] the kept turns (and unanswered prompt). msgs[pin:pinEnd] is the
+// in-flight prompt when it falls in [head, cut), and empty otherwise. The
+// other messages in [head, cut) are dropped.
+type span struct{ head, pin, pinEnd, cut int }
+
+// drops reports whether the span drops any message.
+func (s span) drops() bool { return s.cut-s.head > s.pinEnd-s.pin }
+
+// dropped returns the dropped messages, in order.
+func (s span) dropped(msgs []llms.Message) []llms.Message {
+	out := make([]llms.Message, 0, s.cut-s.head-(s.pinEnd-s.pin))
+	out = append(out, msgs[s.head:s.pin]...)
+	return append(out, msgs[s.pinEnd:s.cut]...)
+}
+
+// kept returns the compacted transcript: the head, then insert (a summary),
+// then the in-flight prompt, then the kept turns.
+func (s span) kept(msgs, insert []llms.Message) []llms.Message {
+	out := make([]llms.Message, 0, s.head+len(insert)+s.pinEnd-s.pin+len(msgs)-s.cut)
+	out = append(out, msgs[:s.head]...)
+	out = append(out, insert...)
+	out = append(out, msgs[s.pin:s.pinEnd]...)
+	return append(out, msgs[s.cut:]...)
+}
+
+// split applies the cut rule, keeping the last keep turns.
+func split(msgs []llms.Message, keep int) span {
+	head := len(msgs)
 	for i := range msgs {
 		if msgs[i].Role == llms.RoleUser {
 			head = i + 1
@@ -194,18 +219,50 @@ func split(msgs []llms.Message, keep int) (head, cut int) {
 		}
 		starts = append(starts, start)
 	}
-	if keep > 0 {
-		if len(starts) <= keep {
-			return head, head
+	var cut int
+	switch {
+	case keep > 0 && len(starts) <= keep:
+		cut = head
+	case keep > 0:
+		cut = starts[len(starts)-keep]
+	default:
+		// Keep no turns: only the unanswered prompt after the last turn, if any.
+		cut = len(msgs)
+		for cut > head && msgs[cut-1].Role == llms.RoleUser {
+			cut--
 		}
-		return head, starts[len(starts)-keep]
 	}
-	// Keep no turns: only the unanswered prompt after the last turn, if any.
-	cut = len(msgs)
-	for cut > head && msgs[cut-1].Role == llms.RoleUser {
-		cut--
+	s := span{head: head, pin: cut, pinEnd: cut, cut: cut}
+	if pin, end := inFlightPrompt(msgs, head); pin < end && end <= cut {
+		s.pin, s.pinEnd = pin, end
 	}
-	return head, cut
+	return s
+}
+
+// inFlightPrompt returns the in-flight prompt msgs[pin:end]: the last run of
+// user messages after the head, other than summaries, when the transcript
+// does not end with an assistant message (so the turns after the prompt are
+// still answering it). pin == end means there is none.
+func inFlightPrompt(msgs []llms.Message, head int) (pin, end int) {
+	if len(msgs) == 0 || msgs[len(msgs)-1].Role == llms.RoleAssistant {
+		return head, head
+	}
+	end = len(msgs)
+	for end > head && (msgs[end-1].Role != llms.RoleUser || isSummary(&msgs[end-1])) {
+		end--
+	}
+	pin = end
+	for pin > head && msgs[pin-1].Role == llms.RoleUser && !isSummary(&msgs[pin-1]) {
+		pin--
+	}
+	return pin, end
+}
+
+// isSummary reports whether msg is a summary message Summarize wrote: a
+// user message whose only part is text starting with summaryHeader.
+func isSummary(msg *llms.Message) bool {
+	return msg.Role == llms.RoleUser && len(msg.Content) == 1 &&
+		msg.Content[0].Type == llms.ContentText && strings.HasPrefix(msg.Content[0].Text, summaryHeader)
 }
 
 // render builds the summarizer's request text from the dropped messages.
@@ -222,7 +279,7 @@ func render(msgs []llms.Message, limit int) string {
 		for j := range msgs[i].Content {
 			p := &msgs[i].Content[j]
 			switch {
-			case p.Type == llms.ContentText && msgs[i].Role == llms.RoleUser && strings.HasPrefix(p.Text, summaryHeader):
+			case isSummary(&msgs[i]):
 				prior = append(prior, strings.TrimPrefix(p.Text, summaryHeader))
 			case p.Type == llms.ContentText && p.Text != "":
 				fmt.Fprintf(&b, "[%s]\n%s\n\n", msgs[i].Role, truncate(p.Text, limit))

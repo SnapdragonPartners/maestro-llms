@@ -1,6 +1,6 @@
 # 0030. Tool loop compaction: one `Compact` hook, `OutcomeCompactionError`, and a `compact` leaf
 
-- **Status:** Accepted; amended by [ADR-0032](0032-enum-like-types-v1.md) (`OutcomeKind` may grow after v1; switches need a `default` case; `CompactReason` is fixed for v1)
+- **Status:** Accepted; amended by [ADR-0032](0032-enum-like-types-v1.md) (`OutcomeKind` may grow after v1; switches need a `default` case; `CompactReason` is fixed for v1) and [ADR-0038](0038-compact-pins-in-flight-prompt.md) (the cut rule also keeps the in-flight prompt)
 - **Date:** 2026-10-20
 
 ## Context

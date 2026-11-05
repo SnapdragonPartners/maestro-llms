@@ -379,8 +379,10 @@ out := toolloop.Run(ctx, toolloop.Config{Client: client, Request: req, Tools: to
 // summarizer's usage, apart from out.TotalUsage.
 ```
 
-Both keep the first user message (the task), cut only between turns so a
-tool call is never separated from its result, and strip reasoning
+Both keep the first user message (the task) and the prompt the loop is
+answering (for a chat app, the new question after the history;
+[ADR-0038](docs/adr/0038-compact-pins-in-flight-prompt.md)), cut only
+between turns so a tool call is never separated from its result, and strip reasoning
 (`llms.WithoutReasoning`). A hook error or an invalid compacted transcript
 ends the run with `OutcomeCompactionError`.
 

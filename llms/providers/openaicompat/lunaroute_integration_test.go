@@ -24,9 +24,14 @@ import (
 // -test.parallel=1 if other packages share the key.
 const (
 	lunaRouteDefaultBaseURL = "https://gw.lunaroute.com/v1"
-	// One GLM and one other tool-capable reasoning model. No Qwen model was
-	// in the catalog when this was written; override with LUNAROUTE_MODELS.
-	lunaRouteDefaultModels = "glm-5.3,deepseek-4.1-flash"
+	// These tests exercise the adapter against a real gateway, not model
+	// quality, so one tool-capable reasoning model that honors the requests
+	// is enough. GLM models were dropped: glm-5.3 intermittently hung to the
+	// test deadlines and, like glm-5.3-flash and muse-spark-open, did not
+	// reliably honor tool_choice "required". Their message-only overflow
+	// signal stays covered by testdata/lunaroute_glm_context_length.json.
+	// Override with LUNAROUTE_MODELS.
+	lunaRouteDefaultModels = "deepseek-4.1-flash"
 )
 
 func lunaRouteBaseURL() string {

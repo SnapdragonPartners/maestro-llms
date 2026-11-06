@@ -1011,7 +1011,9 @@ ADRs specify, for example:
   as a hard deadline ([ADR-0025](docs/adr/0025-bucket-distributed-limiter.md)).
 - Tool-loop semantics: when each `OutcomeKind` is reported, terminal tools,
   and the compaction hook ([ADR-0011](docs/adr/0011-toolloop-helper.md)
-  through [ADR-0030](docs/adr/0030-toolloop-compaction.md)).
+  through [ADR-0030](docs/adr/0030-toolloop-compaction.md), and the
+  compaction cut rule in
+  [ADR-0038](docs/adr/0038-compact-pins-in-flight-prompt.md)).
 - The `EstimateTextTokens` formula (rune count divided by 4, rounded up),
   because callers persist chunk boundaries built on it
   ([ADR-0013](docs/adr/0013-text-token-estimator.md)).

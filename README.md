@@ -390,7 +390,8 @@ The policies also work on stored history outside `Run`, for example before
 a chat turn: pass `CompactInput{Reason: toolloop.CompactOverflow}` to
 compact now. To keep a summary between turns, store
 `compact.SummaryText(msg)` and rebuild the transcript with
-`compact.SummaryMessage(text)` in its place, so the next compaction rolls it
+`compact.SummaryMessage(text)` in its place, after the first message or as
+the first message, so the next compaction rolls it
 ([ADR-0039](docs/adr/0039-compact-summary-message-format.md)).
 
 #### Unbounded runs

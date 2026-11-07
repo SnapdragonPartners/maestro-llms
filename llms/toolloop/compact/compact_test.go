@@ -88,6 +88,9 @@ func TestKeepLast_CutsAtTurnBoundaries(t *testing.T) {
 		{"keep 0, pending prompt", "task again", append(transcript(), llms.UserText("again")), 0},
 		{"keep 1, pending prompt", "task nudge call:t3 result:t3 again", append(transcript(), llms.UserText("again")), 1},
 		{"head only", "", []llms.Message{llms.UserText("task")}, 0},
+		{"no user message", "", nil, 0},
+		// Messages before the first user message are part of the head.
+		{"leading assistant", "assistant task again", append([]llms.Message{testllm.TextResponse("hi").Message}, append(transcript(), llms.UserText("again"))...), 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -554,5 +557,61 @@ func TestSummarize_StoredSummaryRolls(t *testing.T) {
 	}
 	if got, ok := compact.SummaryText(res.Messages[1]); !ok || got != "S2" {
 		t.Fatalf("SummaryText(result[1]) = %q, %v; want S2", got, ok)
+	}
+}
+
+// TestSummaryText_V1Format pins the stored format with a literal, apart
+// from SummaryMessage: a summary an app stored under v1 must stay
+// recognized by later v1 releases (ADR-0039).
+func TestSummaryText_V1Format(t *testing.T) {
+	const v1 = "Summary of the earlier part of this conversation (older turns were removed to fit the context window):\n\nfacts"
+	if got, ok := compact.SummaryText(llms.UserText(v1)); !ok || got != "facts" {
+		t.Fatalf("SummaryText(v1 literal) = %q, %v; want facts, true", got, ok)
+	}
+	if got := compact.SummaryMessage("facts"); len(got.Content) != 1 || got.Content[0].Text != v1 || got.Role != llms.RoleUser {
+		t.Fatalf("SummaryMessage(facts) = %+v, want the v1 literal", got)
+	}
+}
+
+// summaryFirst is a transcript an app rebuilt from a stored summary and
+// the newer turns, without the original first message.
+func summaryFirst() []llms.Message {
+	msgs := []llms.Message{compact.SummaryMessage("S1")}
+	for _, q := range []string{"q2", "q3"} {
+		msgs = append(msgs, llms.UserText(q), testllm.TextResponse("a-"+q).Message)
+	}
+	return append(msgs, llms.UserText("NOW"))
+}
+
+// TestSummarize_SummaryFirstRolls: a summary is never the head, so with the
+// summary first it is still rolled, not kept beside a second summary.
+func TestSummarize_SummaryFirstRolls(t *testing.T) {
+	fake := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("S2")}}
+	res, err := mustSummarize(t, compact.SummarizeConfig{Client: fake, KeepTurns: 1})(context.Background(), overflow(summaryFirst()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := compact.SummaryText(res.Messages[0]); !ok || got != "S2" {
+		t.Fatalf("first message = %s, want summary S2", ids(res.Messages[:1]))
+	}
+	if got := ids(res.Messages[1:]); got != "q3 assistant NOW" {
+		t.Fatalf("after the summary = %s", got)
+	}
+	if err := middleware.ValidateMessages(res.Messages); err != nil {
+		t.Fatalf("result invalid: %v", err)
+	}
+	text := fake.Calls()[0].Messages[0].Content[0].Text
+	if !strings.HasPrefix(text, "Existing summary. ") || !strings.Contains(text, "S1") || !strings.Contains(text, "[user]\nq2") {
+		t.Fatalf("summary request:\n%s", text)
+	}
+}
+
+func TestKeepLast_SummaryFirst(t *testing.T) {
+	res, err := mustKeepLast(t, compact.KeepLastConfig{Turns: 1})(context.Background(), overflow(summaryFirst()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(res.Messages); got != "q3 assistant NOW" {
+		t.Fatalf("got %s", got)
 	}
 }

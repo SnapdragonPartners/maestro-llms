@@ -6,7 +6,10 @@
 //
 // Both compactors share one cut rule. The head (every message through the
 // first user message, normally the task statement) is always kept verbatim,
-// so in a long chat the first message is never dropped or summarized. A turn
+// so in a long chat the first message is never dropped or summarized. A
+// summary message is never the head: when the first user message is one,
+// the head ends before it, so a transcript rebuilt as summary plus newer
+// turns still rolls the summary (ADR-0039). A turn
 // starts at an assistant message and includes its tool-result message, plus
 // any user messages immediately before it (its prompt), so a cut never
 // separates a tool call from its result. Two prompts are always kept
@@ -229,13 +232,7 @@ func (s span) kept(msgs, insert []llms.Message) []llms.Message {
 
 // split applies the cut rule, keeping the last keep turns.
 func split(msgs []llms.Message, keep int) span {
-	head := len(msgs)
-	for i := range msgs {
-		if msgs[i].Role == llms.RoleUser {
-			head = i + 1
-			break
-		}
-	}
+	head := headLen(msgs)
 	var starts []int
 	for i := head; i < len(msgs); i++ {
 		if msgs[i].Role != llms.RoleAssistant {
@@ -265,6 +262,21 @@ func split(msgs []llms.Message, keep int) span {
 		s.pin, s.pinEnd = pin, end
 	}
 	return s
+}
+
+// headLen returns the head's length: every message through the first user
+// message, or before it when that message is a summary (ADR-0039).
+func headLen(msgs []llms.Message) int {
+	for i := range msgs {
+		if msgs[i].Role != llms.RoleUser {
+			continue
+		}
+		if isSummary(&msgs[i]) {
+			return i
+		}
+		return i + 1
+	}
+	return len(msgs)
 }
 
 // inFlightPrompt returns the in-flight prompt msgs[pin:end]: the last run of

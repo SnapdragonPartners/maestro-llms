@@ -35,13 +35,25 @@ the summary text out of a `CompactResult`.
    text may change only if the old header is still recognized. This is
    added to the README stability contract, next to the
    `EstimateTextTokens` formula, for the same reason.
-3. **No new entry point for "compact now".** Outside `Run`, a caller passes
+3. **A summary message is never the head.** An app may rebuild the
+   transcript as the stored summary plus the newer turns, without the
+   original first message. The head (ADR-0030: through the first user
+   message) would then be the summary, which is never dropped, so it would
+   stop rolling and a second summary would be added beside it. When the
+   first user message is a summary message, the head ends before it
+   instead, and the summary is among the messages dropped or rolled like
+   any other. This amends ADR-0030's cut rule; it changes nothing for
+   transcripts the shipped compactors produce, which always put the
+   summary after a head.
+4. **No new entry point for "compact now".** Outside `Run`, a caller passes
    `CompactInput{Reason: toolloop.CompactOverflow}`, which both shipped
-   compactors already treat as "always act". A `CompactNow` reason would
-   grow `CompactReason`, which ADR-0032 fixes for v1. A second function form
-   beside the `Compactor` would duplicate the API to rename one field. The
-   package doc says how.
-4. **Document the head.** The package doc now states that the head (through
+   compactors already treat as "always act". The `CompactReason` and
+   `CompactInput` docs say so: such a call has a nil `Err` and usually a
+   zero `LastUsage`, so a hook must not assume a rejected request. A
+   `CompactNow` reason would grow `CompactReason`, which ADR-0032 fixes for
+   v1. A second function form beside the `Compactor` would duplicate the API
+   to rename one field. The package doc says how.
+5. **Document the head.** The package doc now states that the head (through
    the first user message) is kept verbatim, so in a long chat the first
    message is never dropped or summarized. That is unchanged behavior.
 
@@ -56,7 +68,9 @@ the summary text out of a `CompactResult`.
 
 ## Consequences
 
-- Additive: two new functions, and no behavior change.
+- Additive: two new functions. The only behavior change is decision 3, for
+  transcripts that open with a summary message, which the shipped
+  compactors never produce.
 - Morris can store and roll summaries across turns without depending on
   unexported details.
 - One more stability promise: the summary message format.

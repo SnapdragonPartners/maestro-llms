@@ -1,6 +1,6 @@
 # 0030. Tool loop compaction: one `Compact` hook, `OutcomeCompactionError`, and a `compact` leaf
 
-- **Status:** Accepted; amended by [ADR-0032](0032-enum-like-types-v1.md) (`OutcomeKind` may grow after v1; switches need a `default` case; `CompactReason` is fixed for v1)
+- **Status:** Accepted; amended by [ADR-0032](0032-enum-like-types-v1.md) (`OutcomeKind` may grow after v1; switches need a `default` case; `CompactReason` is fixed for v1) and [ADR-0038](0038-compact-pins-in-flight-prompt.md) (the cut rule also keeps the in-flight prompt)
 - **Date:** 2026-10-20
 
 ## Context
@@ -151,3 +151,17 @@ ADR-0017, ADR-0019, ADR-0020 and ADR-0026 stands.
 - ADR-0021: `llms.WithoutReasoning` before editing history.
 - ADR-0026: `ErrorKindContextLength` / `OutcomeContextExceeded`.
 - Issue #80 and its decision comment.
+
+## Amendments
+
+- **ADR-0038 (#123):** the cut rule in item 5 also keeps the **in-flight
+  prompt**: the last run of user messages after the head (other than a
+  `Summarize` summary), when the transcript does not end with an assistant
+  message. The head and turn bullets above are no longer the whole rule,
+  and `KeepLast` / `Summarize` keep the head, the in-flight prompt and the
+  last `Turns` / `KeepTurns` turns, not just the head and the last turns.
+  "With nothing to drop" now means nothing outside the head, the in-flight
+  prompt and the kept turns. `Summarize` still puts its summary right after
+  the head, so it keeps rolling. A chat transcript (history, then the new
+  question, then tool rounds) no longer loses the new question; an agent
+  loop, whose in-flight prompt is the head, compacts as before.

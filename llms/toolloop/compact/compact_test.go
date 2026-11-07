@@ -78,7 +78,12 @@ func TestKeepLast_CutsAtTurnBoundaries(t *testing.T) {
 		{"keep 2", "task call:t2 result:t2 nudge call:t3 result:t3", transcript(), 2},
 		{"keep all", "", transcript(), 3},
 		{"keep more than exist", "", transcript(), 9},
-		{"keep 0", "task", transcript(), 0},
+		// The nudge is the in-flight prompt (t3 is still answering it), so
+		// it is kept even when t3 is not (ADR-0038).
+		{"keep 0", "task nudge", transcript(), 0},
+		// A transcript ending with an assistant message has no turn in
+		// flight, so no prompt is pinned.
+		{"keep 0, answered", "task", append(transcript(), testllm.TextResponse("done").Message), 0},
 		// An unanswered prompt after the last turn is always kept.
 		{"keep 0, pending prompt", "task again", append(transcript(), llms.UserText("again")), 0},
 		{"keep 1, pending prompt", "task nudge call:t3 result:t3 again", append(transcript(), llms.UserText("again")), 1},
@@ -292,6 +297,152 @@ func TestSummarize_Errors(t *testing.T) {
 			t.Fatalf("res = %+v, err = %v; want an error naming the stop reason, with usage", res, err)
 		}
 	})
+}
+
+// chat is a chat app's transcript: three answered questions, the new
+// question, and three tool rounds the loop appended answering it.
+func chat() []llms.Message {
+	var msgs []llms.Message
+	for _, q := range []string{"q1", "q2", "q3"} {
+		msgs = append(msgs, llms.UserText(q), testllm.TextResponse("a-"+q).Message)
+	}
+	msgs = append(msgs, llms.UserText("NOW"))
+	for _, id := range []string{"c1", "c2", "c3"} {
+		msgs = append(msgs, turn(id, "res-"+id)...)
+	}
+	return msgs
+}
+
+// TestKeepLast_PinsInFlightPrompt: with chat history before it, the prompt
+// the in-flight turns answer is kept, and the history is dropped first
+// (#123, ADR-0038).
+func TestKeepLast_PinsInFlightPrompt(t *testing.T) {
+	cases := []struct {
+		name string
+		want string
+		msgs []llms.Message
+		keep int
+	}{
+		{"keep 2", "q1 NOW call:c2 result:c2 call:c3 result:c3", chat(), 2},
+		{"keep 0", "q1 NOW", chat(), 0},
+		// The prompt's own turn is kept, so nothing extra is pinned.
+		{"keep 3", "q1 NOW call:c1 result:c1 call:c2 result:c2 call:c3 result:c3", chat(), 3},
+		{"keep 4", "q1 q3 assistant NOW call:c1 result:c1 call:c2 result:c2 call:c3 result:c3", chat(), 4},
+		// Consecutive user messages form one prompt.
+		{"two-message prompt", "q1 NOW more call:c2 result:c2 call:c3 result:c3", withMore(chat()), 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := mustKeepLast(t, compact.KeepLastConfig{Turns: tc.keep})(context.Background(), overflow(tc.msgs))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := ids(res.Messages); got != tc.want {
+				t.Fatalf("got %s, want %s", got, tc.want)
+			}
+			if err := middleware.ValidateMessages(res.Messages); err != nil {
+				t.Fatalf("result invalid: %v", err)
+			}
+		})
+	}
+}
+
+// withMore inserts a second user message after NOW.
+func withMore(msgs []llms.Message) []llms.Message {
+	for i := range msgs {
+		if ids(msgs[i:i+1]) == "NOW" {
+			return append(msgs[:i+1:i+1], append([]llms.Message{llms.UserText("more")}, msgs[i+1:]...)...)
+		}
+	}
+	panic("no NOW")
+}
+
+// TestSummarize_PinsInFlightPrompt: the in-flight prompt is neither
+// summarized nor dropped. The summary goes right after the head, before the
+// prompt, so a later compaction finds it among the dropped messages and
+// rolls it, and it is never mistaken for the prompt.
+func TestSummarize_PinsInFlightPrompt(t *testing.T) {
+	first := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("S1")}}
+	res, err := mustSummarize(t, compact.SummarizeConfig{Client: first, KeepTurns: 1})(context.Background(), overflow(chat()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ids(res.Messages)
+	if !strings.HasPrefix(got, "q1 Summary of the earlier part") || !strings.HasSuffix(got, "S1 NOW call:c3 result:c3") {
+		t.Fatalf("got %s", got)
+	}
+	if verr := middleware.ValidateMessages(res.Messages); verr != nil {
+		t.Fatalf("result invalid: %v", verr)
+	}
+	text := first.Calls()[0].Messages[0].Content[0].Text
+	for _, want := range []string{"a-q1", "q2", "a-q3", "res-c1", "res-c2"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("rendered history lacks %q:\n%s", want, text)
+		}
+	}
+	for _, not := range []string{"NOW", "res-c3", "[user]\nq1"} {
+		if strings.Contains(text, not) {
+			t.Errorf("rendered history contains %q:\n%s", not, text)
+		}
+	}
+
+	// Two more rounds, then compact again: S1 rolls, NOW stays pinned.
+	msgs := append(res.Messages, turn("c4", "res-c4")...)
+	msgs = append(msgs, turn("c5", "res-c5")...)
+	second := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("S2")}}
+	res, err = mustSummarize(t, compact.SummarizeConfig{Client: second, KeepTurns: 1})(context.Background(), overflow(msgs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(res.Messages); !strings.HasSuffix(got, "S2 NOW call:c5 result:c5") || strings.Contains(got, "S1") {
+		t.Fatalf("got %s", got)
+	}
+	text = second.Calls()[0].Messages[0].Content[0].Text
+	if !strings.HasPrefix(text, "Existing summary. ") || !strings.Contains(text, "S1") || strings.Contains(text, "NOW") {
+		t.Fatalf("second summary request:\n%s", text)
+	}
+}
+
+// TestRun_WithKeepLast_ChatHistory is #123's reproduction: a chat
+// transcript, three tool rounds, then an overflow. The retried request
+// still carries the new question.
+func TestRun_WithKeepLast_ChatHistory(t *testing.T) {
+	var history []llms.Message
+	for _, q := range []string{"q1", "q2", "q3"} {
+		history = append(history, llms.UserText(q), testllm.TextResponse("a-"+q).Message)
+	}
+	calls := 0
+	var retried llms.ChatRequest
+	client := &testllm.FakeChatClient{Func: func(_ context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
+		calls++
+		switch {
+		case calls <= 3:
+			return testllm.ToolCallResponse([]string{"a", "b", "c"}[calls-1], "read", `{}`), nil
+		case calls == 4:
+			return llms.ChatResponse{}, &llms.ProviderError{Kind: llms.ErrorKindContextLength, StatusCode: 400}
+		default:
+			retried = req
+			return testllm.TextResponse("done"), nil
+		}
+	}}
+	read := toolloop.Tool{
+		Definition: llms.ToolDefinition{Name: "read"},
+		Execute: func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
+			return toolloop.ToolResult{Content: "data"}, nil
+		},
+	}
+	out := toolloop.Run(context.Background(), toolloop.Config{
+		Client:  client,
+		Request: llms.ChatRequest{Messages: append(history, llms.UserText("NOW"))},
+		Tools:   []toolloop.Tool{read},
+		Compact: mustKeepLast(t, compact.KeepLastConfig{Turns: 2}),
+	})
+	if out.Kind != toolloop.OutcomeFinalAnswer || out.Compactions != 1 {
+		t.Fatalf("kind = %q, Compactions = %d; want final_answer, 1 (err=%v)", out.Kind, out.Compactions, out.Err)
+	}
+	if got := ids(retried.Messages); got != "q1 NOW call:b result:b call:c result:c" {
+		t.Fatalf("retried request = %s", got)
+	}
 }
 
 // TestRun_WithKeepLast drives a loop that overflows once with KeepLast as

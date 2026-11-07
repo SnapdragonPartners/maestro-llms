@@ -361,8 +361,8 @@ func withMore(msgs []llms.Message) []llms.Message {
 }
 
 // TestSummarize_PinsInFlightPrompt: the in-flight prompt is neither
-// summarized nor dropped. The summary goes right after the head, before the
-// prompt, so a later compaction finds it among the dropped messages and
+// summarized nor dropped. The summary goes right after the (non-summary)
+// head, before the prompt, so a later compaction finds it among the dropped messages and
 // rolls it, and it is never mistaken for the prompt.
 func TestSummarize_PinsInFlightPrompt(t *testing.T) {
 	first := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("S1")}}

@@ -142,11 +142,14 @@ type SummarizeConfig struct {
 
 // Summarize returns a Compactor that keeps the head, the in-flight prompt
 // and the last cfg.KeepTurns turns, and replaces the other turns with one
-// user message, right after the head, carrying a summary from cfg.Client.
+// user message, right after the head, carrying a summary from cfg.Client
+// (built by SummaryMessage).
 // Summaries roll: a previous summary is among the dropped messages on the
 // next compaction, so it is sent in full as the existing summary to update,
 // apart from the new turns, and the default prompt asks for an updated
-// summary. The dropped turns are sent to the summarizer as plain text
+// summary. When the head's first user message is itself a summary (a
+// transcript rebuilt from a stored one), it is rolled the same way: the new
+// summary replaces it in place instead of being added beside it (ADR-0039). The dropped turns are sent to the summarizer as plain text
 // (roles, tool names, arguments and results),
 // not as structured messages, so the request needs no tool definitions and
 // no provider-bound tool-call IDs, signatures or reasoning. A summarizer
@@ -226,7 +229,9 @@ func (s span) dropped(msgs []llms.Message) []llms.Message {
 }
 
 // kept returns the compacted transcript: the head, then insert (a summary),
-// then the in-flight prompt, then the kept turns.
+// then the in-flight prompt, then the kept turns. Summarize shortens the
+// head by one first when it ends in a summary, so the new summary replaces
+// it (ADR-0039).
 func (s span) kept(msgs, insert []llms.Message) []llms.Message {
 	out := make([]llms.Message, 0, s.head+len(insert)+s.pinEnd-s.pin+len(msgs)-s.cut)
 	out = append(out, msgs[:s.head]...)

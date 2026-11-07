@@ -47,8 +47,9 @@ the summary text out of a `CompactResult`.
    still opens as the input did and is never empty. (Ending the head
    before a leading summary was tried in review and rejected: an empty
    head let `KeepLast` return an empty transcript, or one opening with an
-   assistant message.) This amends ADR-0030's cut rule for `Summarize`
-   only; it changes nothing for transcripts the shipped compactors produce,
+   assistant message.) This amends ADR-0030's cut rule and ADR-0038 item 3
+   ("the summary goes right after the head") for `Summarize` only; it
+   changes nothing for transcripts the shipped compactors produce,
    which always put the summary after a non-summary head.
 4. **No new entry point for "compact now".** Outside `Run`, a caller passes
    `CompactInput{Reason: toolloop.CompactOverflow}`, which both shipped

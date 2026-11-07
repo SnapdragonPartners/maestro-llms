@@ -5,11 +5,12 @@
 // toolloop.Compactor, and may wrap these.
 //
 // Both compactors share one cut rule. The head (every message through the
-// first user message, normally the task statement) is always kept verbatim,
-// so in a long chat the first message is never dropped or summarized. When
-// the first user message is a summary (a transcript rebuilt as summary plus
-// newer turns), KeepLast keeps it as the head, and Summarize, whenever it
-// compacts, rolls it and puts the new summary in its place (ADR-0039). A turn
+// first user message, normally the task statement) is never dropped, so in
+// a long chat the first message is kept verbatim and never summarized,
+// unless it is itself a summary: when the first user message is a summary
+// (a transcript rebuilt as summary plus newer turns), KeepLast keeps it as
+// the head, and Summarize, whenever it compacts, rolls it and puts the new
+// summary in its place (ADR-0039). A turn
 // starts at an assistant message and includes its tool-result message, plus
 // any user messages immediately before it (its prompt), so a cut never
 // separates a tool call from its result. Two prompts are always kept

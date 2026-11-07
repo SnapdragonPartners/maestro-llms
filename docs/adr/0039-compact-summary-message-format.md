@@ -60,8 +60,10 @@ the summary text out of a `CompactResult`.
    v1. A second function form beside the `Compactor` would duplicate the API
    to rename one field. The package doc says how.
 5. **Document the head.** The package doc now states that the head (through
-   the first user message) is kept verbatim, so in a long chat the first
-   message is never dropped or summarized. That is unchanged behavior.
+   the first user message) is never dropped, so in a long chat the first
+   message is kept verbatim and never summarized, unless it is itself a
+   summary, which decision 3 rolls in place. For a non-summary head that is
+   unchanged behavior.
 
 ## Rejected alternatives
 

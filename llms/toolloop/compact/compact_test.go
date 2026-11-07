@@ -508,3 +508,51 @@ func TestSummarize_RollsPreviousSummary(t *testing.T) {
 		t.Errorf("header rendered:\n%s", text)
 	}
 }
+
+func TestSummaryText(t *testing.T) {
+	if got, ok := compact.SummaryText(compact.SummaryMessage("facts")); !ok || got != "facts" {
+		t.Fatalf("round trip = %q, %v", got, ok)
+	}
+	summary := compact.SummaryMessage("facts")
+	for name, msg := range map[string]llms.Message{
+		"plain user text": llms.UserText("facts"),
+		"assistant":       {Role: llms.RoleAssistant, Content: summary.Content},
+		"extra part":      {Role: llms.RoleUser, Content: append([]llms.ContentPart{llms.Text("x")}, summary.Content...)},
+		"no content":      {Role: llms.RoleUser},
+	} {
+		if got, ok := compact.SummaryText(msg); ok {
+			t.Errorf("%s: SummaryText = %q, true; want false", name, got)
+		}
+	}
+}
+
+// TestSummarize_StoredSummaryRolls is #144's flow: an app stores the
+// summary between turns, rebuilds head + SummaryMessage + newer turns +
+// the new question, and compacts outside Run. The stored summary is sent
+// in full as the one to update, not truncated as an ordinary turn, and the
+// new summary is read back with SummaryText.
+func TestSummarize_StoredSummaryRolls(t *testing.T) {
+	stored := "alpha=" + strings.Repeat("7", 50)
+	msgs := []llms.Message{llms.UserText("q1"), compact.SummaryMessage(stored)}
+	for _, q := range []string{"q5", "q6"} {
+		msgs = append(msgs, llms.UserText(q), testllm.TextResponse("a-"+q).Message)
+	}
+	msgs = append(msgs, llms.UserText("NOW"))
+
+	fake := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("S2")}}
+	c := mustSummarize(t, compact.SummarizeConfig{Client: fake, KeepTurns: 1, TruncateRunes: 10})
+	res, err := c(context.Background(), toolloop.CompactInput{Reason: toolloop.CompactOverflow, Messages: msgs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := fake.Calls()[0].Messages[0].Content[0].Text
+	if !strings.HasPrefix(text, "Existing summary. ") || !strings.Contains(text, stored) || !strings.Contains(text, "[user]\nq5") {
+		t.Fatalf("summary request:\n%s", text)
+	}
+	if got := ids(res.Messages[2:]); got != "q6 assistant NOW" {
+		t.Fatalf("kept after the summary = %s", got)
+	}
+	if got, ok := compact.SummaryText(res.Messages[1]); !ok || got != "S2" {
+		t.Fatalf("SummaryText(result[1]) = %q, %v; want S2", got, ok)
+	}
+}

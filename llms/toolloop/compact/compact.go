@@ -5,7 +5,8 @@
 // toolloop.Compactor, and may wrap these.
 //
 // Both compactors share one cut rule. The head (every message through the
-// first user message, normally the task statement) is always kept. A turn
+// first user message, normally the task statement) is always kept verbatim,
+// so in a long chat the first message is never dropped or summarized. A turn
 // starts at an assistant message and includes its tool-result message, plus
 // any user messages immediately before it (its prompt), so a cut never
 // separates a tool call from its result. Two prompts are always kept
@@ -24,6 +25,13 @@
 // OutputTokens reached it. With nothing to drop they return no change, so
 // an overflow that compaction cannot help stays
 // toolloop.OutcomeContextExceeded.
+//
+// The compactors also work on stored history outside toolloop.Run, for
+// example before a chat turn. To compact now, regardless of AtTokens, call
+// one with CompactInput.Reason set to toolloop.CompactOverflow. An app that
+// stores a Summarize result between turns finds the summary with
+// SummaryText and, when it rebuilds the transcript, puts it back as
+// SummaryMessage, so the next compaction rolls it (ADR-0039).
 package compact
 
 import (
@@ -74,8 +82,28 @@ const DefaultSummaryPrompt = "You compress the history of an agent's tool-using 
 	"yours replaces it. Omit pleasantries and anything superseded. " +
 	"Write plain prose or terse bullet points, without preamble."
 
-// summaryHeader introduces the summary in the compacted transcript.
+// summaryHeader introduces the summary in the compacted transcript. Apps
+// store summary messages, so it is fixed for v1 (ADR-0039).
 const summaryHeader = "Summary of the earlier part of this conversation (older turns were removed to fit the context window):\n\n"
+
+// SummaryMessage returns the message Summarize puts in place of the turns
+// it removes, carrying summary. Summarize recognizes it (as SummaryText
+// does) and rolls it on the next compaction: it is sent in full as the
+// existing summary to update, rather than truncated as an ordinary turn,
+// and it is never taken for the in-flight prompt.
+func SummaryMessage(summary string) llms.Message {
+	return llms.UserText(summaryHeader + summary)
+}
+
+// SummaryText reports whether msg is a summary message (a user message
+// whose only part is text in the SummaryMessage format), and returns its
+// summary.
+func SummaryText(msg llms.Message) (string, bool) {
+	if msg.Role != llms.RoleUser || len(msg.Content) != 1 || msg.Content[0].Type != llms.ContentText {
+		return "", false
+	}
+	return strings.CutPrefix(msg.Content[0].Text, summaryHeader)
+}
 
 // defaultTruncateRunes is SummarizeConfig.TruncateRunes when zero.
 const defaultTruncateRunes = 4000
@@ -159,7 +187,7 @@ func Summarize(cfg SummarizeConfig) (toolloop.Compactor, error) {
 		if summary == "" {
 			return toolloop.CompactResult{Usage: resp.Usage}, fmt.Errorf("compact: summarizer returned no text (stop reason %q)", resp.StopReason)
 		}
-		out := s.kept(in.Messages, []llms.Message{llms.UserText(summaryHeader + summary)})
+		out := s.kept(in.Messages, []llms.Message{SummaryMessage(summary)})
 		return toolloop.CompactResult{Messages: llms.WithoutReasoning(out), Usage: resp.Usage}, nil
 	}, nil
 }
@@ -258,11 +286,10 @@ func inFlightPrompt(msgs []llms.Message, head int) (pin, end int) {
 	return pin, end
 }
 
-// isSummary reports whether msg is a summary message Summarize wrote: a
-// user message whose only part is text starting with summaryHeader.
+// isSummary reports whether msg is a summary message.
 func isSummary(msg *llms.Message) bool {
-	return msg.Role == llms.RoleUser && len(msg.Content) == 1 &&
-		msg.Content[0].Type == llms.ContentText && strings.HasPrefix(msg.Content[0].Text, summaryHeader)
+	_, ok := SummaryText(*msg)
+	return ok
 }
 
 // render builds the summarizer's request text from the dropped messages.
@@ -276,11 +303,13 @@ func render(msgs []llms.Message, limit int) string {
 	names := map[string]string{}
 	var b strings.Builder
 	for i := range msgs {
+		if summary, ok := SummaryText(msgs[i]); ok {
+			prior = append(prior, summary)
+			continue
+		}
 		for j := range msgs[i].Content {
 			p := &msgs[i].Content[j]
 			switch {
-			case isSummary(&msgs[i]):
-				prior = append(prior, strings.TrimPrefix(p.Text, summaryHeader))
 			case p.Type == llms.ContentText && p.Text != "":
 				fmt.Fprintf(&b, "[%s]\n%s\n\n", msgs[i].Role, truncate(p.Text, limit))
 			case p.Type == llms.ContentToolCall && p.ToolCall != nil:

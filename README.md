@@ -386,6 +386,13 @@ between turns so a tool call is never separated from its result, and strip reaso
 (`llms.WithoutReasoning`). A hook error or an invalid compacted transcript
 ends the run with `OutcomeCompactionError`.
 
+The policies also work on stored history outside `Run`, for example before
+a chat turn: pass `CompactInput{Reason: toolloop.CompactOverflow}` to
+compact now. To keep a summary between turns, store
+`compact.SummaryText(msg)` and rebuild the transcript with
+`compact.SummaryMessage(text)` in its place, so the next compaction rolls it
+([ADR-0039](docs/adr/0039-compact-summary-message-format.md)).
+
 #### Unbounded runs
 
 `NoIterationLimit` needs no context deadline. Two patterns suit a
@@ -1017,6 +1024,9 @@ ADRs specify, for example:
 - The `EstimateTextTokens` formula (rune count divided by 4, rounded up),
   because callers persist chunk boundaries built on it
   ([ADR-0013](docs/adr/0013-text-token-estimator.md)).
+- The `compact.SummaryMessage` format: a message it built is recognized by
+  `SummaryText` and `Summarize` in every later v1 release, because apps
+  store summaries ([ADR-0039](docs/adr/0039-compact-summary-message-format.md)).
 
 A change that makes behavior match its documentation is a bug fix, not a
 break. Such fixes ship in patch or minor releases and are called out in the

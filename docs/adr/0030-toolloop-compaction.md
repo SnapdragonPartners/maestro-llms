@@ -167,7 +167,8 @@ ADR-0017, ADR-0019, ADR-0020 and ADR-0026 stands.
   loop, whose in-flight prompt is the head, compacts as before.
 - **ADR-0039 (#144):** the summary message `Summarize` inserts is exported
   as `SummaryMessage` / `SummaryText`, so an app can store a summary and
-  put it back to roll, and its format is fixed for v1. In item 5's cut
-  rule, a summary message is never the head: when the first user message
-  is one, the head ends before it, so the summary still rolls. A caller may
+  put it back to roll, and its format is fixed for v1. When the first
+  user message is a summary (a transcript rebuilt from a stored one),
+  `Summarize` rolls it in place instead of keeping it as the head beside a
+  new summary; `KeepLast` keeps it as the head. A caller may
   pass `CompactOverflow` outside `Run` to compact now, with a nil `Err`.

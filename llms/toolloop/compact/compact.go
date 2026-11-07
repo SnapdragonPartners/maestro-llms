@@ -6,10 +6,10 @@
 //
 // Both compactors share one cut rule. The head (every message through the
 // first user message, normally the task statement) is always kept verbatim,
-// so in a long chat the first message is never dropped or summarized. A
-// summary message is never the head: when the first user message is one,
-// the head ends before it, so a transcript rebuilt as summary plus newer
-// turns still rolls the summary (ADR-0039). A turn
+// so in a long chat the first message is never dropped or summarized. When
+// the first user message is a summary (a transcript rebuilt as summary plus
+// newer turns), KeepLast keeps it as the head, and Summarize, whenever it
+// compacts, rolls it and puts the new summary in its place (ADR-0039). A turn
 // starts at an assistant message and includes its tool-result message, plus
 // any user messages immediately before it (its prompt), so a cut never
 // separates a tool call from its result. Two prompts are always kept
@@ -177,6 +177,11 @@ func Summarize(cfg SummarizeConfig) (toolloop.Compactor, error) {
 		if !s.drops() {
 			return toolloop.CompactResult{}, nil
 		}
+		if isSummary(&in.Messages[s.head-1]) {
+			// The head is a summary (a transcript rebuilt from a stored
+			// one): roll it in place rather than add a second (ADR-0039).
+			s.head--
+		}
 		resp, err := cfg.Client.Complete(ctx, llms.ChatRequest{
 			System:    []llms.ContentPart{llms.Text(prompt)},
 			Messages:  []llms.Message{llms.UserText(render(s.dropped(in.Messages), limit))},
@@ -265,16 +270,12 @@ func split(msgs []llms.Message, keep int) span {
 }
 
 // headLen returns the head's length: every message through the first user
-// message, or before it when that message is a summary (ADR-0039).
+// message.
 func headLen(msgs []llms.Message) int {
 	for i := range msgs {
-		if msgs[i].Role != llms.RoleUser {
-			continue
+		if msgs[i].Role == llms.RoleUser {
+			return i + 1
 		}
-		if isSummary(&msgs[i]) {
-			return i
-		}
-		return i + 1
 	}
 	return len(msgs)
 }

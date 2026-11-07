@@ -35,16 +35,21 @@ the summary text out of a `CompactResult`.
    text may change only if the old header is still recognized. This is
    added to the README stability contract, next to the
    `EstimateTextTokens` formula, for the same reason.
-3. **A summary message is never the head.** An app may rebuild the
+3. **A summary in the head is rolled in place.** An app may rebuild the
    transcript as the stored summary plus the newer turns, without the
-   original first message. The head (ADR-0030: through the first user
-   message) would then be the summary, which is never dropped, so it would
-   stop rolling and a second summary would be added beside it. When the
-   first user message is a summary message, the head ends before it
-   instead, and the summary is among the messages dropped or rolled like
-   any other. This amends ADR-0030's cut rule; it changes nothing for
-   transcripts the shipped compactors produce, which always put the
-   summary after a head.
+   original first message. The summary is then the head (ADR-0030: through
+   the first user message), which is never dropped, so `Summarize` would
+   leave it and add a second summary beside it, and it would stop rolling.
+   Instead, when the head's first user message is a summary and `Summarize`
+   compacts (there are turns to drop), it rolls that summary with the
+   dropped turns and puts the new summary in its place. `KeepLast` keeps it
+   as the head. The head itself is unchanged, so a compacted transcript
+   still opens as the input did and is never empty. (Ending the head
+   before a leading summary was tried in review and rejected: an empty
+   head let `KeepLast` return an empty transcript, or one opening with an
+   assistant message.) This amends ADR-0030's cut rule for `Summarize`
+   only; it changes nothing for transcripts the shipped compactors produce,
+   which always put the summary after a non-summary head.
 4. **No new entry point for "compact now".** Outside `Run`, a caller passes
    `CompactInput{Reason: toolloop.CompactOverflow}`, which both shipped
    compactors already treat as "always act". The `CompactReason` and
@@ -69,8 +74,8 @@ the summary text out of a `CompactResult`.
 ## Consequences
 
 - Additive: two new functions. The only behavior change is decision 3, for
-  transcripts that open with a summary message, which the shipped
-  compactors never produce.
+  `Summarize` on transcripts that open with a summary message, which the
+  shipped compactors never produce.
 - Morris can store and roll summaries across turns without depending on
   unexported details.
 - One more stability promise: the summary message format.

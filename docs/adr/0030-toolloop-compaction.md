@@ -1,6 +1,6 @@
 # 0030. Tool loop compaction: one `Compact` hook, `OutcomeCompactionError`, and a `compact` leaf
 
-- **Status:** Accepted; amended by [ADR-0032](0032-enum-like-types-v1.md) (`OutcomeKind` may grow after v1; switches need a `default` case; `CompactReason` is fixed for v1) and [ADR-0038](0038-compact-pins-in-flight-prompt.md) (the cut rule also keeps the in-flight prompt)
+- **Status:** Accepted; amended by [ADR-0032](0032-enum-like-types-v1.md) (`OutcomeKind` may grow after v1; switches need a `default` case; `CompactReason` is fixed for v1), [ADR-0038](0038-compact-pins-in-flight-prompt.md) (the cut rule also keeps the in-flight prompt) and [ADR-0039](0039-compact-summary-message-format.md) (the summary message is exported and its format fixed for v1)
 - **Date:** 2026-10-20
 
 ## Context
@@ -165,3 +165,7 @@ ADR-0017, ADR-0019, ADR-0020 and ADR-0026 stands.
   the head, so it keeps rolling. A chat transcript (history, then the new
   question, then tool rounds) no longer loses the new question; an agent
   loop, whose in-flight prompt is the head, compacts as before.
+- **ADR-0039 (#144):** the summary message `Summarize` inserts is exported
+  as `SummaryMessage` / `SummaryText`, so an app can store a summary and
+  put it back to roll, and its format is fixed for v1. Item 5 is otherwise
+  unchanged.

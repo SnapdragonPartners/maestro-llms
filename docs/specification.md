@@ -1034,9 +1034,11 @@ proposal is [`toolloop-proposal.md`](toolloop-proposal.md)),
 [ADR-0020](adr/0020-toolloop-empty-response.md) (empty response),
 [ADR-0026](adr/0026-context-length-error-kind.md) (context exceeded),
 [ADR-0030](adr/0030-toolloop-compaction.md) (the `Compact` hook and the
-`llms/toolloop/compact` policies), and
+`llms/toolloop/compact` policies),
 [ADR-0038](adr/0038-compact-pins-in-flight-prompt.md) (the cut rule also
-keeps the in-flight prompt). `OutcomeKind` may grow, each new kind by
+keeps the in-flight prompt), and
+[ADR-0039](adr/0039-compact-summary-message-format.md) (the exported summary
+message). `OutcomeKind` may grow, each new kind by
 its own ADR, so a switch over it needs a `default` case
 ([ADR-0032](adr/0032-enum-like-types-v1.md)).
 

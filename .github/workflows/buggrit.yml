@@ -1,11 +1,13 @@
 name: buggrit
 
 # Automated PR review by buggrit (https://github.com/SnapdragonPartners/buggrit),
-# piloted here alongside Copilot. It posts each finding as its own review
-# thread and re-verifies earlier findings on every push. The job itself lives
-# in buggrit's reusable workflow, pinned to a release's commit so that it,
-# the actions it runs and the binary it installs are that release's alone
-# (buggrit ADR 0001). Dependabot bumps the SHA and its version comment.
+# run here alongside Copilot. It posts each finding as its own review thread
+# and re-verifies earlier findings on every push. The job itself lives in
+# buggrit's reusable workflow, pinned to a release's commit. The SHA fixes the
+# workflow file. The actions it runs and the binary it installs are named by
+# that release's tag, which buggrit locks with immutable releases and an
+# admin-only tag ruleset (buggrit ADR 0001); they hold only while that tag
+# can't move. Dependabot bumps the SHA and its version comment.
 #
 # buggrit reads .github/buggrit.json from the PR's base branch, never from
 # the PR, and runs no PR code. Only a push (or a dispatch) runs it: comments

@@ -126,7 +126,9 @@ const (
 	// CompactBeforeTurn is the check before a provider call.
 	CompactBeforeTurn CompactReason = "before_turn"
 	// CompactOverflow follows a context-window overflow
-	// (llms.ErrorKindContextLength).
+	// (llms.ErrorKindContextLength). An app calling a Compactor itself,
+	// outside Run, also passes it to mean "compact now" (ADR-0039); then
+	// Err is nil, so a hook must not assume a rejected request.
 	CompactOverflow CompactReason = "overflow"
 )
 
@@ -136,9 +138,11 @@ const (
 // the most recent successful provider response in this Run, zero before the
 // first: its InputTokens + OutputTokens is the provider's own count of the
 // transcript up to and including that response (tool results appended
-// after it are not counted). Err is the overflow error for CompactOverflow
-// and nil otherwise. Same neutrality rule as the events: no app-specific
-// fields.
+// after it are not counted). Run sets Err to the overflow error for its
+// CompactOverflow call and to nil otherwise. An app may also call a
+// Compactor outside Run, on stored history (ADR-0039): it sets the fields
+// itself, typically CompactOverflow with a nil Err and a zero LastUsage to
+// compact now. Same neutrality rule as the events: no app-specific fields.
 type CompactInput struct {
 	Err       error
 	Reason    CompactReason

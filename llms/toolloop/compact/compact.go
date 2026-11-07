@@ -5,7 +5,12 @@
 // toolloop.Compactor, and may wrap these.
 //
 // Both compactors share one cut rule. The head (every message through the
-// first user message, normally the task statement) is always kept. A turn
+// first user message, normally the task statement) is never dropped, so in
+// a long chat the first message is kept verbatim and never summarized,
+// unless it is itself a summary: when the first user message is a summary
+// (a transcript rebuilt as summary plus newer turns), KeepLast keeps it as
+// the head, and Summarize, whenever it compacts, rolls it and puts the new
+// summary in its place (ADR-0039). A turn
 // starts at an assistant message and includes its tool-result message, plus
 // any user messages immediately before it (its prompt), so a cut never
 // separates a tool call from its result. Two prompts are always kept
@@ -24,6 +29,13 @@
 // OutputTokens reached it. With nothing to drop they return no change, so
 // an overflow that compaction cannot help stays
 // toolloop.OutcomeContextExceeded.
+//
+// The compactors also work on stored history outside toolloop.Run, for
+// example before a chat turn. To compact now, regardless of AtTokens, call
+// one with CompactInput.Reason set to toolloop.CompactOverflow. An app that
+// stores a Summarize result between turns finds the summary with
+// SummaryText and, when it rebuilds the transcript, puts it back as
+// SummaryMessage, so the next compaction rolls it (ADR-0039).
 package compact
 
 import (
@@ -74,8 +86,28 @@ const DefaultSummaryPrompt = "You compress the history of an agent's tool-using 
 	"yours replaces it. Omit pleasantries and anything superseded. " +
 	"Write plain prose or terse bullet points, without preamble."
 
-// summaryHeader introduces the summary in the compacted transcript.
+// summaryHeader introduces the summary in the compacted transcript. Apps
+// store summary messages, so it is fixed for v1 (ADR-0039).
 const summaryHeader = "Summary of the earlier part of this conversation (older turns were removed to fit the context window):\n\n"
+
+// SummaryMessage returns the message Summarize puts in place of the turns
+// it removes, carrying summary. Summarize recognizes it (as SummaryText
+// does) and rolls it on the next compaction: it is sent in full as the
+// existing summary to update, rather than truncated as an ordinary turn,
+// and it is never taken for the in-flight prompt.
+func SummaryMessage(summary string) llms.Message {
+	return llms.UserText(summaryHeader + summary)
+}
+
+// SummaryText reports whether msg is a summary message (a user message
+// whose only part is text in the SummaryMessage format), and returns its
+// summary.
+func SummaryText(msg llms.Message) (string, bool) {
+	if msg.Role != llms.RoleUser || len(msg.Content) != 1 || msg.Content[0].Type != llms.ContentText {
+		return "", false
+	}
+	return strings.CutPrefix(msg.Content[0].Text, summaryHeader)
+}
 
 // defaultTruncateRunes is SummarizeConfig.TruncateRunes when zero.
 const defaultTruncateRunes = 4000
@@ -111,11 +143,14 @@ type SummarizeConfig struct {
 
 // Summarize returns a Compactor that keeps the head, the in-flight prompt
 // and the last cfg.KeepTurns turns, and replaces the other turns with one
-// user message, right after the head, carrying a summary from cfg.Client.
+// user message, right after the head, carrying a summary from cfg.Client
+// (built by SummaryMessage).
 // Summaries roll: a previous summary is among the dropped messages on the
 // next compaction, so it is sent in full as the existing summary to update,
 // apart from the new turns, and the default prompt asks for an updated
-// summary. The dropped turns are sent to the summarizer as plain text
+// summary. When the head's first user message is itself a summary (a
+// transcript rebuilt from a stored one), it is rolled the same way: the new
+// summary replaces it in place instead of being added beside it (ADR-0039). The dropped turns are sent to the summarizer as plain text
 // (roles, tool names, arguments and results),
 // not as structured messages, so the request needs no tool definitions and
 // no provider-bound tool-call IDs, signatures or reasoning. A summarizer
@@ -146,6 +181,11 @@ func Summarize(cfg SummarizeConfig) (toolloop.Compactor, error) {
 		if !s.drops() {
 			return toolloop.CompactResult{}, nil
 		}
+		if isSummary(&in.Messages[s.head-1]) {
+			// The head is a summary (a transcript rebuilt from a stored
+			// one): roll it in place rather than add a second (ADR-0039).
+			s.head--
+		}
 		resp, err := cfg.Client.Complete(ctx, llms.ChatRequest{
 			System:    []llms.ContentPart{llms.Text(prompt)},
 			Messages:  []llms.Message{llms.UserText(render(s.dropped(in.Messages), limit))},
@@ -159,7 +199,7 @@ func Summarize(cfg SummarizeConfig) (toolloop.Compactor, error) {
 		if summary == "" {
 			return toolloop.CompactResult{Usage: resp.Usage}, fmt.Errorf("compact: summarizer returned no text (stop reason %q)", resp.StopReason)
 		}
-		out := s.kept(in.Messages, []llms.Message{llms.UserText(summaryHeader + summary)})
+		out := s.kept(in.Messages, []llms.Message{SummaryMessage(summary)})
 		return toolloop.CompactResult{Messages: llms.WithoutReasoning(out), Usage: resp.Usage}, nil
 	}, nil
 }
@@ -190,7 +230,9 @@ func (s span) dropped(msgs []llms.Message) []llms.Message {
 }
 
 // kept returns the compacted transcript: the head, then insert (a summary),
-// then the in-flight prompt, then the kept turns.
+// then the in-flight prompt, then the kept turns. Summarize shortens the
+// head by one first when it ends in a summary, so the new summary replaces
+// it (ADR-0039).
 func (s span) kept(msgs, insert []llms.Message) []llms.Message {
 	out := make([]llms.Message, 0, s.head+len(insert)+s.pinEnd-s.pin+len(msgs)-s.cut)
 	out = append(out, msgs[:s.head]...)
@@ -201,13 +243,7 @@ func (s span) kept(msgs, insert []llms.Message) []llms.Message {
 
 // split applies the cut rule, keeping the last keep turns.
 func split(msgs []llms.Message, keep int) span {
-	head := len(msgs)
-	for i := range msgs {
-		if msgs[i].Role == llms.RoleUser {
-			head = i + 1
-			break
-		}
-	}
+	head := headLen(msgs)
 	var starts []int
 	for i := head; i < len(msgs); i++ {
 		if msgs[i].Role != llms.RoleAssistant {
@@ -239,6 +275,17 @@ func split(msgs []llms.Message, keep int) span {
 	return s
 }
 
+// headLen returns the head's length: every message through the first user
+// message.
+func headLen(msgs []llms.Message) int {
+	for i := range msgs {
+		if msgs[i].Role == llms.RoleUser {
+			return i + 1
+		}
+	}
+	return len(msgs)
+}
+
 // inFlightPrompt returns the in-flight prompt msgs[pin:end]: the last run of
 // user messages after the head, other than summaries, when the transcript
 // does not end with an assistant message (so the turns after the prompt are
@@ -258,11 +305,10 @@ func inFlightPrompt(msgs []llms.Message, head int) (pin, end int) {
 	return pin, end
 }
 
-// isSummary reports whether msg is a summary message Summarize wrote: a
-// user message whose only part is text starting with summaryHeader.
+// isSummary reports whether msg is a summary message.
 func isSummary(msg *llms.Message) bool {
-	return msg.Role == llms.RoleUser && len(msg.Content) == 1 &&
-		msg.Content[0].Type == llms.ContentText && strings.HasPrefix(msg.Content[0].Text, summaryHeader)
+	_, ok := SummaryText(*msg)
+	return ok
 }
 
 // render builds the summarizer's request text from the dropped messages.
@@ -276,11 +322,13 @@ func render(msgs []llms.Message, limit int) string {
 	names := map[string]string{}
 	var b strings.Builder
 	for i := range msgs {
+		if summary, ok := SummaryText(msgs[i]); ok {
+			prior = append(prior, summary)
+			continue
+		}
 		for j := range msgs[i].Content {
 			p := &msgs[i].Content[j]
 			switch {
-			case isSummary(&msgs[i]):
-				prior = append(prior, strings.TrimPrefix(p.Text, summaryHeader))
 			case p.Type == llms.ContentText && p.Text != "":
 				fmt.Fprintf(&b, "[%s]\n%s\n\n", msgs[i].Role, truncate(p.Text, limit))
 			case p.Type == llms.ContentToolCall && p.ToolCall != nil:

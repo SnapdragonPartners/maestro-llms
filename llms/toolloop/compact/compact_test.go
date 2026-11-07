@@ -88,6 +88,9 @@ func TestKeepLast_CutsAtTurnBoundaries(t *testing.T) {
 		{"keep 0, pending prompt", "task again", append(transcript(), llms.UserText("again")), 0},
 		{"keep 1, pending prompt", "task nudge call:t3 result:t3 again", append(transcript(), llms.UserText("again")), 1},
 		{"head only", "", []llms.Message{llms.UserText("task")}, 0},
+		{"no user message", "", nil, 0},
+		// Messages before the first user message are part of the head.
+		{"leading assistant", "assistant task again", append([]llms.Message{testllm.TextResponse("hi").Message}, append(transcript(), llms.UserText("again"))...), 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -358,8 +361,8 @@ func withMore(msgs []llms.Message) []llms.Message {
 }
 
 // TestSummarize_PinsInFlightPrompt: the in-flight prompt is neither
-// summarized nor dropped. The summary goes right after the head, before the
-// prompt, so a later compaction finds it among the dropped messages and
+// summarized nor dropped. The summary goes right after the (non-summary)
+// head, before the prompt, so a later compaction finds it among the dropped messages and
 // rolls it, and it is never mistaken for the prompt.
 func TestSummarize_PinsInFlightPrompt(t *testing.T) {
 	first := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("S1")}}
@@ -506,5 +509,163 @@ func TestSummarize_RollsPreviousSummary(t *testing.T) {
 	}
 	if strings.Contains(text, "Summary of the earlier part") {
 		t.Errorf("header rendered:\n%s", text)
+	}
+}
+
+func TestSummaryText(t *testing.T) {
+	if got, ok := compact.SummaryText(compact.SummaryMessage("facts")); !ok || got != "facts" {
+		t.Fatalf("round trip = %q, %v", got, ok)
+	}
+	summary := compact.SummaryMessage("facts")
+	for name, msg := range map[string]llms.Message{
+		"plain user text": llms.UserText("facts"),
+		"assistant":       {Role: llms.RoleAssistant, Content: summary.Content},
+		"extra part":      {Role: llms.RoleUser, Content: append([]llms.ContentPart{llms.Text("x")}, summary.Content...)},
+		"no content":      {Role: llms.RoleUser},
+	} {
+		if got, ok := compact.SummaryText(msg); ok {
+			t.Errorf("%s: SummaryText = %q, true; want false", name, got)
+		}
+	}
+}
+
+// TestSummarize_StoredSummaryRolls is #144's flow: an app stores the
+// summary between turns, rebuilds head + SummaryMessage + newer turns +
+// the new question, and compacts outside Run. The stored summary is sent
+// in full as the one to update, not truncated as an ordinary turn, and the
+// new summary is read back with SummaryText.
+func TestSummarize_StoredSummaryRolls(t *testing.T) {
+	stored := "alpha=" + strings.Repeat("7", 50)
+	msgs := []llms.Message{llms.UserText("q1"), compact.SummaryMessage(stored)}
+	for _, q := range []string{"q5", "q6"} {
+		msgs = append(msgs, llms.UserText(q), testllm.TextResponse("a-"+q).Message)
+	}
+	msgs = append(msgs, llms.UserText("NOW"))
+
+	fake := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("S2")}}
+	c := mustSummarize(t, compact.SummarizeConfig{Client: fake, KeepTurns: 1, TruncateRunes: 10})
+	res, err := c(context.Background(), toolloop.CompactInput{Reason: toolloop.CompactOverflow, Messages: msgs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := fake.Calls()[0].Messages[0].Content[0].Text
+	if !strings.HasPrefix(text, "Existing summary. ") || !strings.Contains(text, stored) || !strings.Contains(text, "[user]\nq5") {
+		t.Fatalf("summary request:\n%s", text)
+	}
+	if got := ids(res.Messages[2:]); got != "q6 assistant NOW" {
+		t.Fatalf("kept after the summary = %s", got)
+	}
+	if got, ok := compact.SummaryText(res.Messages[1]); !ok || got != "S2" {
+		t.Fatalf("SummaryText(result[1]) = %q, %v; want S2", got, ok)
+	}
+}
+
+// TestSummaryText_V1Format pins the stored format with a literal, apart
+// from SummaryMessage: a summary an app stored under v1 must stay
+// recognized by later v1 releases (ADR-0039).
+func TestSummaryText_V1Format(t *testing.T) {
+	const v1 = "Summary of the earlier part of this conversation (older turns were removed to fit the context window):\n\nfacts"
+	if got, ok := compact.SummaryText(llms.UserText(v1)); !ok || got != "facts" {
+		t.Fatalf("SummaryText(v1 literal) = %q, %v; want facts, true", got, ok)
+	}
+	if got := compact.SummaryMessage("facts"); len(got.Content) != 1 || got.Content[0].Text != v1 || got.Role != llms.RoleUser {
+		t.Fatalf("SummaryMessage(facts) = %+v, want the v1 literal", got)
+	}
+}
+
+// summaryFirst is a transcript an app rebuilt from a stored summary and
+// the newer turns, without the original first message.
+func summaryFirst() []llms.Message {
+	msgs := []llms.Message{compact.SummaryMessage("S1")}
+	for _, q := range []string{"q2", "q3"} {
+		msgs = append(msgs, llms.UserText(q), testllm.TextResponse("a-"+q).Message)
+	}
+	return append(msgs, llms.UserText("NOW"))
+}
+
+// TestSummarize_SummaryFirstRolls: a summary as the head is rolled in place,
+// not kept beside a second summary (ADR-0039).
+func TestSummarize_SummaryFirstRolls(t *testing.T) {
+	fake := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("S2")}}
+	res, err := mustSummarize(t, compact.SummarizeConfig{Client: fake, KeepTurns: 1})(context.Background(), overflow(summaryFirst()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := compact.SummaryText(res.Messages[0]); !ok || got != "S2" {
+		t.Fatalf("first message = %s, want summary S2", ids(res.Messages[:1]))
+	}
+	if got := ids(res.Messages[1:]); got != "q3 assistant NOW" {
+		t.Fatalf("after the summary = %s", got)
+	}
+	if err := middleware.ValidateMessages(res.Messages); err != nil {
+		t.Fatalf("result invalid: %v", err)
+	}
+	text := fake.Calls()[0].Messages[0].Content[0].Text
+	if !strings.HasPrefix(text, "Existing summary. ") || !strings.Contains(text, "S1") || !strings.Contains(text, "[user]\nq2") {
+		t.Fatalf("summary request:\n%s", text)
+	}
+}
+
+// TestKeepLast_SummaryFirst: KeepLast keeps a leading summary as the head.
+func TestKeepLast_SummaryFirst(t *testing.T) {
+	res, err := mustKeepLast(t, compact.KeepLastConfig{Turns: 1})(context.Background(), overflow(summaryFirst()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := compact.SummaryText(res.Messages[0]); !ok || got != "S1" {
+		t.Fatalf("first message = %s, want summary S1", ids(res.Messages[:1]))
+	}
+	if got := ids(res.Messages[1:]); got != "q3 assistant NOW" {
+		t.Fatalf("after the summary = %s", got)
+	}
+}
+
+// TestSummaryFirst_OpensWithSummary: with a leading summary, both
+// compactors return a non-empty transcript that opens with a summary, never
+// an empty one or one opening with an assistant message.
+func TestSummaryFirst_OpensWithSummary(t *testing.T) {
+	s1 := compact.SummaryMessage("S1")
+	toolRounds := append([]llms.Message{s1}, turn("c1", "r1")...)
+	toolRounds = append(toolRounds, turn("c2", "r2")...)
+	cases := []struct {
+		name     string
+		msgs     []llms.Message
+		keep     int
+		keepRest string // what KeepLast keeps after S1
+		sumRest  string // what Summarize keeps after S2
+	}{
+		{"answered, keep 0", []llms.Message{s1, llms.UserText("q2"), testllm.TextResponse("a2").Message}, 0, "", ""},
+		{"no prompt, keep 0", append([]llms.Message{s1}, turn("c1", "r1")...), 0, "", ""},
+		{"tool rounds, keep 1", toolRounds, 1, "call:c2 result:c2", "call:c2 result:c2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			check := func(name string, msgs []llms.Message, summary, rest string) {
+				t.Helper()
+				if got, ok := compact.SummaryText(msgs[0]); !ok || got != summary {
+					t.Fatalf("%s: first message = %s, want summary %s", name, ids(msgs[:1]), summary)
+				}
+				if got := ids(msgs[1:]); got != rest {
+					t.Fatalf("%s: after the summary = %q, want %q", name, got, rest)
+				}
+				if err := middleware.ValidateMessages(msgs); err != nil {
+					t.Fatalf("%s: result invalid: %v", name, err)
+				}
+			}
+			res, err := mustKeepLast(t, compact.KeepLastConfig{Turns: tc.keep})(context.Background(), overflow(tc.msgs))
+			if err != nil {
+				t.Fatal(err)
+			}
+			check("KeepLast", res.Messages, "S1", tc.keepRest)
+			fake := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("S2")}}
+			res, err = mustSummarize(t, compact.SummarizeConfig{Client: fake, KeepTurns: tc.keep})(context.Background(), overflow(tc.msgs))
+			if err != nil {
+				t.Fatal(err)
+			}
+			check("Summarize", res.Messages, "S2", tc.sumRest)
+			if text := fake.Calls()[0].Messages[0].Content[0].Text; !strings.Contains(text, "S1") {
+				t.Fatalf("S1 not rolled:\n%s", text)
+			}
+		})
 	}
 }

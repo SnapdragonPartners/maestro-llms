@@ -1,6 +1,6 @@
 # 0038. Compaction pins the in-flight prompt
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0039](0039-compact-summary-message-format.md) (a summary in the head is rolled in place)
 - **Date:** 2026-11-05
 
 ## Context
@@ -79,3 +79,12 @@ caller's latest prompt.
 - ADR-0030: tool loop compaction and the original cut rule.
 - Issue #123 (this fix), Morris#510 (where it was found); issue #144
   (compaction on stored history outside `Run`).
+
+## Amendments
+
+- **ADR-0039 (#144):** item 3 holds when the head is an ordinary message.
+  When the head's first user message is itself a summary (a transcript an
+  app rebuilt from a stored summary), `Summarize` rolls that summary with
+  the dropped turns and puts the new summary in its place, so the summary
+  is the head rather than right after it. It is still never pinned.
+  `KeepLast` keeps it as the head.

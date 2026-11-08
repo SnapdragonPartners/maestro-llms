@@ -11,18 +11,18 @@ import (
 )
 
 // TestIntegrationOpenAIContextOverflow is the ADR-0026 live trigger. The
-// model is fixed (not OPENAI_CHAT_MODEL) because the prompt is sized to its
-// 128k window: 140k tokens is rejected unbilled.
+// model is fixed (not OPENAI_CHAT_MODEL) because the prompt is sized above
+// its window: 1.1M tokens is rejected unbilled.
 func TestIntegrationOpenAIContextOverflow(t *testing.T) {
 	key := os.Getenv("OPENAI_API_KEY")
 	if key == "" {
 		t.Skip("OPENAI_API_KEY not set")
 	}
-	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel("gpt-4o-mini"))
+	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(defaultChatModel))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	livetest.ContextOverflow(t, c, 140_000)
+	livetest.ContextOverflow(t, c, 1_100_000)
 }
 
 // TestIntegrationOpenAICompactOnOverflow is the ADR-0030 live overflow
@@ -32,9 +32,9 @@ func TestIntegrationOpenAICompactOnOverflow(t *testing.T) {
 	if key == "" {
 		t.Skip("OPENAI_API_KEY not set")
 	}
-	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel("gpt-4o-mini"))
+	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(defaultChatModel))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	livetest.CompactOnOverflow(t, c, 140_000)
+	livetest.CompactOnOverflow(t, c, 1_100_000)
 }

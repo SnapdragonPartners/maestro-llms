@@ -15,7 +15,7 @@ func TestIntegrationOpenAIProviderParams(t *testing.T) {
 	if key == "" {
 		t.Skip("OPENAI_API_KEY not set")
 	}
-	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel("gpt-6-luna"))
+	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(defaultChatModel))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

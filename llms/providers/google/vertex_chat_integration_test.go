@@ -58,7 +58,7 @@ func vertexModel() string {
 	if m := os.Getenv("VERTEX_GEMINI_MODEL"); m != "" {
 		return m
 	}
-	return "gemini-2.5-flash"
+	return defaultChatModel
 }
 
 func TestIntegrationVertexGeminiChat(t *testing.T) {
@@ -172,7 +172,7 @@ func TestIntegrationVertexGeminiReasoningBudget(t *testing.T) {
 func TestIntegrationVertexGeminiReasoningEffort(t *testing.T) {
 	m := os.Getenv("VERTEX_GEMINI_LEVEL_MODEL")
 	if m == "" {
-		m = "gemini-3-flash-preview"
+		m = defaultLevelModel
 	}
 	livetest.ReasoningControl(t, newVertexGemini(t, m),
 		livetest.Same(llms.ReasoningConfig{Effort: llms.ReasoningEffortLow}),
@@ -197,12 +197,12 @@ func TestIntegrationVertexGeminiProviderParams(t *testing.T) {
 // ErrorKindContextLength. The model is fixed; the prompt is sized to its
 // 1,048,576-token window.
 func TestIntegrationVertexGeminiContextOverflow(t *testing.T) {
-	livetest.ContextOverflow(t, newVertexGemini(t, "gemini-2.5-flash"), 1_100_000)
+	livetest.ContextOverflow(t, newVertexGemini(t, defaultChatModel), 1_100_000)
 }
 
 // ADR-0030 on Vertex: the overflow scenario, sized like the trigger above.
 func TestIntegrationVertexGeminiCompactOnOverflow(t *testing.T) {
-	livetest.CompactOnOverflow(t, newVertexGemini(t, "gemini-2.5-flash"), 1_100_000)
+	livetest.CompactOnOverflow(t, newVertexGemini(t, defaultChatModel), 1_100_000)
 }
 
 func TestIntegrationVertexGeminiCompactSummarize(t *testing.T) {

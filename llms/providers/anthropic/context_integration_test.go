@@ -13,7 +13,7 @@ import (
 // model is fixed (not ANTHROPIC_MODEL) because the prompt is sized to its
 // 200k window: 260k tokens is rejected unbilled.
 func TestIntegrationAnthropicContextOverflow(t *testing.T) {
-	c, err := anthropic.New(anthropic.WithAPIKey(anthropicAPIKey(t)), anthropic.WithModel("claude-haiku-4-5-20251001"))
+	c, err := anthropic.New(anthropic.WithAPIKey(anthropicAPIKey(t)), anthropic.WithModel(defaultChatModel))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestIntegrationAnthropicContextOverflow(t *testing.T) {
 // TestIntegrationAnthropicCompactOnOverflow is the ADR-0030 live overflow
 // scenario, sized like the ADR-0026 trigger.
 func TestIntegrationAnthropicCompactOnOverflow(t *testing.T) {
-	c, err := anthropic.New(anthropic.WithAPIKey(anthropicAPIKey(t)), anthropic.WithModel("claude-haiku-4-5-20251001"))
+	c, err := anthropic.New(anthropic.WithAPIKey(anthropicAPIKey(t)), anthropic.WithModel(defaultChatModel))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

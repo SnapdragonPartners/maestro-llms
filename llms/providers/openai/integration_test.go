@@ -14,11 +14,17 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/openai"
 )
 
+// defaultChatModel is the OpenAI model the live tests use: the default for
+// OPENAI_CHAT_MODEL, and the fixed model for tests sized or tuned to one
+// model (context overflow, cache, params). Change it here when the model
+// reaches end of life.
+const defaultChatModel = "gpt-6-luna"
+
 func openaiChatModel() string {
 	if m := os.Getenv("OPENAI_CHAT_MODEL"); m != "" {
 		return m
 	}
-	return "gpt-6-luna"
+	return defaultChatModel
 }
 
 // complete retries only on errors our own classifier reports retryable, so
@@ -54,17 +60,14 @@ func TestIntegrationOpenAIChat(t *testing.T) {
 	if key == "" {
 		t.Skip("OPENAI_API_KEY not set")
 	}
-	model := os.Getenv("OPENAI_CHAT_MODEL")
-	if model == "" {
-		model = "gpt-6-luna"
-	}
+	model := openaiChatModel()
 
 	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(model))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	// No Temperature: the default model (gpt-6-luna) is a reasoning model
+	// No Temperature: the default model (defaultChatModel) is a reasoning model
 	// and rejects it. MaxTokens leaves room for its reasoning.
 	req := llms.ChatRequest{
 		Purpose:   llms.PurposeChat,

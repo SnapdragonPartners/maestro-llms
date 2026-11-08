@@ -1215,7 +1215,7 @@ a pointer and nil selects the jittered default — see
 corrections: comparability is promised only for `ModelRef` and `Usage`,
 and Google tool-call integers beyond 2^53 round in the genai SDK —
 [#129](https://github.com/SnapdragonPartners/maestro-llms/pull/129),
-divergence G5), and **v1.0.0**, the first stable line: the
+divergence G5), **v1.0.0**, the first stable line: the
 [stability contract](#stability-contract-v1) takes effect, with no API
 change from v0.15.0 and two behavioral fixes. `google.New` and
 `NewEmbeddings` no longer read `GOOGLE_GEMINI_BASE_URL`,
@@ -1224,6 +1224,15 @@ to redirect Google traffic
 ([#132](https://github.com/SnapdragonPartners/maestro-llms/issues/132),
 divergence G6). On Vertex AI, `ListModels` and `LatestInFamily` fail fast
 with a `config` error instead of a 404 or the Model Garden catalog — see
-[ADR-0037](docs/adr/0037-no-model-listing-on-vertex.md).
+[ADR-0037](docs/adr/0037-no-model-listing-on-vertex.md). Then
+**v1.1.0** (compaction fixes for chat transcripts and stored history:
+`KeepLast` and `Summarize` keep the in-flight prompt, so a chat app's new
+question survives compaction — see
+[ADR-0038](docs/adr/0038-compact-pins-in-flight-prompt.md); the summary
+message is exported as `compact.SummaryMessage` / `SummaryText`, so an app
+can store a summary and put it back to keep it rolling, its format is fixed
+for v1, and `Summarize` rolls a leading summary in place — see
+[ADR-0039](docs/adr/0039-compact-summary-message-format.md); openai-go
+v3.90 and genai v1.77).
 
 MIT — see [`LICENSE`](LICENSE).

@@ -71,39 +71,68 @@ func tokensForText(s string) int {
 	if s == "" {
 		return 0
 	}
-	return (len(s) + charsPerToken - 1) / charsPerToken
+	return ceilDiv(len(s), charsPerToken)
 }
 
 func tokensForParts(parts []llms.ContentPart) int {
 	total := 0
 	for i := range parts {
-		total = satint.Add(total, tokensForPart(&parts[i]))
+		total = sum(total, tokensForPart(&parts[i]))
 	}
 	return total
 }
 
-// tokensForPart estimates one content part. Sums saturate: a media estimate
-// can be very large, and a wrapped sum would admit it as a small one.
+// tokensForPart estimates one content part.
 func tokensForPart(p *llms.ContentPart) int {
-	n := perPartOverhead + tokensForText(p.Text)
+	n := sum(perPartOverhead, tokensForText(p.Text))
 	if p.ToolCall != nil {
-		n += tokensForText(p.ToolCall.Name) + tokensForText(string(p.ToolCall.Parameters)) +
-			tokensForText(string(p.ToolCall.ProviderSignature))
+		n = sum(n, tokensForText(p.ToolCall.Name), tokensForText(string(p.ToolCall.Parameters)),
+			tokensForText(string(p.ToolCall.ProviderSignature)))
 	}
 	if p.ToolResult != nil {
-		n += tokensForText(p.ToolResult.Content)
+		n = sum(n, tokensForText(p.ToolResult.Content))
 	}
 	if p.Reasoning != nil {
 		// Opaque provider data is sent back verbatim, so count all of
 		// it (it already holds the readable reasoning, so Text isn't
 		// added again). For a signed or encrypted payload this runs
 		// high, which is the safe direction for a reservation.
-		n += tokensForText(string(p.Reasoning.ProviderData))
+		n = sum(n, tokensForText(string(p.Reasoning.ProviderData)))
 	}
 	if p.Media != nil && media.IsMedia(p.Type) {
-		n = satint.Add(n, tokensForMedia(p.Type, p.Media))
+		n = sum(n, tokensForMedia(p.Type, p.Media))
 	}
 	return n
+}
+
+// sum adds token counts, saturating at math.MaxInt. Every estimator sum goes
+// through it: a media estimate can be very large, and a wrapped sum would
+// turn an oversized request into a small (or zero) reservation.
+func sum(counts ...int) int {
+	total := 0
+	for _, n := range counts {
+		total = satint.Add(total, n)
+	}
+	return total
+}
+
+// ceilDiv returns n/d rounded up for n >= 0, d > 0, without the n+d-1 sum
+// that would wrap when n is near math.MaxInt.
+func ceilDiv(n, d int) int {
+	q := n / d
+	if n%d != 0 {
+		q++
+	}
+	return q
+}
+
+// addTools adds the tool definitions' tokens to input.
+func addTools(input int, tools []llms.ToolDefinition) int {
+	for i := range tools {
+		input = sum(input, tokensForText(tools[i].Name), tokensForText(tools[i].Description),
+			tokensForText(string(tools[i].InputSchema)))
+	}
+	return input
 }
 
 // tokensForMedia estimates an image or document part (ADR-0040). An image is
@@ -121,8 +150,8 @@ func tokensForMedia(t llms.ContentPartType, m *llms.Media) int {
 			return unknownImageTokens
 		}
 		pixels := satint.Mul(w, h)
-		byPixels := (pixels + pixelsPerImageToken - 1) / pixelsPerImageToken
-		patches := satint.Mul((w+patchSize-1)/patchSize, (h+patchSize-1)/patchSize)
+		byPixels := ceilDiv(pixels, pixelsPerImageToken)
+		patches := satint.Mul(ceilDiv(w, patchSize), ceilDiv(h, patchSize))
 		byPatches := satint.Mul(patches, patchTokenNum) / patchTokenDen
 		return min(max(byPixels, byPatches, minImageTokens), unknownImageTokens)
 	}
@@ -131,7 +160,7 @@ func tokensForMedia(t llms.ContentPartType, m *llms.Media) int {
 			return satint.Add(documentOverheadTokens, satint.Mul(pages, pdfPageTokens))
 		}
 	}
-	return documentOverheadTokens + (len(m.Data)+charsPerToken-1)/charsPerToken
+	return sum(documentOverheadTokens, ceilDiv(len(m.Data), charsPerToken))
 }
 
 // EstimateChat estimates input tokens from system + messages + tool schemas,
@@ -139,13 +168,9 @@ func tokensForMedia(t llms.ContentPartType, m *llms.Media) int {
 func (DefaultEstimator) EstimateChat(req llms.ChatRequest) ratelimit.UsageUnits {
 	input := tokensForParts(req.System)
 	for i := range req.Messages {
-		input = satint.Add(input, tokensForParts(req.Messages[i].Content))
+		input = sum(input, tokensForParts(req.Messages[i].Content))
 	}
-	for i := range req.Tools {
-		input += tokensForText(req.Tools[i].Name) +
-			tokensForText(req.Tools[i].Description) +
-			tokensForText(string(req.Tools[i].InputSchema))
-	}
+	input = addTools(input, req.Tools)
 	outMax := req.MaxTokens
 	if outMax <= 0 {
 		outMax = defaultOutputMax
@@ -163,7 +188,7 @@ func (DefaultEstimator) EstimateChat(req llms.ChatRequest) ratelimit.UsageUnits 
 func (DefaultEstimator) EstimateEmbeddings(req llms.EmbeddingRequest) ratelimit.UsageUnits {
 	input := 0
 	for i := range req.Inputs {
-		input += tokensForText(req.Inputs[i].Text)
+		input = sum(input, tokensForText(req.Inputs[i].Text))
 	}
 	return ratelimit.UsageUnits{
 		InputTokens:    input,

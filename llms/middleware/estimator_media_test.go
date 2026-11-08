@@ -2,8 +2,10 @@ package middleware
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	"image/png"
+	"math"
 	"strings"
 	"testing"
 
@@ -69,6 +71,47 @@ func TestEstimateChatCountsMedia(t *testing.T) {
 	u = est.EstimateChat(req)
 	if u.InputTokens <= 0 {
 		t.Fatalf("InputTokens = %d, wrapped", u.InputTokens)
+	}
+	if u.TotalTokensMax < u.InputTokens {
+		t.Fatalf("TotalTokensMax = %d < InputTokens %d", u.TotalTokensMax, u.InputTokens)
+	}
+}
+
+// Every estimator sum saturates (round-1 finding: the tool-schema loop
+// wrapped after a saturated media subtotal on 32-bit targets).
+func TestEstimatorSumsSaturate(t *testing.T) {
+	if got := sum(math.MaxInt, 1, 1); got != math.MaxInt {
+		t.Fatalf("sum = %d, want MaxInt", got)
+	}
+	tools := []llms.ToolDefinition{{Name: "f", Description: "d", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	if got := addTools(math.MaxInt-1, tools); got != math.MaxInt {
+		t.Fatalf("addTools = %d, want MaxInt", got)
+	}
+	want := math.MaxInt / 3
+	if math.MaxInt%3 != 0 {
+		want++
+	}
+	if got := ceilDiv(math.MaxInt, 3); got != want {
+		t.Fatalf("ceilDiv(MaxInt, 3) = %d, want %d", got, want)
+	}
+	for _, c := range []struct{ n, d, want int }{{0, 3, 0}, {1, 3, 1}, {3, 3, 1}, {4, 3, 2}} {
+		if got := ceilDiv(c.n, c.d); got != c.want {
+			t.Fatalf("ceilDiv(%d, %d) = %d, want %d", c.n, c.d, got, c.want)
+		}
+	}
+}
+
+// A huge PDF (which saturates on 32-bit) plus tools never wraps: the input
+// estimate stays at least the media estimate.
+func TestEstimateChatMediaPlusToolsNoWrap(t *testing.T) {
+	huge := llms.Document("application/pdf", []byte("/Type /Pages /Count 9999999"))
+	req := llms.ChatRequest{
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{huge, huge}}},
+		Tools:    []llms.ToolDefinition{{Name: "f", Description: "d", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+	}
+	u := DefaultEstimator{}.EstimateChat(req)
+	if media := tokensForMedia(huge.Type, huge.Media); u.InputTokens < media {
+		t.Fatalf("InputTokens = %d, below one document's %d (wrapped)", u.InputTokens, media)
 	}
 	if u.TotalTokensMax < u.InputTokens {
 		t.Fatalf("TotalTokensMax = %d < InputTokens %d", u.TotalTokensMax, u.InputTokens)

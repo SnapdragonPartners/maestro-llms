@@ -41,7 +41,9 @@ func TestMul(t *testing.T) {
 		{math.MinInt, 1, math.MinInt},
 		{math.MinInt, 2, math.MinInt},
 		{math.MinInt, math.MinInt, math.MaxInt},
-		{1 << 40, 1 << 40, math.MaxInt},
+		{math.MaxInt/2 + 1, 2, math.MaxInt},
+		{math.MinInt/2 - 1, 2, math.MinInt},
+		{math.MaxInt / 2, 2, math.MaxInt - 1},
 	}
 	for _, c := range cases {
 		if got := Mul(c.a, c.b); got != c.want {

@@ -12,11 +12,12 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 
 ## What this package is
 
-`maestro-llms` is an app-neutral Go toolkit wrapping LLM/embedding providers behind stable interfaces, shared by three consumers with deliberately different needs:
+`maestro-llms` is an app-neutral Go toolkit wrapping LLM/embedding providers behind stable interfaces, shared by several consumers with deliberately different needs:
 
 - **Maestro** — desktop/local, in-process rate limiting.
 - **Morris** — cloud (Cloud Run, multi-instance), needs shared/distributed rate limiting, audit, content classification.
 - **maestro-cms** — content service that does budget-aware text chunking for embeddings (requester of ADR-0013's `EstimateTextTokens`).
+- **maestro-agents** — agent foundation library built on `llms`/`toolloop`, compiled into Morris and other apps; needs multimodal input (#147, #148), hard per-run token/cost budgets (#149), and MCP-served tools (#150).
 
 The core design tension to keep in mind on every change: **nothing in this package may import product-specific assumptions from any consumer.** Config resolution, secret sourcing, audit taxonomy, distributed limiter storage, content rules, and chunking policy all belong to the applications, not here. When a feature seems to need app context, the answer is almost always an interface the app implements or a callback hook — not a concrete implementation in this package.
 
@@ -53,7 +54,7 @@ Semantic versioning from v1.0.0; v0.x minors could break, v1 minors cannot. The 
 
 ## Branch and review workflow
 
-Several consumers (Maestro, Morris, maestro-cms, buggrit) depend on this package, so substantive work follows a **review-before-push** loop (the same process as Morris): the heavy review happens on the local branch *before* the push. Post-push checks (CI, CodeQL, the automatic Copilot review, and buggrit, which posts each finding as its own review thread and re-verifies it on every push) are a lighter final proofread. buggrit reads `.github/buggrit.json` from `main`; its check is `buggrit / review`.
+Several consumers (Maestro, Morris, maestro-cms, maestro-agents, buggrit) depend on this package, so substantive work follows a **review-before-push** loop (the same process as Morris): the heavy review happens on the local branch *before* the push. Post-push checks (CI, CodeQL, the automatic Copilot review, and buggrit, which posts each finding as its own review thread and re-verifies it on every push) are a lighter final proofread. buggrit reads `.github/buggrit.json` from `main`; its check is `buggrit / review`.
 
 **Roles:**
 

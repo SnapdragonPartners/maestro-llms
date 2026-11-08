@@ -359,3 +359,21 @@ func TestFakeChatIgnoresInvalidForeignProviderParams(t *testing.T) {
 		t.Fatalf("unscoped fake: err = %v, want bad_request", err)
 	}
 }
+
+func TestFakeChatRecordingIsolatesMedia(t *testing.T) {
+	c := &FakeChatClient{Text: "ok"}
+	req := llms.ChatRequest{Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{
+		llms.Image("image/png", []byte("img")),
+	}}}}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	req.Messages[0].Content[0].Media.Data[0] = 'X'
+	req.Messages[0].Content[0].Media.MediaType = "image/gif"
+	c.Calls()[0].Messages[0].Content[0].Media.Data[1] = 'Y'
+
+	rec := c.Calls()[0].Messages[0].Content[0].Media
+	if rec.MediaType != "image/png" || string(rec.Data) != "img" {
+		t.Fatalf("media recording not isolated: %q %q", rec.MediaType, rec.Data)
+	}
+}

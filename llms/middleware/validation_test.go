@@ -149,7 +149,7 @@ func TestValidationRejections(t *testing.T) {
 		}}},
 	})
 	tc("unknown content type", "unknown content type", llms.ChatRequest{
-		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{{Type: "image"}}}},
+		Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{{Type: "audio"}}}},
 	})
 	tc("missing results at end", "lacking results", llms.ChatRequest{
 		Messages: []llms.Message{llms.UserText("q"), asstCall("a")},

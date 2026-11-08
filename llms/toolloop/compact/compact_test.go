@@ -669,3 +669,46 @@ func TestSummaryFirst_OpensWithSummary(t *testing.T) {
 		})
 	}
 }
+
+// Media in dropped turns is not sent to the summarizer: each part becomes a
+// placeholder naming its media type and size (ADR-0040).
+func TestSummarize_MediaPlaceholder(t *testing.T) {
+	msgs := []llms.Message{llms.UserText("task")}
+	msgs = append(msgs, turn("t1", "one")...)
+	msgs = append(msgs, llms.Message{Role: llms.RoleUser, Content: []llms.ContentPart{
+		llms.Text("see attached"),
+		llms.Image("image/png", []byte("12345")),
+		llms.Document("application/pdf", []byte("%PDF-1.7")),
+	}})
+	msgs = append(msgs, turn("t2", "two")...)
+	msgs = append(msgs, llms.UserText("nudge"))
+	msgs = append(msgs, turn("t3", "three")...)
+
+	fake := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("s")}}
+	c := mustSummarize(t, compact.SummarizeConfig{Client: fake, KeepTurns: 1})
+	res, err := c(context.Background(), overflow(msgs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := middleware.ValidateMessages(res.Messages); err != nil {
+		t.Fatalf("result invalid: %v", err)
+	}
+	req := fake.Calls()[0]
+	for _, m := range req.Messages {
+		for _, p := range m.Content {
+			if p.Type != llms.ContentText {
+				t.Fatalf("summarizer request carries a %s part", p.Type)
+			}
+		}
+	}
+	text := req.Messages[0].Content[0].Text
+	for _, want := range []string{
+		"[user]\nsee attached",
+		"[user attached an image (image/png, 5 bytes); not shown]",
+		"[user attached a document (application/pdf, 8 bytes); not shown]",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("rendered history lacks %q:\n%s", want, text)
+		}
+	}
+}

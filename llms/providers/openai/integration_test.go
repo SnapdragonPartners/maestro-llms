@@ -18,7 +18,7 @@ func openaiChatModel() string {
 	if m := os.Getenv("OPENAI_CHAT_MODEL"); m != "" {
 		return m
 	}
-	return "gpt-4o-mini"
+	return "gpt-6-luna"
 }
 
 // complete retries only on errors our own classifier reports retryable, so
@@ -56,7 +56,7 @@ func TestIntegrationOpenAIChat(t *testing.T) {
 	}
 	model := os.Getenv("OPENAI_CHAT_MODEL")
 	if model == "" {
-		model = "gpt-4o-mini"
+		model = "gpt-6-luna"
 	}
 
 	c, err := openai.New(openai.WithAPIKey(key), openai.WithModel(model))
@@ -64,13 +64,13 @@ func TestIntegrationOpenAIChat(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	temp := float32(0)
+	// No Temperature: the default model (gpt-6-luna) is a reasoning model
+	// and rejects it. MaxTokens leaves room for its reasoning.
 	req := llms.ChatRequest{
-		Purpose:     llms.PurposeChat,
-		System:      []llms.ContentPart{llms.Text("Answer with exactly one lowercase word.")},
-		Messages:    []llms.Message{llms.UserText("Reply with the single word: pong")},
-		MaxTokens:   16,
-		Temperature: &temp,
+		Purpose:   llms.PurposeChat,
+		System:    []llms.ContentPart{llms.Text("Answer with exactly one lowercase word.")},
+		Messages:  []llms.Message{llms.UserText("Reply with the single word: pong")},
+		MaxTokens: 512,
 	}
 	// Live providers have transient 5xx/429 hiccups; this test exercises our
 	// integration, not provider uptime. Retry only on errors our own

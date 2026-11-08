@@ -28,3 +28,20 @@ func Sub(a, b int) int {
 	}
 	return a - b
 }
+
+// Mul returns a * b, clamped to [math.MinInt, math.MaxInt].
+func Mul(a, b int) int {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	c := a * b
+	overflow := c/b != a ||
+		(a == -1 && b == math.MinInt) || (b == -1 && a == math.MinInt)
+	if !overflow {
+		return c
+	}
+	if (a > 0) == (b > 0) {
+		return math.MaxInt
+	}
+	return math.MinInt
+}

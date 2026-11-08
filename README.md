@@ -30,6 +30,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   representation; each provider adapter translates to/from that provider's
   wire shape at the boundary. Tool calls and results are content parts, not
   side-channel fields, so a conversation round-trips unambiguously.
+- **Images and documents.** `llms.Image` and `llms.Document` parts carry
+  inline bytes in user messages; each adapter maps what its provider
+  accepts and rejects the rest before the call. See
+  [ADR-0040](docs/adr/0040-image-and-document-parts.md).
 - **Reasoning round-trip.** Anthropic `thinking` blocks come back as
   `ContentReasoning` parts and are replayed unchanged when you resend the
   transcript; other providers drop parts that aren't theirs. See
@@ -169,6 +173,47 @@ as `WithDimensions` passed to `New` is a config error
 `WithMaxRetries` controls *SDK-level* retries; the toolkit defaults provider
 SDK retries to 0 and expects you to use the retry middleware (below) for one
 consistent policy.
+
+### Images and documents
+
+Image and document parts carry raw bytes and a media type, in user messages
+only ([ADR-0040](docs/adr/0040-image-and-document-parts.md)):
+
+```go
+resp, err := client.Complete(ctx, llms.ChatRequest{
+	Messages: []llms.Message{{Role: llms.RoleUser, Content: []llms.ContentPart{
+		llms.Document("application/pdf", pdfBytes),
+		llms.Image("image/png", pngBytes),
+		llms.Text("Summarize the contract and describe the signature page."),
+	}}},
+	MaxTokens: 1024,
+})
+```
+
+| Provider | Images | Documents |
+|---|---|---|
+| Anthropic (also on Vertex) | JPEG, PNG, GIF, WebP | PDF; plain text (UTF-8) |
+| OpenAI (Responses) | JPEG, PNG, GIF, WebP | PDF |
+| Google (Gemini API and Vertex) | any type, sent as inline data | any type, sent as inline data |
+| Ollama | any image type | not supported |
+| `openaicompat` | any image type | not supported |
+
+Anything an adapter can't map fails before the call with a `bad_request`
+`*llms.ProviderError`. Whether a particular model has vision isn't
+predicted: a text-only model answers with the provider's error (or, on some
+servers, ignores the image).
+
+The tool loop resends the whole transcript every turn, so a document stays
+in every request. On Anthropic, mark it cacheable so later turns read it
+from the prompt cache:
+
+```go
+doc := llms.Document("application/pdf", pdfBytes)
+doc.CacheBreakpoint = true // everything up to and including this part may be cached
+```
+
+`compact.Summarize` never sends media to its summarizer; each image or
+document in a dropped turn becomes a one-line placeholder.
 
 ### Tool use
 
@@ -764,6 +809,11 @@ c := middleware.RecommendedChat(client, middleware.RecommendedConfig{
 `ratelimit.Config`'s zero value is usable (a zero dimension is "unlimited").
 A nil estimator passed to `RateLimitChat`/`RateLimitEmbeddings` selects
 `DefaultEstimator`.
+`DefaultEstimator` counts an image from its pixel dimensions and a PDF at
+about 4,000 tokens per page, from provider-documented figures for current
+models ([ADR-0040](docs/adr/0040-image-and-document-parts.md)). If your model
+bills media differently, or you know your documents' page counts, pass your
+own `TokenEstimator`.
 The protocol the middleware runs per call is a **reservation**: `Reserve`
 (estimate units up front) → run the request → `Commit` (actual `Usage`) →
 `Release`. Over-use drives the bucket negative (debt repaid by future
@@ -954,11 +1004,11 @@ credentials/host are present (so any subset works).
 | Provider | Key / host (skipped if unset) | Model override (default) |
 |---|---|---|
 | Anthropic | `ANTHROPIC_API_KEY`, else `MAESTRO_ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-haiku-4-5-20251001`); reasoning tests: `ANTHROPIC_THINKING_MODEL` and `ANTHROPIC_BUDGET_MODEL` (both `claude-haiku-4-5-20251001`), `ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`) |
-| OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-4o-mini`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`), `OPENAI_REASONING_MODEL` (`gpt-5-mini`), `OPENAI_SUMMARY_MODEL` (`gpt-4.1-mini`) |
+| OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-6-luna`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`), `OPENAI_REASONING_MODEL` (`gpt-5-mini`), `OPENAI_SUMMARY_MODEL` (`gpt-4.1-mini`) |
 | Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`), `GOOGLE_EMBEDDINGS_MODEL` (`gemini-embedding-001`), `GOOGLE_LEVEL_MODEL` (`gemini-3-flash-preview`) |
-| Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`); reasoning test: `OLLAMA_THINK_MODEL` (`gpt-oss:20b`) |
+| Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`); reasoning test: `OLLAMA_THINK_MODEL` (`gpt-oss:20b`); image test runs only with `OLLAMA_VISION_MODEL` (e.g. `mistral-small3.2`) |
 | vLLM | `MAESTRO_VLLM` (full base URL incl. `/v1`, e.g. `http://my-vllm:8000/v1`); optional `MAESTRO_VLLM_API_KEY` | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
-| LunaRoute (via `openaicompat`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`) |
+| LunaRoute (via `openaicompat`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`); image test runs only with `LUNAROUTE_VISION_MODEL` (e.g. `glm-5.3-vision`) |
 | Vertex AI (`anthropicvertex`, `google` with `WithVertex`) | `VERTEX_PROJECT` plus Application Default Credentials (`gcloud auth application-default login`; the tests load ADC themselves, the toolkit never does) | Claude: `VERTEX_REGION` (`global`), `VERTEX_ANTHROPIC_MODEL` (`claude-opus-4-6`), `VERTEX_ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`). Gemini: `VERTEX_GEMINI_LOCATION` (`global`), `VERTEX_GEMINI_MODEL` (`gemini-2.5-flash`), `VERTEX_GEMINI_LEVEL_MODEL` (`gemini-3-flash-preview`), `VERTEX_EMBEDDINGS_LOCATION` (`us-central1`), `VERTEX_EMBEDDINGS_MODEL` (`gemini-embedding-001`) |
 
 ```sh

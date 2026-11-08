@@ -311,9 +311,18 @@ func isSummary(msg *llms.Message) bool {
 	return ok
 }
 
+// mediaNoun names a media part type for the summarizer's placeholder.
+func mediaNoun(t llms.ContentPartType) string {
+	if t == llms.ContentImage {
+		return "an image"
+	}
+	return "a document"
+}
+
 // render builds the summarizer's request text from the dropped messages.
 // Turns are written as plain text, each piece truncated to limit runes (no
-// limit when negative); reasoning is omitted. A previous Summarize result is
+// limit when negative); reasoning is omitted, and an image or document is
+// replaced by a one-line placeholder naming its media type and size. A previous Summarize result is
 // set apart as the existing summary to update, in full: it is already
 // bounded by the summarizer's MaxTokens, and the new summary replaces it,
 // so whatever is cut or overlooked is lost.
@@ -334,6 +343,12 @@ func render(msgs []llms.Message, limit int) string {
 			case p.Type == llms.ContentToolCall && p.ToolCall != nil:
 				names[p.ToolCall.ID] = p.ToolCall.Name
 				fmt.Fprintf(&b, "[assistant called tool %s]\n%s\n\n", p.ToolCall.Name, truncate(string(p.ToolCall.Parameters), limit))
+			case (p.Type == llms.ContentImage || p.Type == llms.ContentDocument) && p.Media != nil:
+				// Media is not sent to the summarizer (ADR-0040): it may
+				// not accept it, and resending it defeats compaction. A
+				// placeholder keeps the fact that something was attached.
+				fmt.Fprintf(&b, "[%s attached %s (%s, %d bytes); not shown]\n\n",
+					msgs[i].Role, mediaNoun(p.Type), p.Media.MediaType, len(p.Media.Data))
 			case p.Type == llms.ContentToolResult && p.ToolResult != nil:
 				label := "result"
 				if p.ToolResult.IsError {

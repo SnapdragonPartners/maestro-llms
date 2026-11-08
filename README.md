@@ -11,9 +11,10 @@ deterministic fakes for testing. It is intentionally **light**: a thin
 adapter layer, not a framework. It carries no application policy, no agent
 logic, no pricing tables, and the minimum of third-party dependencies.
 
-It is shared by three consumers with deliberately different needs — Maestro
-(desktop/local), Morris (cloud, multi-instance), and maestro-cms (content
-service, budget-aware chunking) — so nothing in the package may import
+It is shared by several consumers with deliberately different needs — Maestro
+(desktop/local), Morris (cloud, multi-instance), maestro-cms (content
+service, budget-aware chunking), and maestro-agents (agent foundation
+library) — so nothing in the package may import
 product-specific assumptions from any of them. When a feature needs app
 context, the answer is an interface the app implements, not a concrete
 implementation here.

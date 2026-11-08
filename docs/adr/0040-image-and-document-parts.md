@@ -23,7 +23,7 @@ The providers differ in what they accept:
 | OpenAI Responses | `input_image` with a data URL | `input_file` with a data URL (PDF) and a file name |
 | Gemini (API and Vertex) | `inlineData`, any media type | `inlineData`, any media type |
 | Ollama `/api/chat` | message `images` array (base64) | none |
-| OpenAI Chat Completions (`openaicompat`) | `image_url` part with a data URL | backend-dependent |
+| OpenAI Chat Completions (`openaicompat`) | `image_url` part with a data URL | servers differ; not accepted here (item 5) |
 
 Two parts of the toolkit reason about content and had to learn about
 media: the rate-limit `DefaultEstimator`, which charged a media part only
@@ -105,8 +105,8 @@ dropped turns as text for a summarizer.
      as text.
    - Any other document counts its bytes as text. Every document adds 100
      tokens for the provider's framing.
-   - Sums saturate, so a very large estimate can't wrap into an admitted
-     small one.
+   - Sums and products saturate (`satint.Add`/`Mul`, ADR-0034), so a very
+     large estimate can't wrap into an admitted small one.
 
    The figures cover current models. Older models may bill images
    differently as they reach end of life, and an app on such a model, or

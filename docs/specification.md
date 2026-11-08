@@ -277,7 +277,7 @@ See ADR-0022 for the per-provider tables.
 
 System instructions are not legal as arbitrary mid-conversation `Messages`. Multiple `System` parts are legal and preserve order; providers may join them when their API requires one string.
 
-`System` parts must be text-only. Validation middleware (with a `ValidationError`) and provider adapters (with a `bad_request` `ProviderError`) reject any other part type in the system field (`tool_call`, `tool_result`, `reasoning`, or a future multimodal type), unless this specification is deliberately extended.
+`System` parts must be text-only. Validation middleware (with a `ValidationError`) and provider adapters (with a `bad_request` `ProviderError`) reject any other part type in the system field (`tool_call`, `tool_result`, `reasoning`, `image`, `document`, or any later type), unless this specification is deliberately extended.
 
 `Temperature == nil` means "use provider/model default." `Temperature != nil && *Temperature == 0` means intentionally deterministic.
 

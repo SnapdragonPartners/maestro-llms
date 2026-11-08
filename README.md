@@ -729,7 +729,7 @@ just performance.**
 
 | Middleware | Purpose |
 |---|---|
-| `ValidationChat` | Reject structurally invalid requests (text-only `System`, tool-call↔result pairing, valid roles). Chat only. |
+| `ValidationChat` | Reject structurally invalid requests (text-only `System`, well-formed image/document parts on user messages only, tool-call↔result pairing, valid roles). Chat only. |
 | `RetryChat` / `RetryEmbeddings` | Retry while `llms.Retryable`, honoring `RetryAfter`; exponential backoff + optional jitter. |
 | `TimeoutChat` / `TimeoutEmbeddings` | Per-attempt `context` deadline. |
 | `CircuitChat` / `CircuitEmbeddings` | Three-state breaker; fast-fails with a non-retryable `*CircuitOpenError`; single-flight HalfOpen probe. |

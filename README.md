@@ -31,9 +31,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   wire shape at the boundary. Tool calls and results are content parts, not
   side-channel fields, so a conversation round-trips unambiguously.
 - **Images and documents.** `llms.Image` and `llms.Document` parts carry
-  inline bytes in user messages; each adapter maps what its provider
-  accepts and rejects the rest before the call. See
-  [ADR-0040](docs/adr/0040-image-and-document-parts.md).
+  inline bytes in user messages and in tool results (`ToolResult.Parts`);
+  each adapter maps what its provider accepts and rejects the rest before
+  the call. See [ADR-0040](docs/adr/0040-image-and-document-parts.md) and
+  [ADR-0041](docs/adr/0041-tool-result-parts.md).
 - **Reasoning round-trip.** Anthropic `thinking` blocks come back as
   `ContentReasoning` parts and are replayed unchanged when you resend the
   transcript; other providers drop parts that aren't theirs. See
@@ -177,7 +178,8 @@ consistent policy.
 ### Images and documents
 
 Image and document parts carry raw bytes and a media type, in user messages
-only ([ADR-0040](docs/adr/0040-image-and-document-parts.md)):
+([ADR-0040](docs/adr/0040-image-and-document-parts.md)) and in tool results
+(below):
 
 ```go
 resp, err := client.Complete(ctx, llms.ChatRequest{
@@ -214,6 +216,37 @@ doc.CacheBreakpoint = true // everything up to and including this part may be ca
 
 `compact.Summarize` never sends media to its summarizer; each image or
 document in a dropped turn becomes a one-line placeholder.
+
+#### Media in tool results
+
+A tool can return images or documents by setting `Parts` instead of
+`Content` ([ADR-0041](docs/adr/0041-tool-result-parts.md)). Parts are text,
+image and document parts; setting both fields is an error.
+
+```go
+getDocument := toolloop.Tool{
+	Definition: llms.ToolDefinition{Name: "get_document", InputSchema: schema},
+	Execute: func(ctx context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
+		doc := llms.Document("application/pdf", pdfBytes)
+		doc.CacheBreakpoint = true // Anthropic: cache it for the rest of the loop
+		return toolloop.ToolResult{Parts: []llms.ContentPart{llms.Text("statement.pdf"), doc}}, nil
+	},
+}
+```
+
+| Provider | Media in a tool result |
+|---|---|
+| Anthropic (also on Vertex) | same image and document types as in a user message |
+| OpenAI (Responses) | same image and document types as in a user message |
+| Google (Gemini API and Vertex) | any type, **Gemini 3 only** |
+| Ollama, `openaicompat` | not supported (text parts only) |
+
+Media is never moved into another message: an unsupported result fails
+before the call with a `bad_request` `*llms.ProviderError`. On Gemini, use a
+Gemini 3 model. Older models return a 400 on the Gemini API, and on Vertex
+they accept the request but answer without seeing the media. Code that
+reads `ToolResult.Content` (logging, audit) sees an empty string for such a
+result and should read `Parts` too.
 
 ### Tool use
 
@@ -729,7 +762,7 @@ just performance.**
 
 | Middleware | Purpose |
 |---|---|
-| `ValidationChat` | Reject structurally invalid requests (text-only `System`, well-formed image/document parts on user messages only, tool-call↔result pairing, valid roles). Chat only. |
+| `ValidationChat` | Reject structurally invalid requests (text-only `System`, well-formed image/document parts on user messages or in tool result `Parts` only, `Content` and `Parts` not both set, tool-call↔result pairing, valid roles). Chat only. |
 | `RetryChat` / `RetryEmbeddings` | Retry while `llms.Retryable`, honoring `RetryAfter`; exponential backoff + optional jitter. |
 | `TimeoutChat` / `TimeoutEmbeddings` | Per-attempt `context` deadline. |
 | `CircuitChat` / `CircuitEmbeddings` | Three-state breaker; fast-fails with a non-retryable `*CircuitOpenError`; single-flight HalfOpen probe. |

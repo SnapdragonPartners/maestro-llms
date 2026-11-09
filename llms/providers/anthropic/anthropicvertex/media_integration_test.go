@@ -16,3 +16,12 @@ func TestIntegrationVertexAnthropicImageInput(t *testing.T) {
 func TestIntegrationVertexAnthropicPDFInput(t *testing.T) {
 	livetest.PDFInput(t, newVertexClient(t))
 }
+
+// ADR-0041: media inside tool_result on Vertex.
+func TestIntegrationVertexAnthropicToolResultPDF(t *testing.T) {
+	livetest.ToolResultPDF(t, newVertexClient(t))
+}
+
+func TestIntegrationVertexAnthropicToolResultImage(t *testing.T) {
+	livetest.ToolResultImage(t, newVertexClient(t))
+}

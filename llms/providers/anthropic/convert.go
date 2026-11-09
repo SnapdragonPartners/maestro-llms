@@ -72,8 +72,18 @@ func countContentBreakpoints(msgs []llms.Message) int {
 	n := 0
 	for i := range msgs {
 		for j := range msgs[i].Content {
-			if cacheable(msgs[i].Content[j].Type) && msgs[i].Content[j].CacheBreakpoint {
+			p := &msgs[i].Content[j]
+			if cacheable(p.Type) && p.CacheBreakpoint {
 				n++
+			}
+			// A tool result's parts carry their own markers (ADR-0041),
+			// honored in the same order toolResultBlock visits them.
+			if p.Type == llms.ContentToolResult && p.ToolResult != nil {
+				for k := range p.ToolResult.Parts {
+					if cacheable(p.ToolResult.Parts[k].Type) && p.ToolResult.Parts[k].CacheBreakpoint {
+						n++
+					}
+				}
 			}
 		}
 	}
@@ -141,6 +151,40 @@ func (c *Client) mediaBlock(p *llms.ContentPart, cache bool) (anthropic.ContentB
 	return anthropic.ContentBlockParamUnion{OfDocument: &doc}, nil
 }
 
+// toolResultBlock maps a tool result. Parts (ADR-0041) become the block's
+// content: text blocks, and image and document blocks with the same media
+// types as in a user message (mediaBlock). CacheBreakpoint on a part is
+// honored as it is elsewhere, so a document a tool returned can be cached
+// across the turns of a tool loop.
+func (c *Client) toolResultBlock(r *llms.ToolResult, cb *cacheBudget) (anthropic.ContentBlockParamUnion, *llms.ProviderError) {
+	if r == nil {
+		return anthropic.ContentBlockParamUnion{}, badRequest(c.model, "tool_result content part with nil ToolResult")
+	}
+	if len(r.Parts) == 0 {
+		return anthropic.NewToolResultBlock(r.ToolCallID, r.Content, r.IsError), nil
+	}
+	if err := media.CheckToolResult(r); err != nil {
+		return anthropic.ContentBlockParamUnion{}, badRequest(c.model, err.Error())
+	}
+	content := make([]anthropic.ToolResultBlockParamContentUnion, 0, len(r.Parts))
+	for i := range r.Parts {
+		p := &r.Parts[i]
+		cache := p.CacheBreakpoint && cb.honor()
+		if p.Type == llms.ContentText {
+			t := textBlock(p.Text, cache)
+			content = append(content, anthropic.ToolResultBlockParamContentUnion{OfText: t.OfText})
+			continue
+		}
+		b, perr := c.mediaBlock(p, cache)
+		if perr != nil {
+			return anthropic.ContentBlockParamUnion{}, perr
+		}
+		content = append(content, anthropic.ToolResultBlockParamContentUnion{OfImage: b.OfImage, OfDocument: b.OfDocument})
+	}
+	tr := anthropic.ToolResultBlockParam{ToolUseID: r.ToolCallID, Content: content, IsError: anthropic.Bool(r.IsError)}
+	return anthropic.ContentBlockParamUnion{OfToolResult: &tr}, nil
+}
+
 // blocksForParts converts app-neutral content parts to SDK content blocks,
 // returning tool-result blocks separately so they can be emitted first within
 // a user turn (Anthropic requires tool_result immediately after tool_use).
@@ -163,11 +207,11 @@ func (c *Client) blocksForParts(parts []llms.ContentPart, cb *cacheBudget) (tool
 			others = append(others, anthropic.NewToolUseBlock(
 				p.ToolCall.ID, p.ToolCall.Parameters, p.ToolCall.Name))
 		case llms.ContentToolResult:
-			if p.ToolResult == nil {
-				return nil, nil, badRequest(c.model, "tool_result content part with nil ToolResult")
+			b, perr := c.toolResultBlock(p.ToolResult, cb)
+			if perr != nil {
+				return nil, nil, perr
 			}
-			toolResults = append(toolResults, anthropic.NewToolResultBlock(
-				p.ToolResult.ToolCallID, p.ToolResult.Content, p.ToolResult.IsError))
+			toolResults = append(toolResults, b)
 		case llms.ContentImage, llms.ContentDocument:
 			b, perr := c.mediaBlock(&p, p.CacheBreakpoint && cb.honor())
 			if perr != nil {

@@ -117,3 +117,19 @@ func TestEstimateChatMediaPlusToolsNoWrap(t *testing.T) {
 		t.Fatalf("TotalTokensMax = %d < InputTokens %d", u.TotalTokensMax, u.InputTokens)
 	}
 }
+
+// TestEstimateToolResultParts: a tool result's Parts are counted like
+// message parts (ADR-0041), so an image returned by a tool is not charged
+// as an empty string.
+func TestEstimateToolResultParts(t *testing.T) {
+	img := llms.Image("image/png", pngOf(t, 2000, 1500))
+	withParts := llms.ChatRequest{Messages: []llms.Message{llms.ToolResultMessage(llms.ToolResult{
+		ToolCallID: "c1", Parts: []llms.ContentPart{llms.Text(strings.Repeat("a", 400)), img},
+	})}}
+	empty := llms.ChatRequest{Messages: []llms.Message{llms.ToolResultMessage(llms.ToolResult{ToolCallID: "c1"})}}
+	got := DefaultEstimator{}.EstimateChat(withParts).InputTokens - DefaultEstimator{}.EstimateChat(empty).InputTokens
+	want := 2*perPartOverhead + ceilDiv(400, charsPerToken) + 4000
+	if got != want {
+		t.Fatalf("tool result parts estimate = %d, want %d", got, want)
+	}
+}

@@ -712,3 +712,34 @@ func TestSummarize_MediaPlaceholder(t *testing.T) {
 		}
 	}
 }
+
+// TestSummarize_ToolResultPartsPlaceholder: a dropped tool result with Parts
+// renders its text and a placeholder per media part (ADR-0041), and a long
+// text part is truncated without cutting off the media line.
+func TestSummarize_ToolResultPartsPlaceholder(t *testing.T) {
+	call := testllm.ToolCallResponse("t1", "get_document", `{}`).Message
+	msgs := []llms.Message{
+		llms.UserText("task"),
+		call,
+		llms.ToolResultMessage(llms.ToolResult{ToolCallID: "t1", Parts: []llms.ContentPart{
+			llms.Text(strings.Repeat("x", 50)),
+			llms.Document("application/pdf", []byte("%PDF-1.7")),
+		}}),
+	}
+	msgs = append(msgs, turn("t2", "two")...)
+	msgs = append(msgs, turn("t3", "three")...)
+
+	fake := &testllm.FakeChatClient{Responses: []llms.ChatResponse{testllm.TextResponse("s")}}
+	c := mustSummarize(t, compact.SummarizeConfig{Client: fake, KeepTurns: 1, TruncateRunes: 10})
+	if _, err := c(context.Background(), overflow(msgs)); err != nil {
+		t.Fatal(err)
+	}
+	text := fake.Calls()[0].Messages[0].Content[0].Text
+	want := "[tool result from get_document]\n" + strings.Repeat("x", 10)
+	if !strings.Contains(text, want) {
+		t.Errorf("rendered history lacks truncated text %q:\n%s", want, text)
+	}
+	if !strings.Contains(text, "\n[tool returned a document (application/pdf, 8 bytes); not shown]") {
+		t.Errorf("rendered history lacks the media placeholder:\n%s", text)
+	}
+}

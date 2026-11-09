@@ -319,10 +319,37 @@ func mediaNoun(t llms.ContentPartType) string {
 	return "a document"
 }
 
+// mediaPlaceholder describes a media part for the summarizer without its
+// bytes, for example "an image (image/png, 5 bytes); not shown".
+func mediaPlaceholder(p *llms.ContentPart) string {
+	return fmt.Sprintf("%s (%s, %d bytes); not shown", mediaNoun(p.Type), p.Media.MediaType, len(p.Media.Data))
+}
+
+// resultText renders a tool result for the summarizer: Content, or each of
+// its Parts on its own line, text truncated to limit runes and media as a
+// placeholder (ADR-0041), so a long text part cannot cut off the media lines.
+func resultText(r *llms.ToolResult, limit int) string {
+	if len(r.Parts) == 0 {
+		return truncate(r.Content, limit)
+	}
+	lines := make([]string, 0, len(r.Parts))
+	for i := range r.Parts {
+		p := &r.Parts[i]
+		switch {
+		case p.Type == llms.ContentText && p.Text != "":
+			lines = append(lines, truncate(p.Text, limit))
+		case (p.Type == llms.ContentImage || p.Type == llms.ContentDocument) && p.Media != nil:
+			lines = append(lines, "[tool returned "+mediaPlaceholder(p)+"]")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // render builds the summarizer's request text from the dropped messages.
 // Turns are written as plain text, each piece truncated to limit runes (no
 // limit when negative); reasoning is omitted, and an image or document is
-// replaced by a one-line placeholder naming its media type and size. A previous Summarize result is
+// replaced by a one-line placeholder naming its media type and size, also
+// inside a tool result's Parts (ADR-0041). A previous Summarize result is
 // set apart as the existing summary to update, in full: it is already
 // bounded by the summarizer's MaxTokens, and the new summary replaces it,
 // so whatever is cut or overlooked is lost.
@@ -347,14 +374,14 @@ func render(msgs []llms.Message, limit int) string {
 				// Media is not sent to the summarizer (ADR-0040): it may
 				// not accept it, and resending it defeats compaction. A
 				// placeholder keeps the fact that something was attached.
-				fmt.Fprintf(&b, "[%s attached %s (%s, %d bytes); not shown]\n\n",
-					msgs[i].Role, mediaNoun(p.Type), p.Media.MediaType, len(p.Media.Data))
+				fmt.Fprintf(&b, "[%s attached %s]\n\n", msgs[i].Role, mediaPlaceholder(p))
 			case p.Type == llms.ContentToolResult && p.ToolResult != nil:
 				label := "result"
 				if p.ToolResult.IsError {
 					label = "error"
 				}
-				fmt.Fprintf(&b, "[tool %s from %s]\n%s\n\n", label, names[p.ToolResult.ToolCallID], truncate(p.ToolResult.Content, limit))
+				fmt.Fprintf(&b, "[tool %s from %s]\n%s\n\n", label, names[p.ToolResult.ToolCallID],
+					resultText(p.ToolResult, limit))
 			}
 		}
 	}

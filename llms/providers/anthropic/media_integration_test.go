@@ -20,3 +20,16 @@ func TestIntegrationAnthropicPDFInput(t *testing.T) {
 func TestIntegrationAnthropicTextDocumentInput(t *testing.T) {
 	livetest.TextDocumentInput(t, newAnthropic(t, anthropicModel()))
 }
+
+// ADR-0041: image and document blocks inside tool_result.
+func TestIntegrationAnthropicToolResultPDF(t *testing.T) {
+	livetest.ToolResultPDF(t, newAnthropic(t, anthropicModel()))
+}
+
+func TestIntegrationAnthropicToolResultCachedPDF(t *testing.T) {
+	livetest.ToolResultCachedPDF(t, newAnthropic(t, anthropicModel()))
+}
+
+func TestIntegrationAnthropicToolResultImage(t *testing.T) {
+	livetest.ToolResultImage(t, newAnthropic(t, anthropicModel()))
+}

@@ -143,16 +143,50 @@ func (c *Client) partFor(p *llms.ContentPart, idToName map[string]string) (*gena
 		if n, ok := idToName[p.ToolResult.ToolCallID]; ok {
 			name = n
 		}
-		return &genai.Part{FunctionResponse: &genai.FunctionResponse{
-			Name: name,
-			Response: map[string]any{
-				"content":  p.ToolResult.Content,
-				"is_error": p.ToolResult.IsError,
-			},
-		}}, nil
+		return c.functionResponse(p.ToolResult, name)
 	default:
 		return nil, badRequest(c.model, "unknown content part type: "+string(p.Type))
 	}
+}
+
+// functionResponse maps a tool result to a function response. With Parts
+// (ADR-0041), the text parts, joined by a blank line, are the response's
+// "content", and each image or document is a function response part with
+// inline data. Gemini keeps the response JSON and its parts separate, so the
+// order of text relative to media is not kept. As in a user message, any
+// media type passes through (mediaPart); multimodal function responses need
+// a model that supports them (Gemini 3), and an older model's rejection is
+// the provider's 400.
+func (c *Client) functionResponse(r *llms.ToolResult, name string) (*genai.Part, *llms.ProviderError) {
+	content := r.Content
+	var parts []*genai.FunctionResponsePart
+	if len(r.Parts) > 0 {
+		if err := media.CheckToolResult(r); err != nil {
+			return nil, badRequest(c.model, err.Error())
+		}
+		content = media.JoinText(r.Parts)
+		for i := range r.Parts {
+			p := &r.Parts[i]
+			if !media.IsMedia(p.Type) {
+				continue
+			}
+			mp, perr := c.mediaPart(p)
+			if perr != nil {
+				return nil, perr
+			}
+			parts = append(parts, &genai.FunctionResponsePart{InlineData: &genai.FunctionResponseBlob{
+				MIMEType: mp.InlineData.MIMEType, Data: mp.InlineData.Data,
+			}})
+		}
+	}
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name: name,
+		Response: map[string]any{
+			"content":  content,
+			"is_error": r.IsError,
+		},
+		Parts: parts,
+	}}, nil
 }
 
 // mediaPart maps an image or document part to inline data. Gemini takes any

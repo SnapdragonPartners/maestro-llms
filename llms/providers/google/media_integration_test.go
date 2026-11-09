@@ -1,0 +1,42 @@
+//go:build integration
+
+package google_test
+
+import (
+	"testing"
+
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/livetest"
+)
+
+// ADR-0040: inline data on the Gemini API and on Vertex.
+func TestIntegrationGoogleImageInput(t *testing.T) {
+	livetest.ImageInput(t, newGoogleToolLoopClient(t))
+}
+
+func TestIntegrationGooglePDFInput(t *testing.T) {
+	livetest.PDFInput(t, newGoogleToolLoopClient(t))
+}
+
+func TestIntegrationVertexGeminiImageInput(t *testing.T) {
+	livetest.ImageInput(t, newVertexGemini(t, vertexModel()))
+}
+
+func TestIntegrationVertexGeminiPDFInput(t *testing.T) {
+	livetest.PDFInput(t, newVertexGemini(t, vertexModel()))
+}
+
+// ADR-0041: media in a function response. Multimodal function responses
+// need Gemini 3. On 2026-11-08 gemini-2.5-flash returned a 400 on the Gemini
+// API ("Multimodal function responses are not supported for this model") but
+// was accepted on Vertex and answered without seeing the media.
+func TestIntegrationGoogleToolResultPDF(t *testing.T) {
+	livetest.ToolResultPDF(t, newGoogleToolLoopClient(t))
+}
+
+func TestIntegrationVertexGeminiToolResultPDF(t *testing.T) {
+	livetest.ToolResultPDF(t, newVertexGemini(t, vertexModel()))
+}
+
+func TestIntegrationVertexGeminiToolResultImage(t *testing.T) {
+	livetest.ToolResultImage(t, newVertexGemini(t, vertexModel()))
+}

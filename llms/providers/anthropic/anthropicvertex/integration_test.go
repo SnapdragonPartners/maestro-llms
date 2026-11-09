@@ -27,6 +27,12 @@ import (
 //	VERTEX_PROJECT          GCP project with Vertex AI + Claude enabled (required)
 //	VERTEX_REGION           default "global"
 //	VERTEX_ANTHROPIC_MODEL  default "claude-opus-4-6"
+//
+// defaultModel is the Claude-on-Vertex model the live tests use: the
+// default for VERTEX_ANTHROPIC_MODEL, and the model the context-overflow
+// tests are sized for. Change it here when the model reaches end of life.
+const defaultModel = "claude-opus-4-6"
+
 func newVertexClient(t *testing.T) llms.ChatClient {
 	t.Helper()
 	project := os.Getenv("VERTEX_PROJECT")
@@ -34,7 +40,7 @@ func newVertexClient(t *testing.T) llms.ChatClient {
 		t.Skip("VERTEX_PROJECT not set")
 	}
 	region := envOr("VERTEX_REGION", "global")
-	model := envOr("VERTEX_ANTHROPIC_MODEL", "claude-opus-4-6")
+	model := envOr("VERTEX_ANTHROPIC_MODEL", defaultModel)
 	creds, err := credentials.DetectDefault(&credentials.DetectOptions{
 		Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
 	})

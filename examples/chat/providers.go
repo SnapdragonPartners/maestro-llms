@@ -133,7 +133,7 @@ func openAIOption(ctx context.Context, logf func(string, ...any)) (ModelOption, 
 	}
 	c, err := openai.New(
 		openai.WithAPIKey(key),
-		openai.WithModel("gpt-4o-mini"),
+		openai.WithModel("gpt-6-luna"),
 	)
 	if err != nil {
 		logf("openai: construct failed: %v", err)

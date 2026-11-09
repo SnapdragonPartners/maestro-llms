@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 )
 
 func chatBadRequest(model, msg string) *llms.ProviderError {
@@ -56,12 +57,23 @@ func (c *Client) buildMessages(req llms.ChatRequest, system string) ([]openai.Ch
 		m := req.Messages[i]
 		switch m.Role {
 		case llms.RoleUser:
+			if hasMedia(m.Content) {
+				msg, perr := c.userMediaMessage(m.Content)
+				if perr != nil {
+					return nil, perr
+				}
+				out = append(out, msg)
+				continue
+			}
 			text, perr := joinTextParts(c.model, m.Content, "user")
 			if perr != nil {
 				return nil, perr
 			}
 			out = append(out, openai.UserMessage(text))
 		case llms.RoleAssistant:
+			if err := media.CheckRole(&m); err != nil {
+				return nil, chatBadRequest(c.model, err.Error())
+			}
 			msg, perr := c.assistantMessage(m.Content)
 			if perr != nil {
 				return nil, perr
@@ -73,7 +85,11 @@ func (c *Client) buildMessages(req llms.ChatRequest, system string) ([]openai.Ch
 				if p.Type != llms.ContentToolResult || p.ToolResult == nil {
 					return nil, chatBadRequest(c.model, "tool messages must contain only tool_result parts")
 				}
-				out = append(out, openai.ToolMessage(p.ToolResult.Content, p.ToolResult.ToolCallID))
+				content, perr := c.toolResultText(p.ToolResult)
+				if perr != nil {
+					return nil, perr
+				}
+				out = append(out, openai.ToolMessage(content, p.ToolResult.ToolCallID))
 			}
 		default:
 			return nil, chatBadRequest(c.model, "unknown message role: "+string(m.Role))
@@ -83,6 +99,66 @@ func (c *Client) buildMessages(req llms.ChatRequest, system string) ([]openai.Ch
 		return nil, chatBadRequest(c.model, "request has no messages")
 	}
 	return out, nil
+}
+
+// toolResultText returns a tool result's text. Chat Completions tool
+// messages are text-only, so Parts (ADR-0041) may hold text parts only,
+// joined by a blank line; an image or document is rejected before the call.
+func (c *Client) toolResultText(r *llms.ToolResult) (string, *llms.ProviderError) {
+	if len(r.Parts) == 0 {
+		return r.Content, nil
+	}
+	if err := media.CheckToolResult(r); err != nil {
+		return "", chatBadRequest(c.model, err.Error())
+	}
+	if media.HasMedia(r.Parts) {
+		return "", chatBadRequest(c.model, "openaicompat does not accept image or document parts in a tool result (tool messages are text-only)")
+	}
+	return media.JoinText(r.Parts), nil
+}
+
+// hasMedia reports whether parts include an image or document part.
+func hasMedia(parts []llms.ContentPart) bool {
+	for i := range parts {
+		if media.IsMedia(parts[i].Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// userMediaMessage builds a user message with a content-part array, used only
+// when the message carries an image (a text-only user message keeps the
+// plain-string form). Text parts become text parts and images become
+// image_url parts with a base64 data URI, in order (ADR-0040). Any image type
+// passes through, since the backend decides; documents are rejected before
+// the call because Chat Completions servers differ on file input.
+func (c *Client) userMediaMessage(parts []llms.ContentPart) (openai.ChatCompletionMessageParamUnion, *llms.ProviderError) {
+	content := make([]openai.ChatCompletionContentPartUnionParam, 0, len(parts))
+	for i := range parts {
+		p := &parts[i]
+		switch p.Type {
+		case llms.ContentText:
+			if p.Text == "" {
+				return openai.ChatCompletionMessageParamUnion{}, chatBadRequest(c.model, "user message has an empty text part")
+			}
+			content = append(content, openai.TextContentPart(p.Text))
+		case llms.ContentImage:
+			base, err := media.Check(p)
+			if err != nil {
+				return openai.ChatCompletionMessageParamUnion{}, chatBadRequest(c.model, err.Error())
+			}
+			content = append(content, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+				URL: media.DataURI(base, p.Media.Data),
+			}))
+		case llms.ContentDocument:
+			return openai.ChatCompletionMessageParamUnion{}, chatBadRequest(c.model,
+				"openaicompat does not accept document content parts (images only)")
+		default:
+			return openai.ChatCompletionMessageParamUnion{}, chatBadRequest(c.model, "user message content must be text or image")
+		}
+	}
+	return openai.UserMessage(content), nil
 }
 
 // joinTextParts collects all text parts in a single role-tagged message

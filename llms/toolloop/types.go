@@ -24,6 +24,14 @@ type Tool struct {
 // when appended to the transcript. The loop never interprets Content;
 // applications that want structured output may encode JSON into it.
 //
+// Parts carries a result with images or documents instead of Content, with
+// the same rules as llms.ToolResult.Parts (ADR-0041): text, image and
+// document parts only, and not together with Content. A result that breaks
+// those rules is a contract violation and produces OutcomeToolError. The
+// loop passes Parts to the transcript unchanged and without copying, so
+// neither the executor (after returning) nor an OnToolCall observer may
+// modify the parts or their Media bytes.
+//
 // IsError is a model-visible signal: the loop appends the result and the
 // model can recover. An Execute error (the second return) is a loop-visible
 // abort: the loop stops and returns OutcomeToolError unless the loop's
@@ -41,6 +49,7 @@ type Tool struct {
 // the transcript stays well-formed.
 type ToolResult struct {
 	Content string
+	Parts   []llms.ContentPart
 	IsError bool
 	Stop    bool
 }
@@ -326,9 +335,9 @@ type Outcome struct {
 	TerminalCall    llms.ToolCall
 	TotalUsage      llms.Usage
 	CompactionUsage llms.Usage
-	TerminalResult  ToolResult
 	Kind            OutcomeKind
 	Messages        []llms.Message
+	TerminalResult  ToolResult
 	Iterations      int
 	Compactions     int
 }

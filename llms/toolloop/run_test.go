@@ -952,3 +952,63 @@ func TestRun_DocExampleShape(t *testing.T) {
 		t.Fatalf("final answer %q does not mention Paris", out.Response.Text)
 	}
 }
+
+// TestRun_ToolResultParts_PassedThrough: an executor's Parts reach the
+// transcript unchanged, beside the call ID (ADR-0041).
+func TestRun_ToolResultParts_PassedThrough(t *testing.T) {
+	pdf := llms.Document("application/pdf", []byte("%PDF-1.7"))
+	tool := toolloop.Tool{
+		Definition: llms.ToolDefinition{Name: "get"},
+		Execute: func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
+			return toolloop.ToolResult{Parts: []llms.ContentPart{llms.Text("doc"), pdf}, IsError: true}, nil
+		},
+	}
+	var event toolloop.ToolCallEvent
+	client := scriptedResponses(toolCallResp("c1", "get", `{}`, llms.Usage{}), finalTextResp("done", llms.Usage{}))
+	out := toolloop.Run(context.Background(), toolloop.Config{
+		Client: client, Request: userReq("go"), Tools: []toolloop.Tool{tool},
+		OnToolCall: func(e toolloop.ToolCallEvent) { event = e },
+	})
+	if out.Kind != toolloop.OutcomeFinalAnswer {
+		t.Fatalf("kind = %q, err = %v", out.Kind, out.Err)
+	}
+	if len(event.Result.Parts) != 2 {
+		t.Fatalf("OnToolCall result parts = %v, want 2", event.Result.Parts)
+	}
+	sent := client.Calls()[1].Messages
+	tr := sent[len(sent)-1].Content[0].ToolResult
+	if tr.ToolCallID != "c1" || tr.Content != "" || !tr.IsError || len(tr.Parts) != 2 ||
+		tr.Parts[0].Text != "doc" || tr.Parts[1].Type != llms.ContentDocument ||
+		string(tr.Parts[1].Media.Data) != "%PDF-1.7" {
+		t.Fatalf("tool result sent = %+v", tr)
+	}
+}
+
+// TestRun_InvalidToolResultParts_OutcomeToolError: a result that breaks the
+// Parts rules is a contract violation attributed to the tool, not a
+// provider bad_request.
+func TestRun_InvalidToolResultParts_OutcomeToolError(t *testing.T) {
+	for name, res := range map[string]toolloop.ToolResult{
+		"content and parts": {Content: "x", Parts: []llms.ContentPart{llms.Text("y")}},
+		"bad part":          {Parts: []llms.ContentPart{{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{ID: "z"}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tool := toolloop.Tool{
+				Definition: llms.ToolDefinition{Name: "get"},
+				Execute: func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
+					return res, nil
+				},
+			}
+			client := scriptedResponses(toolCallResp("c1", "get", `{}`, llms.Usage{}))
+			out := toolloop.Run(context.Background(), toolloop.Config{
+				Client: client, Request: userReq("go"), Tools: []toolloop.Tool{tool},
+			})
+			if out.Kind != toolloop.OutcomeToolError || !strings.Contains(out.Err.Error(), `tool "get"`) {
+				t.Fatalf("kind = %q, err = %v; want tool_error naming the tool", out.Kind, out.Err)
+			}
+			if len(client.Calls()) != 1 {
+				t.Fatalf("provider calls = %d, want 1", len(client.Calls()))
+			}
+		})
+	}
+}

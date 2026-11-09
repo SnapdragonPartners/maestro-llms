@@ -9,6 +9,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
@@ -82,53 +83,16 @@ func (c *Client) buildContents(req llms.ChatRequest) ([]*genai.Content, *llms.Pr
 		if !ok {
 			return nil, badRequest(c.model, "unknown message role: "+string(m.Role))
 		}
-		var parts []*genai.Part
+		if err := media.CheckRole(&m); err != nil {
+			return nil, badRequest(c.model, err.Error())
+		}
+		parts := make([]*genai.Part, 0, len(m.Content))
 		for j := range m.Content {
-			p := m.Content[j]
-			switch p.Type {
-			case llms.ContentText:
-				if p.Text == "" {
-					return nil, badRequest(c.model, "empty text content part")
-				}
-				parts = append(parts, &genai.Part{Text: p.Text})
-			case llms.ContentToolCall:
-				if p.ToolCall == nil {
-					return nil, badRequest(c.model, "tool_call content part with nil ToolCall")
-				}
-				args, err := rawToMap(p.ToolCall.Parameters)
-				if err != nil {
-					return nil, badRequest(c.model, "tool_call "+p.ToolCall.Name+": invalid parameters JSON: "+err.Error())
-				}
-				parts = append(parts, &genai.Part{
-					FunctionCall: &genai.FunctionCall{
-						ID: p.ToolCall.ID, Name: p.ToolCall.Name, Args: args,
-					},
-					// Replay Gemini's opaque thought_signature so multi-turn
-					// tool loops don't 400 (G1 / ADR-0010). nil for non-Gemini
-					// callers — genai omits the empty field.
-					ThoughtSignature: p.ToolCall.ProviderSignature,
-				})
-			case llms.ContentToolResult:
-				if p.ToolResult == nil {
-					return nil, badRequest(c.model, "tool_result content part with nil ToolResult")
-				}
-				// Gemini correlates by function name. Resolve the real name
-				// from the matching prior tool call; fall back to the ID
-				// (best effort) only if no match is in the history.
-				name := p.ToolResult.ToolCallID
-				if n, ok := idToName[p.ToolResult.ToolCallID]; ok {
-					name = n
-				}
-				parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{
-					Name: name,
-					Response: map[string]any{
-						"content":  p.ToolResult.Content,
-						"is_error": p.ToolResult.IsError,
-					},
-				}})
-			default:
-				return nil, badRequest(c.model, "unknown content part type: "+string(p.Type))
+			part, perr := c.partFor(&m.Content[j], idToName)
+			if perr != nil {
+				return nil, perr
 			}
+			parts = append(parts, part)
 		}
 		if len(parts) > 0 {
 			contents = append(contents, &genai.Content{Role: role, Parts: parts})
@@ -138,6 +102,103 @@ func (c *Client) buildContents(req llms.ChatRequest) ([]*genai.Content, *llms.Pr
 		return nil, badRequest(c.model, "request has no messages")
 	}
 	return contents, nil
+}
+
+// partFor maps one content part to a genai part. idToName resolves a tool
+// result's function name from the tool calls earlier in the history.
+func (c *Client) partFor(p *llms.ContentPart, idToName map[string]string) (*genai.Part, *llms.ProviderError) {
+	switch p.Type {
+	case llms.ContentText:
+		if p.Text == "" {
+			return nil, badRequest(c.model, "empty text content part")
+		}
+		return &genai.Part{Text: p.Text}, nil
+	case llms.ContentImage, llms.ContentDocument:
+		return c.mediaPart(p)
+	case llms.ContentToolCall:
+		if p.ToolCall == nil {
+			return nil, badRequest(c.model, "tool_call content part with nil ToolCall")
+		}
+		args, err := rawToMap(p.ToolCall.Parameters)
+		if err != nil {
+			return nil, badRequest(c.model, "tool_call "+p.ToolCall.Name+": invalid parameters JSON: "+err.Error())
+		}
+		return &genai.Part{
+			FunctionCall: &genai.FunctionCall{
+				ID: p.ToolCall.ID, Name: p.ToolCall.Name, Args: args,
+			},
+			// Replay Gemini's opaque thought_signature so multi-turn
+			// tool loops don't 400 (G1 / ADR-0010). nil for non-Gemini
+			// callers — genai omits the empty field.
+			ThoughtSignature: p.ToolCall.ProviderSignature,
+		}, nil
+	case llms.ContentToolResult:
+		if p.ToolResult == nil {
+			return nil, badRequest(c.model, "tool_result content part with nil ToolResult")
+		}
+		// Gemini correlates by function name. Resolve the real name
+		// from the matching prior tool call; fall back to the ID
+		// (best effort) only if no match is in the history.
+		name := p.ToolResult.ToolCallID
+		if n, ok := idToName[p.ToolResult.ToolCallID]; ok {
+			name = n
+		}
+		return c.functionResponse(p.ToolResult, name)
+	default:
+		return nil, badRequest(c.model, "unknown content part type: "+string(p.Type))
+	}
+}
+
+// functionResponse maps a tool result to a function response. With Parts
+// (ADR-0041), the text parts, joined by a blank line, are the response's
+// "content", and each image or document is a function response part with
+// inline data. Gemini keeps the response JSON and its parts separate, so the
+// order of text relative to media is not kept. As in a user message, any
+// media type passes through (mediaPart); multimodal function responses need
+// a model that supports them (Gemini 3), and an older model's rejection is
+// the provider's 400.
+func (c *Client) functionResponse(r *llms.ToolResult, name string) (*genai.Part, *llms.ProviderError) {
+	content := r.Content
+	var parts []*genai.FunctionResponsePart
+	if len(r.Parts) > 0 {
+		if err := media.CheckToolResult(r); err != nil {
+			return nil, badRequest(c.model, err.Error())
+		}
+		content = media.JoinText(r.Parts)
+		for i := range r.Parts {
+			p := &r.Parts[i]
+			if !media.IsMedia(p.Type) {
+				continue
+			}
+			mp, perr := c.mediaPart(p)
+			if perr != nil {
+				return nil, perr
+			}
+			parts = append(parts, &genai.FunctionResponsePart{InlineData: &genai.FunctionResponseBlob{
+				MIMEType: mp.InlineData.MIMEType, Data: mp.InlineData.Data,
+			}})
+		}
+	}
+	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+		Name: name,
+		Response: map[string]any{
+			"content":  content,
+			"is_error": r.IsError,
+		},
+		Parts: parts,
+	}}, nil
+}
+
+// mediaPart maps an image or document part to inline data. Gemini takes any
+// media type as inline data and its accepted set is model-dependent, so the
+// type passes through and an unsupported one is the provider's 400
+// (ADR-0040).
+func (c *Client) mediaPart(p *llms.ContentPart) (*genai.Part, *llms.ProviderError) {
+	base, err := media.Check(p)
+	if err != nil {
+		return nil, badRequest(c.model, err.Error())
+	}
+	return &genai.Part{InlineData: &genai.Blob{MIMEType: base, Data: p.Media.Data}}, nil
 }
 
 func rawToMap(raw json.RawMessage) (map[string]any, error) {

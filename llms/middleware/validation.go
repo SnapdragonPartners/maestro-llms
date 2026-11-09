@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 )
 
 // ValidationError reports a structurally invalid ChatRequest rejected by the
@@ -26,7 +27,8 @@ func (e *ValidationError) Error() string { return "invalid chat request: " + e.R
 // or rate-limit work.
 //
 // Scope is structural and app-neutral only (divergence M3): text-only System,
-// non-empty messages, and tool-call <-> tool-result pairing. Semantic/agent
+// non-empty messages, well-formed image/document parts on user messages
+// (ADR-0040), and tool-call <-> tool-result pairing. Semantic/agent
 // policy (empty-response handling, guidance injection) is the application's,
 // not the toolkit's. There is intentionally no ValidationEmbeddings: the
 // embedding batch limit is the provider client's responsibility (spec: app
@@ -107,7 +109,9 @@ func hasNonReasoning(m *llms.Message) bool {
 
 // validateParts checks each content part matches its discriminant AND is
 // legal for the message role: tool_call and reasoning only on assistant,
-// tool_result only on tool. Text is allowed on user/assistant here; tool messages are further
+// tool_result only on tool, image and document only on user (ADR-0040) or
+// inside a tool result's Parts (ADR-0041). Text is allowed on
+// user/assistant here; tool messages are further
 // restricted to tool_result-only by pairingState.tool (so the effective
 // contract is: text on user/assistant, tool_call on assistant, tool_result
 // on tool). Enforcing role/part legality here (not just the payload
@@ -119,14 +123,15 @@ func validateParts(mi int, m *llms.Message) error {
 		switch p.Type {
 		case llms.ContentText:
 		case llms.ContentToolCall:
-			if p.ToolCall == nil || p.ToolCall.ID == "" {
-				return &ValidationError{fmt.Sprintf("message %d part %d: tool_call missing ToolCall/ID", mi, pi)}
-			}
-			if m.Role != llms.RoleAssistant {
-				return &ValidationError{fmt.Sprintf("message %d part %d: tool_call only allowed on assistant messages, got role %q", mi, pi, m.Role)}
+			if err := validateToolCall(mi, pi, m.Role, p); err != nil {
+				return err
 			}
 		case llms.ContentReasoning:
 			if err := validateReasoning(mi, pi, m.Role, p); err != nil {
+				return err
+			}
+		case llms.ContentImage, llms.ContentDocument:
+			if err := validateMedia(mi, pi, m.Role, p); err != nil {
 				return err
 			}
 		case llms.ContentToolResult:
@@ -135,6 +140,9 @@ func validateParts(mi int, m *llms.Message) error {
 			}
 			if m.Role != llms.RoleTool {
 				return &ValidationError{fmt.Sprintf("message %d part %d: tool_result only allowed on tool messages, got role %q", mi, pi, m.Role)}
+			}
+			if err := media.CheckToolResult(p.ToolResult); err != nil {
+				return &ValidationError{fmt.Sprintf("message %d part %d: %v", mi, pi, err)}
 			}
 		default:
 			return &ValidationError{fmt.Sprintf("message %d part %d: unknown content type %q", mi, pi, p.Type)}
@@ -151,6 +159,30 @@ func validateReasoning(mi, pi int, role llms.Role, p *llms.ContentPart) error {
 	}
 	if role != llms.RoleAssistant {
 		return &ValidationError{fmt.Sprintf("message %d part %d: reasoning only allowed on assistant messages, got role %q", mi, pi, role)}
+	}
+	return nil
+}
+
+// validateToolCall checks a tool_call part: payload and ID set, and only on
+// assistant messages.
+func validateToolCall(mi, pi int, role llms.Role, p *llms.ContentPart) error {
+	if p.ToolCall == nil || p.ToolCall.ID == "" {
+		return &ValidationError{fmt.Sprintf("message %d part %d: tool_call missing ToolCall/ID", mi, pi)}
+	}
+	if role != llms.RoleAssistant {
+		return &ValidationError{fmt.Sprintf("message %d part %d: tool_call only allowed on assistant messages, got role %q", mi, pi, role)}
+	}
+	return nil
+}
+
+// validateMedia checks an image or document part: a well-formed payload
+// (media.Check) and only on user messages (ADR-0040).
+func validateMedia(mi, pi int, role llms.Role, p *llms.ContentPart) error {
+	if _, err := media.Check(p); err != nil {
+		return &ValidationError{fmt.Sprintf("message %d part %d: %v", mi, pi, err)}
+	}
+	if role != llms.RoleUser {
+		return &ValidationError{fmt.Sprintf("message %d part %d: %s only allowed on user messages, got role %q", mi, pi, p.Type, role)}
 	}
 	return nil
 }

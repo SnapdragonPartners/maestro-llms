@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 )
 
 func chatBadRequest(model, msg string) *llms.ProviderError {
@@ -56,9 +57,19 @@ func (c *Client) buildInput(req llms.ChatRequest) ([]responses.ResponseInputItem
 	var items []responses.ResponseInputItemUnionParam
 	for i := range req.Messages {
 		m := req.Messages[i]
+		if err := media.CheckRole(&m); err != nil {
+			return nil, chatBadRequest(c.model, err.Error())
+		}
 		for j := range m.Content {
 			p := m.Content[j]
 			switch p.Type {
+			case llms.ContentImage, llms.ContentDocument:
+				content, perr := c.mediaContent(&p)
+				if perr != nil {
+					return nil, perr
+				}
+				items = append(items, responses.ResponseInputItemParamOfMessage(
+					responses.ResponseInputMessageContentListParam{content}, responses.EasyInputMessageRoleUser))
 			case llms.ContentText:
 				if p.Text == "" {
 					return nil, chatBadRequest(c.model, "empty text content part")
@@ -75,11 +86,10 @@ func (c *Client) buildInput(req llms.ChatRequest) ([]responses.ResponseInputItem
 				items = append(items, responses.ResponseInputItemParamOfFunctionCall(
 					string(p.ToolCall.Parameters), p.ToolCall.ID, p.ToolCall.Name))
 			case llms.ContentToolResult:
-				if p.ToolResult == nil {
-					return nil, chatBadRequest(c.model, "tool_result content part with nil ToolResult")
+				out, perr := c.functionCallOutput(p.ToolResult)
+				if perr != nil {
+					return nil, perr
 				}
-				out := responses.ResponseInputItemParamOfFunctionCallOutput(p.ToolResult.Content)
-				out.OfFunctionCallOutput.CallID = param.NewOpt(p.ToolResult.ToolCallID)
 				items = append(items, out)
 			default:
 				return nil, chatBadRequest(c.model, "unknown content part type: "+string(p.Type))
@@ -90,6 +100,42 @@ func (c *Client) buildInput(req llms.ChatRequest) ([]responses.ResponseInputItem
 		return nil, chatBadRequest(c.model, "request has no messages")
 	}
 	return items, nil
+}
+
+// documentFilename is sent with a PDF: input_file needs a file name beside
+// inline file_data, and the part type carries none.
+const documentFilename = "document.pdf"
+
+// mediaContent maps an image or document part to a Responses input content
+// item (ADR-0040): JPEG, PNG, GIF or WebP as input_image with a data URL and
+// detail "auto" (the API default), and PDF as input_file with a data URL.
+// Anything else is rejected before the call. Each part goes in its own user
+// message item, in order, the same as text parts.
+func (c *Client) mediaContent(p *llms.ContentPart) (responses.ResponseInputContentUnionParam, *llms.ProviderError) {
+	base, err := media.Check(p)
+	if err != nil {
+		return responses.ResponseInputContentUnionParam{}, chatBadRequest(c.model, err.Error())
+	}
+	if p.Type == llms.ContentImage {
+		switch base {
+		case "image/jpeg", "image/png", "image/gif", "image/webp":
+			return responses.ResponseInputContentUnionParam{OfInputImage: &responses.ResponseInputImageParam{
+				Detail:   responses.ResponseInputImageDetailAuto,
+				ImageURL: param.NewOpt(media.DataURI(base, p.Media.Data)),
+			}}, nil
+		default:
+			return responses.ResponseInputContentUnionParam{}, chatBadRequest(c.model,
+				"unsupported image media type "+base+" (want image/jpeg, image/png, image/gif or image/webp)")
+		}
+	}
+	if base != "application/pdf" {
+		return responses.ResponseInputContentUnionParam{}, chatBadRequest(c.model,
+			"unsupported document media type "+base+" (want application/pdf)")
+	}
+	return responses.ResponseInputContentUnionParam{OfInputFile: &responses.ResponseInputFileParam{
+		FileData: param.NewOpt(media.DataURI(base, p.Media.Data)),
+		Filename: param.NewOpt(documentFilename),
+	}}, nil
 }
 
 func (c *Client) buildTools(req llms.ChatRequest) ([]responses.ToolUnionParam, *llms.ProviderError) {
@@ -316,4 +362,56 @@ func mapEffort(r *llms.ReasoningConfig) (shared.ReasoningEffort, *llms.Reasoning
 	default:
 		return "", nil
 	}
+}
+
+// functionCallOutput maps a tool result to a function_call_output item.
+// Parts (ADR-0041) become its output content list: input_text, and
+// input_image or input_file with the same media types as in a user message
+// (mediaContent).
+func (c *Client) functionCallOutput(r *llms.ToolResult) (responses.ResponseInputItemUnionParam, *llms.ProviderError) {
+	if r == nil {
+		return responses.ResponseInputItemUnionParam{}, chatBadRequest(c.model, "tool_result content part with nil ToolResult")
+	}
+	if len(r.Parts) == 0 {
+		out := responses.ResponseInputItemParamOfFunctionCallOutput(r.Content)
+		out.OfFunctionCallOutput.CallID = param.NewOpt(r.ToolCallID)
+		return out, nil
+	}
+	if err := media.CheckToolResult(r); err != nil {
+		return responses.ResponseInputItemUnionParam{}, chatBadRequest(c.model, err.Error())
+	}
+	list := make(responses.ResponseFunctionCallOutputItemListParam, 0, len(r.Parts))
+	for i := range r.Parts {
+		p := &r.Parts[i]
+		if p.Type == llms.ContentText {
+			list = append(list, responses.ResponseFunctionCallOutputItemUnionParam{
+				OfInputText: &responses.ResponseInputTextContentParam{Text: p.Text},
+			})
+			continue
+		}
+		content, perr := c.mediaContent(p)
+		if perr != nil {
+			return responses.ResponseInputItemUnionParam{}, perr
+		}
+		switch {
+		case content.OfInputImage != nil:
+			list = append(list, responses.ResponseFunctionCallOutputItemUnionParam{
+				OfInputImage: &responses.ResponseInputImageContentParam{
+					Detail:   responses.ResponseInputImageContentDetailAuto,
+					ImageURL: content.OfInputImage.ImageURL,
+				},
+			})
+		case content.OfInputFile != nil:
+			list = append(list, responses.ResponseFunctionCallOutputItemUnionParam{
+				OfInputFile: &responses.ResponseInputFileContentParam{
+					FileData: content.OfInputFile.FileData,
+					Filename: content.OfInputFile.Filename,
+				},
+			})
+		}
+	}
+	return responses.ResponseInputItemUnionParam{OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
+		CallID: param.NewOpt(r.ToolCallID),
+		Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfResponseFunctionCallOutputItemArray: list},
+	}}, nil
 }

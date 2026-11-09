@@ -182,7 +182,8 @@ documented or observable behavior, so they have to be settled before v1
 - `bucket/bucket.go`: `Limits.Validate`, `Limits.Capacity`
 - `llms/ratelimit/memory.go`: `NewInMemoryLimiter`, `effectiveTokens`,
   `refillLocked`, `tryAcquireLocked`, `Commit`
-- `llms/internal/satint`: saturating `Add`/`Sub`
+- `llms/internal/satint`: saturating `Add`/`Sub`/`Mul` (`Mul` added for
+  the media token estimate, ADR-0040)
 - `llms/ratelimit/bucket.go`: `FromBucket` (`Commit` calls `Adjust` with
   `effectiveTokens`)
 - `llms/middleware/ratelimit.go`: `RateLimitChat`, `RateLimitEmbeddings`,

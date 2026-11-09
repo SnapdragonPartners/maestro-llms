@@ -31,7 +31,13 @@ func copyContentParts(in []llms.ContentPart) []llms.ContentPart {
 		}
 		if p.ToolResult != nil {
 			tr := *p.ToolResult
+			tr.Parts = copyContentParts(p.ToolResult.Parts)
 			p.ToolResult = &tr
+		}
+		if p.Media != nil {
+			m := *p.Media
+			m.Data = slices.Clone(p.Media.Data)
+			p.Media = &m
 		}
 		if p.Reasoning != nil {
 			r := *p.Reasoning

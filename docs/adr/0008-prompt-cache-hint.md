@@ -1,6 +1,6 @@
 # 0008. Provider-neutral prompt-cache hint (`ContentPart.CacheBreakpoint`)
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0040](0040-image-and-document-parts.md) (Anthropic also honors the hint on image and document parts)
 - **Date:** 2026-05-17
 
 ## Context

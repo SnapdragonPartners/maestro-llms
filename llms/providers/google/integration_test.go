@@ -25,11 +25,19 @@ func apiKey(t *testing.T) string {
 	return ""
 }
 
+// The Gemini models the live tests use (Gemini API and Vertex): the
+// defaults for the *_MODEL overrides, and the fixed model for the
+// context-overflow tests. Change them here when a model reaches end of life.
+const (
+	defaultChatModel  = "gemini-3.8-flash"
+	defaultLevelModel = "gemini-3-flash-preview" // takes thinkingLevel (Gemini 3)
+)
+
 func model() string {
 	if m := os.Getenv("GOOGLE_MODEL"); m != "" {
 		return m
 	}
-	return "gemini-2.5-flash"
+	return defaultChatModel
 }
 
 // complete retries only on errors our own classifier reports retryable, so
@@ -68,7 +76,7 @@ func TestIntegrationGoogleChat(t *testing.T) {
 		Purpose:  llms.PurposeChat,
 		System:   []llms.ContentPart{llms.Text("Answer with exactly one lowercase word.")},
 		Messages: []llms.Message{llms.UserText("Reply with the single word: pong")},
-		// gemini-2.5-flash is a thinking model: a tiny budget can be spent
+		// Gemini 3 is a thinking model: a tiny budget can be spent
 		// entirely on internal reasoning, returning empty/truncated text.
 		// Give enough room to actually emit the word.
 		MaxTokens:   256,
@@ -77,7 +85,10 @@ func TestIntegrationGoogleChat(t *testing.T) {
 	if resp.Message.Role != llms.RoleAssistant || resp.Text == "" {
 		t.Fatalf("unexpected response: %+v", resp.Message)
 	}
-	if resp.Usage.InputTokens <= 0 || resp.Usage.OutputTokens <= 0 {
+	// BillableOutputTokens, not OutputTokens: on 2026-11-08
+	// gemini-3.8-flash sometimes reported candidatesTokenCount 0 beside the
+	// thinking tokens for a one-word answer.
+	if resp.Usage.InputTokens <= 0 || resp.Usage.BillableOutputTokens <= 0 {
 		t.Fatalf("expected positive usage, got %+v", resp.Usage)
 	}
 	t.Logf("OK chat: text=%q stop=%q in=%d out=%d",

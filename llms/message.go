@@ -17,7 +17,8 @@ const (
 )
 
 // ContentPartType is the discriminant for ContentPart. The set is intentionally
-// small and may grow (e.g. images) without changing the request contract.
+// small and grows in minor releases (ADR-0032), so a switch over it needs a
+// default case.
 type ContentPartType string
 
 const (
@@ -32,6 +33,18 @@ const (
 	// requires reasoning to be sent back (Anthropic thinking blocks) and
 	// replay it only to the provider that produced it. See ADR-0021.
 	ContentReasoning ContentPartType = "reasoning"
+	// ContentImage is an image sent to the model; Media is populated and
+	// Media.MediaType is an image type ("image/png"). Allowed on user
+	// messages and in ToolResult.Parts (ADR-0041). Each adapter accepts the
+	// image types its provider documents and rejects others before the
+	// call. See ADR-0040.
+	ContentImage ContentPartType = "image"
+	// ContentDocument is a document sent to the model, such as a PDF; Media
+	// is populated and Media.MediaType is not an image type. Allowed on user
+	// messages and in ToolResult.Parts (ADR-0041). Adapters whose provider
+	// takes no documents (Ollama, openaicompat) reject it before the call.
+	// See ADR-0040.
+	ContentDocument ContentPartType = "document"
 )
 
 // ContentPart is one discriminated piece of a message. Exactly one of the
@@ -44,10 +57,12 @@ type ContentPart struct {
 	ToolCall   *ToolCall
 	ToolResult *ToolResult
 	Reasoning  *Reasoning
+	Media      *Media
 	// CacheBreakpoint is an optional, provider-neutral hint: everything in
 	// the prompt up to and including this part may be prompt-cached.
 	// Providers that expose explicit inline cache control honor it (Anthropic
-	// maps it to cache_control: ephemeral on the corresponding block);
+	// maps it to cache_control: ephemeral on the corresponding text, image
+	// or document block, ADR-0040);
 	// providers without an inline-breakpoint API ignore it (OpenAI prefix-
 	// caches automatically; Gemini's explicit caching is a separate
 	// cached-content API; Ollama has none). It is purely advisory: setting or
@@ -76,6 +91,21 @@ type Reasoning struct {
 	ProviderData []byte
 }
 
+// Media is the payload of an image or document part: the raw bytes and their
+// media type. Adapters encode the bytes as their provider requires (base64,
+// a data URI); callers never pre-encode. Only inline bytes are supported:
+// URLs and provider file references are not part of this type. See
+// ADR-0040.
+type Media struct {
+	// MediaType is the IANA media type of Data, for example "image/png" or
+	// "application/pdf". Parameters ("; charset=utf-8") are allowed and
+	// ignored when matching a provider's supported types; matching is
+	// case-insensitive.
+	MediaType string
+	// Data is the raw content, not base64-encoded. It must be non-empty.
+	Data []byte
+}
+
 // Message is one app-neutral conversation turn. Provider adapters translate to
 // and from the provider wire shape at the provider boundary.
 type Message struct {
@@ -86,6 +116,18 @@ type Message struct {
 // Text returns a plain-text content part.
 func Text(s string) ContentPart {
 	return ContentPart{Type: ContentText, Text: s}
+}
+
+// Image returns an image content part with the given media type (for example
+// "image/png") and raw bytes. The bytes are not copied.
+func Image(mediaType string, data []byte) ContentPart {
+	return ContentPart{Type: ContentImage, Media: &Media{MediaType: mediaType, Data: data}}
+}
+
+// Document returns a document content part with the given media type (for
+// example "application/pdf") and raw bytes. The bytes are not copied.
+func Document(mediaType string, data []byte) ContentPart {
+	return ContentPart{Type: ContentDocument, Media: &Media{MediaType: mediaType, Data: data}}
 }
 
 // UserText returns a user message containing a single text part.

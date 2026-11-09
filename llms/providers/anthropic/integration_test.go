@@ -16,11 +16,17 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/anthropic"
 )
 
+// defaultChatModel is the Anthropic model the live tests use: the default
+// for ANTHROPIC_MODEL and the other *_MODEL overrides, and the fixed model
+// for the context-overflow tests. Change it here when the model reaches end
+// of life.
+const defaultChatModel = "claude-haiku-4-5-20251001"
+
 func anthropicModel() string {
 	if m := os.Getenv("ANTHROPIC_MODEL"); m != "" {
 		return m
 	}
-	return "claude-haiku-4-5-20251001"
+	return defaultChatModel
 }
 
 // anthropicAPIKey resolves the key from ANTHROPIC_API_KEY first (CI secret),
@@ -170,7 +176,7 @@ func TestIntegrationAnthropicToolUse(t *testing.T) {
 func TestIntegrationAnthropicThinkingUsage(t *testing.T) {
 	model := os.Getenv("ANTHROPIC_THINKING_MODEL")
 	if model == "" {
-		model = "claude-haiku-4-5-20251001"
+		model = defaultChatModel
 	}
 	c, err := anthropic.New(
 		anthropic.WithAPIKey(anthropicAPIKey(t)),

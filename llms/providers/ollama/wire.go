@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/apierr"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
@@ -35,6 +36,8 @@ type wireMessage struct {
 	Content    string         `json:"content,omitempty"`
 	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
+	// Images are base64-encoded image bytes (no data URI prefix).
+	Images []string `json:"images,omitempty"`
 }
 
 type wireToolDef struct {
@@ -60,6 +63,7 @@ type wireRequest struct {
 	Stream   bool           `json:"stream"`
 }
 
+//nolint:govet // fieldalignment: internal JSON wire DTO, layout irrelevant.
 type wireResponse struct {
 	Model           string      `json:"model"`
 	Message         wireMessage `json:"message"`
@@ -107,8 +111,9 @@ func roleFor(r llms.Role) (string, bool) {
 
 // partAllowed enforces the app-neutral contract's role↔part-type rules: text
 // only on user/assistant, tool_call only on assistant, tool_result only on
-// RoleTool. Anything else (incl. unknown part types) is rejected rather than
-// silently producing an invalid/mislabeled Ollama message.
+// RoleTool, image only on user. Anything else (documents, unknown part
+// types) is rejected rather than silently producing an invalid/mislabeled
+// Ollama message.
 func partAllowed(r llms.Role, t llms.ContentPartType) bool {
 	switch t {
 	case llms.ContentText:
@@ -117,9 +122,47 @@ func partAllowed(r llms.Role, t llms.ContentPartType) bool {
 		return r == llms.RoleAssistant
 	case llms.ContentToolResult:
 		return r == llms.RoleTool
+	case llms.ContentImage:
+		return r == llms.RoleUser
 	default:
 		return false
 	}
+}
+
+// partNotAllowed is the error for a part partAllowed rejects. Documents get
+// their own message: Ollama takes images only.
+func (c *Client) partNotAllowed(r llms.Role, t llms.ContentPartType) *llms.ProviderError {
+	if t == llms.ContentDocument {
+		return badRequest(c.model, "ollama does not accept document content parts (images only)")
+	}
+	return badRequest(c.model, fmt.Sprintf("%q content part is not valid in a %q message", t, r))
+}
+
+// imageData checks an image part and returns its base64 bytes.
+func (c *Client) imageData(p *llms.ContentPart) (string, *llms.ProviderError) {
+	if _, err := media.Check(p); err != nil {
+		return "", badRequest(c.model, err.Error())
+	}
+	return media.Base64(p.Media.Data), nil
+}
+
+// toolResultText returns a tool result's text. Ollama tool messages are
+// text-only, so Parts (ADR-0041) may hold text parts only, joined by a blank
+// line; an image or document is rejected before the call.
+func (c *Client) toolResultText(r *llms.ToolResult) (string, *llms.ProviderError) {
+	if r == nil {
+		return "", badRequest(c.model, "tool_result content part with nil ToolResult")
+	}
+	if len(r.Parts) == 0 {
+		return r.Content, nil
+	}
+	if err := media.CheckToolResult(r); err != nil {
+		return "", badRequest(c.model, err.Error())
+	}
+	if media.HasMedia(r.Parts) {
+		return "", badRequest(c.model, "ollama does not accept image or document parts in a tool result (tool messages are text-only)")
+	}
+	return media.JoinText(r.Parts), nil
 }
 
 // messageParts converts one app message into wire messages (a tool result
@@ -132,11 +175,11 @@ func (c *Client) messageParts(m llms.Message) ([]wireMessage, *llms.ProviderErro
 	var out []wireMessage
 	var text strings.Builder
 	var toolCalls []wireToolCall
+	var images []string
 	for j := range m.Content {
 		p := m.Content[j]
 		if !partAllowed(m.Role, p.Type) {
-			return nil, badRequest(c.model,
-				fmt.Sprintf("%q content part is not valid in a %q message", p.Type, m.Role))
+			return nil, c.partNotAllowed(m.Role, p.Type)
 		}
 		switch p.Type {
 		case llms.ContentText:
@@ -144,6 +187,14 @@ func (c *Client) messageParts(m llms.Message) ([]wireMessage, *llms.ProviderErro
 				return nil, badRequest(c.model, "empty text content part")
 			}
 			text.WriteString(p.Text)
+		case llms.ContentImage:
+			// Any image type passes through; whether the model decodes it
+			// (or has vision at all) is Ollama's answer (ADR-0040).
+			img, perr := c.imageData(&p)
+			if perr != nil {
+				return nil, perr
+			}
+			images = append(images, img)
 		case llms.ContentToolCall:
 			if p.ToolCall == nil {
 				return nil, badRequest(c.model, "tool_call content part with nil ToolCall")
@@ -156,18 +207,19 @@ func (c *Client) messageParts(m llms.Message) ([]wireMessage, *llms.ProviderErro
 				},
 			})
 		case llms.ContentToolResult:
-			if p.ToolResult == nil {
-				return nil, badRequest(c.model, "tool_result content part with nil ToolResult")
+			content, perr := c.toolResultText(p.ToolResult)
+			if perr != nil {
+				return nil, perr
 			}
 			out = append(out, wireMessage{
 				Role:       "tool",
-				Content:    p.ToolResult.Content,
+				Content:    content,
 				ToolCallID: p.ToolResult.ToolCallID,
 			})
 		}
 	}
-	if text.Len() > 0 || len(toolCalls) > 0 {
-		out = append(out, wireMessage{Role: role, Content: text.String(), ToolCalls: toolCalls})
+	if text.Len() > 0 || len(toolCalls) > 0 || len(images) > 0 {
+		out = append(out, wireMessage{Role: role, Content: text.String(), ToolCalls: toolCalls, Images: images})
 	}
 	return out, nil
 }

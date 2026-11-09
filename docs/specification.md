@@ -277,7 +277,7 @@ See ADR-0022 for the per-provider tables.
 
 System instructions are not legal as arbitrary mid-conversation `Messages`. Multiple `System` parts are legal and preserve order; providers may join them when their API requires one string.
 
-`System` parts must be text-only. Validation middleware (with a `ValidationError`) and provider adapters (with a `bad_request` `ProviderError`) reject any other part type in the system field (`tool_call`, `tool_result`, `reasoning`, or a future multimodal type), unless this specification is deliberately extended.
+`System` parts must be text-only. Validation middleware (with a `ValidationError`) and provider adapters (with a `bad_request` `ProviderError`) reject any other part type in the system field (`tool_call`, `tool_result`, `reasoning`, `image`, `document`, or any later type), unless this specification is deliberately extended.
 
 `Temperature == nil` means "use provider/model default." `Temperature != nil && *Temperature == 0` means intentionally deterministic.
 
@@ -303,7 +303,8 @@ type ContentPart struct {
     ToolCall        *ToolCall
     ToolResult      *ToolResult
     Reasoning       *Reasoning
-    CacheBreakpoint bool // optional prompt-cache hint (see below)
+    Media           *Media // image and document parts
+    CacheBreakpoint bool   // optional prompt-cache hint (see below)
 }
 
 type ContentPartType string
@@ -313,7 +314,17 @@ const (
     ContentToolCall   ContentPartType = "tool_call"
     ContentToolResult ContentPartType = "tool_result"
     ContentReasoning  ContentPartType = "reasoning"
+    ContentImage      ContentPartType = "image"
+    ContentDocument   ContentPartType = "document"
 )
+
+type Media struct {
+    MediaType string // IANA type, e.g. "image/png", "application/pdf"; parameters ignored
+    Data      []byte // raw bytes; adapters encode them
+}
+
+func Image(mediaType string, data []byte) ContentPart
+func Document(mediaType string, data []byte) ContentPart
 
 type Reasoning struct {
     Provider     ProviderID // adapter that produced it; only that adapter replays it
@@ -347,6 +358,28 @@ one. Reasoning is bound to the conversation before it: an app that edits
 earlier turns must remove all reasoning first (`WithoutReasoning`). See
 ADR-0021.
 
+`image` and `document` parts carry inline bytes and a media type. They are
+allowed on user messages and inside a tool result's `Parts` (see Tools;
+`System` stays text-only). A part is
+well-formed when `Media` is set, `Data` is non-empty, `MediaType` parses as
+`type/subtype`, and an image part has an `image/*` type while a document
+part does not; the validation middleware and every adapter enforce this.
+Each adapter maps the media its provider documents and rejects anything
+else with a `bad_request` `ProviderError` before the call; nothing is
+dropped or moved. Whether a particular model accepts media is not
+predicted: a model without vision answers with the provider's error.
+Anthropic honors `CacheBreakpoint` on image and document parts, which is
+the way to keep a document cached across the turns of a tool loop. See
+ADR-0040.
+
+| Adapter | Images | Documents |
+|---|---|---|
+| Anthropic (also on Vertex) | JPEG, PNG, GIF, WebP | PDF; plain text (UTF-8) |
+| OpenAI Responses | JPEG, PNG, GIF, WebP (`input_image`) | PDF (`input_file`) |
+| Google (Gemini API and Vertex) | any type, as inline data | any type, as inline data |
+| Ollama | any image type (`images`) | rejected |
+| `openaicompat` | any image type (`image_url` data URI) | rejected |
+
 Provider mapping:
 
 - Anthropic: `RoleTool` / `tool_result` parts are encoded as user-role tool-result content blocks because Anthropic models tool results as user messages.
@@ -354,7 +387,7 @@ Provider mapping:
 - OpenAI Chat Completions (`openaicompat`): `RoleTool` maps to tool-role messages.
 - Google/Ollama: provider adapters use the Maestro-tested tool-call mapping for that provider.
 
-The top-level conversation model remains one app-neutral representation. The content shape also allows later multimodal expansion without changing the top-level request contract.
+The top-level conversation model remains one app-neutral representation. Multimodal input (image and document parts) was added this way without changing the top-level request contract.
 
 ### Tools
 
@@ -401,6 +434,7 @@ type ToolCall struct {
 type ToolResult struct {
     ToolCallID string
     Content    string
+    Parts      []ContentPart // text, image and document parts; exclusive with Content
     IsError    bool
 }
 ```
@@ -417,7 +451,14 @@ ADR-0010.
 
 `ToolCall.Parameters` is `json.RawMessage` to preserve exact provider-emitted JSON and avoid lossy `map[string]any` round-trips. Applications can unmarshal into typed structs. The one exception is a provider SDK that decodes args itself: the genai SDK rounds Gemini tool-call args through float64 in both directions, so integers beyond 2^53 lose precision on the google adapter (divergence G5).
 
-`ToolResult.Content` is a string. This intentionally limits tool results to textual/JSON-string content. Structured or multimodal tool results, if added, extend `ToolResult` with new fields without changing the core round-trip semantics.
+`ToolResult.Content` is a string (textual or JSON-string content) and stays the common case. A result with images or documents sets `Parts` instead: text, image and document parts only, nothing nested. Setting both `Content` and `Parts` is invalid; the validation middleware, `toolloop` and every adapter reject it. Each adapter maps what its provider accepts in a tool result and rejects anything else with a `bad_request` `ProviderError` before the call. Media is never moved into another message. `toolloop.ToolResult` has the same `Parts` field, passed through unchanged. See ADR-0041.
+
+| Adapter | Tool result `Parts` |
+|---|---|
+| Anthropic (also on Vertex) | `tool_result` content blocks: text, and the image and document types it takes in a user message; `CacheBreakpoint` honored |
+| OpenAI Responses | `function_call_output` output list: `input_text`, `input_image`, `input_file` (PDF) |
+| Google (Gemini API and Vertex) | text parts joined into the response's `content`; media as function-response parts with inline data. Needs Gemini 3: older models return a 400 on the Gemini API and ignore the media on Vertex |
+| Ollama, `openaicompat` | text parts only, joined by a blank line; media rejected |
 
 ### Worked Tool Exchange
 
@@ -888,7 +929,7 @@ type TokenEstimator interface {
 }
 ```
 
-`DefaultEstimator` is approximate and byte-based (a low bytes-per-token divisor, so non-ASCII text over-reserves further). Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added.
+`DefaultEstimator` is approximate and byte-based (a low bytes-per-token divisor, so non-ASCII text over-reserves further). Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added. Image and document parts are counted from provider-documented figures: an image from its pixel dimensions (capped at the largest documented per-image cost), a PDF at a typical-high figure per page, other documents by their bytes, each document with a framing allowance (ADR-0040), in user messages and in tool results (ADR-0041). The figures cover current models; an app on a model that bills media differently, or that knows its page counts, supplies its own `TokenEstimator`.
 
 A separate, exported text-level helper is available at the core level for consumers that need to estimate the token count of a standalone string (budget-aware chunking, ad-hoc inspection) without going through the request-shaped interface (ADR-0013):
 

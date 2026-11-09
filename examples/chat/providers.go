@@ -133,7 +133,7 @@ func openAIOption(ctx context.Context, logf func(string, ...any)) (ModelOption, 
 	}
 	c, err := openai.New(
 		openai.WithAPIKey(key),
-		openai.WithModel("gpt-6-luna"),
+		openai.WithModel("gpt-5.1"),
 	)
 	if err != nil {
 		logf("openai: construct failed: %v", err)
@@ -165,7 +165,7 @@ func googleOption(ctx context.Context, logf func(string, ...any)) (ModelOption, 
 	}
 	c, err := google.New(
 		google.WithAPIKey(key),
-		google.WithModel("gemini-2.5-flash"),
+		google.WithModel("gemini-3.8-flash"),
 	)
 	if err != nil {
 		logf("google: construct failed: %v", err)

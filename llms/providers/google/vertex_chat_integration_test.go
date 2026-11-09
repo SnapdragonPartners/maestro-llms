@@ -25,7 +25,7 @@ import (
 //
 //	VERTEX_PROJECT               required
 //	VERTEX_GEMINI_LOCATION       default "global"
-//	VERTEX_GEMINI_MODEL          default "gemini-2.5-flash"
+//	VERTEX_GEMINI_MODEL          default "gemini-3.8-flash"
 //	VERTEX_GEMINI_LEVEL_MODEL    default "gemini-3-flash-preview"
 func newVertexGemini(t *testing.T, model string, extra ...google.Option) *google.Client {
 	t.Helper()
@@ -74,7 +74,10 @@ func TestIntegrationVertexGeminiChat(t *testing.T) {
 	if resp.Message.Role != llms.RoleAssistant || resp.Text == "" {
 		t.Fatalf("unexpected response: %+v", resp.Message)
 	}
-	if resp.Usage.InputTokens <= 0 || resp.Usage.OutputTokens <= 0 {
+	// BillableOutputTokens, not OutputTokens: on 2026-11-08
+	// gemini-3.8-flash sometimes reported candidatesTokenCount 0 beside the
+	// thinking tokens for a one-word answer.
+	if resp.Usage.InputTokens <= 0 || resp.Usage.BillableOutputTokens <= 0 {
 		t.Fatalf("expected positive usage, got %+v", resp.Usage)
 	}
 	t.Logf("OK Vertex chat: text=%q stop=%q in=%d out=%d",

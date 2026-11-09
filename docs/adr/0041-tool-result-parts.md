@@ -132,10 +132,12 @@ returns a one-page PDF or a red PNG, check the answer, and check
 reported input tokens. They passed on 2026-11-08 against Anthropic
 (`claude-haiku-4-5`, including a cache marker on the document), Anthropic
 on Vertex (`claude-opus-4-6`), Gemini on Vertex and the Gemini API
-(`gemini-3-flash-preview`), and OpenAI (`gpt-6-luna` for the PDF;
-`gpt-5.1` and `gpt-4.1` for the image). `gpt-6-luna` named the red image
-gray in the tool result, and black once for the same image in a user
-message: a weakness of that model's vision on this image, not of the
-mapping. Ollama (`mistral-small3.2`) and LunaRoute
-(`deepseek-4.1-flash`) passed their tool-loop scenarios with the changed
-tool-message code.
+(`gemini-3-flash-preview` and `gemini-3.8-flash`), and OpenAI
+(`gpt-5.1`). `gpt-6-luna`, the previous OpenAI live default, passed the
+PDF but named the red image gray in the tool result, and black once for
+the same image in a user message: a weakness of that model's vision on
+this image, not of the mapping. The live defaults moved to `gpt-5.1`
+and, for Gemini chat, from `gemini-2.5-flash` to `gemini-3.8-flash`
+(which item 6 requires for this feature). Ollama (`mistral-small3.2`) and
+LunaRoute (`deepseek-4.1-flash`) passed their tool-loop scenarios with the
+changed tool-message code.

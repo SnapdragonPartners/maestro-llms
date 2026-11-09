@@ -1320,7 +1320,9 @@ for v1, and `Summarize` rolls a leading summary in place — see
 v3.90 and genai v1.77), and **v1.2.0** (image and document content: user
 messages take `ContentImage` / `ContentDocument` parts with inline bytes,
 mapped per provider and rejected before the call where a provider can't
-take them, and `DefaultEstimator` counts them — see
+take them, and `DefaultEstimator` counts them; code that switches on
+`ContentPartType` (audit, content classification) now sees `image` and
+`document` parts and needs its `default` case (ADR-0032) — see
 [ADR-0040](docs/adr/0040-image-and-document-parts.md); a tool result can
 return text, image and document parts in the new `ToolResult.Parts`, so a
 tool can hand the model a PDF or a screenshot as its answer, which on

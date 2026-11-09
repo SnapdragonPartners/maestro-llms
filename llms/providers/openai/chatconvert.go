@@ -86,11 +86,10 @@ func (c *Client) buildInput(req llms.ChatRequest) ([]responses.ResponseInputItem
 				items = append(items, responses.ResponseInputItemParamOfFunctionCall(
 					string(p.ToolCall.Parameters), p.ToolCall.ID, p.ToolCall.Name))
 			case llms.ContentToolResult:
-				if p.ToolResult == nil {
-					return nil, chatBadRequest(c.model, "tool_result content part with nil ToolResult")
+				out, perr := c.functionCallOutput(p.ToolResult)
+				if perr != nil {
+					return nil, perr
 				}
-				out := responses.ResponseInputItemParamOfFunctionCallOutput(p.ToolResult.Content)
-				out.OfFunctionCallOutput.CallID = param.NewOpt(p.ToolResult.ToolCallID)
 				items = append(items, out)
 			default:
 				return nil, chatBadRequest(c.model, "unknown content part type: "+string(p.Type))
@@ -363,4 +362,56 @@ func mapEffort(r *llms.ReasoningConfig) (shared.ReasoningEffort, *llms.Reasoning
 	default:
 		return "", nil
 	}
+}
+
+// functionCallOutput maps a tool result to a function_call_output item.
+// Parts (ADR-0041) become its output content list: input_text, and
+// input_image or input_file with the same media types as in a user message
+// (mediaContent).
+func (c *Client) functionCallOutput(r *llms.ToolResult) (responses.ResponseInputItemUnionParam, *llms.ProviderError) {
+	if r == nil {
+		return responses.ResponseInputItemUnionParam{}, chatBadRequest(c.model, "tool_result content part with nil ToolResult")
+	}
+	if len(r.Parts) == 0 {
+		out := responses.ResponseInputItemParamOfFunctionCallOutput(r.Content)
+		out.OfFunctionCallOutput.CallID = param.NewOpt(r.ToolCallID)
+		return out, nil
+	}
+	if err := media.CheckToolResult(r); err != nil {
+		return responses.ResponseInputItemUnionParam{}, chatBadRequest(c.model, err.Error())
+	}
+	list := make(responses.ResponseFunctionCallOutputItemListParam, 0, len(r.Parts))
+	for i := range r.Parts {
+		p := &r.Parts[i]
+		if p.Type == llms.ContentText {
+			list = append(list, responses.ResponseFunctionCallOutputItemUnionParam{
+				OfInputText: &responses.ResponseInputTextContentParam{Text: p.Text},
+			})
+			continue
+		}
+		content, perr := c.mediaContent(p)
+		if perr != nil {
+			return responses.ResponseInputItemUnionParam{}, perr
+		}
+		switch {
+		case content.OfInputImage != nil:
+			list = append(list, responses.ResponseFunctionCallOutputItemUnionParam{
+				OfInputImage: &responses.ResponseInputImageContentParam{
+					Detail:   responses.ResponseInputImageContentDetailAuto,
+					ImageURL: content.OfInputImage.ImageURL,
+				},
+			})
+		case content.OfInputFile != nil:
+			list = append(list, responses.ResponseFunctionCallOutputItemUnionParam{
+				OfInputFile: &responses.ResponseInputFileContentParam{
+					FileData: content.OfInputFile.FileData,
+					Filename: content.OfInputFile.Filename,
+				},
+			})
+		}
+	}
+	return responses.ResponseInputItemUnionParam{OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
+		CallID: param.NewOpt(r.ToolCallID),
+		Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfResponseFunctionCallOutputItemArray: list},
+	}}, nil
 }

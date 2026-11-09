@@ -31,9 +31,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   wire shape at the boundary. Tool calls and results are content parts, not
   side-channel fields, so a conversation round-trips unambiguously.
 - **Images and documents.** `llms.Image` and `llms.Document` parts carry
-  inline bytes in user messages; each adapter maps what its provider
-  accepts and rejects the rest before the call. See
-  [ADR-0040](docs/adr/0040-image-and-document-parts.md).
+  inline bytes in user messages and in tool results (`ToolResult.Parts`);
+  each adapter maps what its provider accepts and rejects the rest before
+  the call. See [ADR-0040](docs/adr/0040-image-and-document-parts.md) and
+  [ADR-0041](docs/adr/0041-tool-result-parts.md).
 - **Reasoning round-trip.** Anthropic `thinking` blocks come back as
   `ContentReasoning` parts and are replayed unchanged when you resend the
   transcript; other providers drop parts that aren't theirs. See
@@ -177,7 +178,8 @@ consistent policy.
 ### Images and documents
 
 Image and document parts carry raw bytes and a media type, in user messages
-only ([ADR-0040](docs/adr/0040-image-and-document-parts.md)):
+([ADR-0040](docs/adr/0040-image-and-document-parts.md)) and in tool results
+(below):
 
 ```go
 resp, err := client.Complete(ctx, llms.ChatRequest{
@@ -214,6 +216,37 @@ doc.CacheBreakpoint = true // everything up to and including this part may be ca
 
 `compact.Summarize` never sends media to its summarizer; each image or
 document in a dropped turn becomes a one-line placeholder.
+
+#### Media in tool results
+
+A tool can return images or documents by setting `Parts` instead of
+`Content` ([ADR-0041](docs/adr/0041-tool-result-parts.md)). Parts are text,
+image and document parts; setting both fields is an error.
+
+```go
+getDocument := toolloop.Tool{
+	Definition: llms.ToolDefinition{Name: "get_document", InputSchema: schema},
+	Execute: func(ctx context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
+		doc := llms.Document("application/pdf", pdfBytes)
+		doc.CacheBreakpoint = true // Anthropic: cache it for the rest of the loop
+		return toolloop.ToolResult{Parts: []llms.ContentPart{llms.Text("statement.pdf"), doc}}, nil
+	},
+}
+```
+
+| Provider | Media in a tool result |
+|---|---|
+| Anthropic (also on Vertex) | same image and document types as in a user message |
+| OpenAI (Responses) | same image and document types as in a user message |
+| Google (Gemini API and Vertex) | any type, **Gemini 3 only** |
+| Ollama, `openaicompat` | not supported (text parts only) |
+
+Media is never moved into another message: an unsupported result fails
+before the call with a `bad_request` `*llms.ProviderError`. On Gemini, use a
+Gemini 3 model. Older models return a 400 on the Gemini API, and on Vertex
+they accept the request but answer without seeing the media. Code that
+reads `ToolResult.Content` (logging, audit) sees an empty string for such a
+result and should read `Parts` too.
 
 ### Tool use
 
@@ -729,7 +762,7 @@ just performance.**
 
 | Middleware | Purpose |
 |---|---|
-| `ValidationChat` | Reject structurally invalid requests (text-only `System`, well-formed image/document parts on user messages only, tool-call↔result pairing, valid roles). Chat only. |
+| `ValidationChat` | Reject structurally invalid requests (text-only `System`, well-formed image/document parts on user messages or in tool result `Parts` only, `Content` and `Parts` not both set, tool-call↔result pairing, valid roles). Chat only. |
 | `RetryChat` / `RetryEmbeddings` | Retry while `llms.Retryable`, honoring `RetryAfter`; exponential backoff + optional jitter. |
 | `TimeoutChat` / `TimeoutEmbeddings` | Per-attempt `context` deadline. |
 | `CircuitChat` / `CircuitEmbeddings` | Three-state breaker; fast-fails with a non-retryable `*CircuitOpenError`; single-flight HalfOpen probe. |
@@ -1004,12 +1037,12 @@ credentials/host are present (so any subset works).
 | Provider | Key / host (skipped if unset) | Model override (default) |
 |---|---|---|
 | Anthropic | `ANTHROPIC_API_KEY`, else `MAESTRO_ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (`claude-haiku-4-5-20251001`); reasoning tests: `ANTHROPIC_THINKING_MODEL` and `ANTHROPIC_BUDGET_MODEL` (both `claude-haiku-4-5-20251001`), `ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`) |
-| OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-6-luna`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`), `OPENAI_REASONING_MODEL` (`gpt-5-mini`), `OPENAI_SUMMARY_MODEL` (`gpt-4.1-mini`) |
-| Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-2.5-flash`), `GOOGLE_EMBEDDINGS_MODEL` (`gemini-embedding-001`), `GOOGLE_LEVEL_MODEL` (`gemini-3-flash-preview`) |
+| OpenAI | `OPENAI_API_KEY` | `OPENAI_CHAT_MODEL` (`gpt-5.1`), `OPENAI_EMBED_MODEL` (`text-embedding-3-small`), `OPENAI_REASONING_MODEL` (`gpt-5-mini`), `OPENAI_SUMMARY_MODEL` (`gpt-4.1-mini`) |
+| Google | `GEMINI_API_KEY`, else `GOOGLE_GENAI_API_KEY` / `GOOGLE_API_KEY` | `GOOGLE_MODEL` (`gemini-3.8-flash`), `GOOGLE_EMBEDDINGS_MODEL` (`gemini-embedding-001`), `GOOGLE_LEVEL_MODEL` (`gemini-3-flash-preview`) |
 | Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`); reasoning test: `OLLAMA_THINK_MODEL` (`gpt-oss:20b`); image test runs only with `OLLAMA_VISION_MODEL` (e.g. `mistral-small3.2`) |
 | vLLM | `MAESTRO_VLLM` (full base URL incl. `/v1`, e.g. `http://my-vllm:8000/v1`); optional `MAESTRO_VLLM_API_KEY` | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
 | LunaRoute (via `openaicompat`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`); image test runs only with `LUNAROUTE_VISION_MODEL` (e.g. `glm-5.3-vision`) |
-| Vertex AI (`anthropicvertex`, `google` with `WithVertex`) | `VERTEX_PROJECT` plus Application Default Credentials (`gcloud auth application-default login`; the tests load ADC themselves, the toolkit never does) | Claude: `VERTEX_REGION` (`global`), `VERTEX_ANTHROPIC_MODEL` (`claude-opus-4-6`), `VERTEX_ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`). Gemini: `VERTEX_GEMINI_LOCATION` (`global`), `VERTEX_GEMINI_MODEL` (`gemini-2.5-flash`), `VERTEX_GEMINI_LEVEL_MODEL` (`gemini-3-flash-preview`), `VERTEX_EMBEDDINGS_LOCATION` (`us-central1`), `VERTEX_EMBEDDINGS_MODEL` (`gemini-embedding-001`) |
+| Vertex AI (`anthropicvertex`, `google` with `WithVertex`) | `VERTEX_PROJECT` plus Application Default Credentials (`gcloud auth application-default login`; the tests load ADC themselves, the toolkit never does) | Claude: `VERTEX_REGION` (`global`), `VERTEX_ANTHROPIC_MODEL` (`claude-opus-4-6`), `VERTEX_ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`). Gemini: `VERTEX_GEMINI_LOCATION` (`global`), `VERTEX_GEMINI_MODEL` (`gemini-3.8-flash`), `VERTEX_GEMINI_LEVEL_MODEL` (`gemini-3-flash-preview`), `VERTEX_EMBEDDINGS_LOCATION` (`us-central1`), `VERTEX_EMBEDDINGS_MODEL` (`gemini-embedding-001`) |
 
 ```sh
 MAESTRO_ANTHROPIC_API_KEY=sk-ant-… OPENAI_API_KEY=sk-… GEMINI_API_KEY=… make test-integration

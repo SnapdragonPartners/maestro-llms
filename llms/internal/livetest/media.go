@@ -12,6 +12,7 @@ import (
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
+	"github.com/SnapdragonPartners/maestro-llms/llms/toolloop"
 )
 
 // redPNG returns a solid red square PNG.
@@ -115,5 +116,94 @@ func TextDocumentInput(t *testing.T, c llms.ChatClient) {
 	completeMedia(t, c, documentCodeWord,
 		llms.Document("text/plain", []byte("Meeting notes.\nThe code word is "+documentCodeWord+".\n")),
 		llms.Text("What is the code word in this document? Answer with the word only."),
+	)
+}
+
+// toolResultMedia runs a tool loop whose one tool returns parts (ADR-0041)
+// and checks the final answer contains want (case-insensitive), proving the
+// model read the media from the tool result. The client is wrapped in the
+// validation middleware so the request shape is checked too. It also checks
+// DefaultEstimator's input estimate for the last request is at least the
+// reported input tokens, as completeMedia does.
+func toolResultMedia(t *testing.T, c llms.ChatClient, want, prompt string, tool llms.ToolDefinition, parts ...llms.ContentPart) {
+	t.Helper()
+	calls := 0
+	var tr trace
+	ctx, cancel := context.WithTimeout(context.Background(), scenarioTimeout)
+	defer cancel()
+	out := toolloop.Run(ctx, toolloop.Config{
+		Client: middleware.ChainChat(c, middleware.ValidationChat(), middleware.RetryChat(middleware.DefaultRetryConfig())),
+		Request: llms.ChatRequest{
+			Purpose:   llms.PurposeChat,
+			Messages:  []llms.Message{llms.UserText(prompt)},
+			MaxTokens: maxTokens,
+		},
+		Tools: []toolloop.Tool{{
+			Definition: tool,
+			Execute: func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
+				calls++
+				return toolloop.ToolResult{Parts: parts}, nil
+			},
+		}},
+		MaxIterations: 4,
+		OnIteration:   tr.onIteration,
+		OnToolCall:    tr.onToolCall,
+	})
+	tr.dump(t)
+	if out.Kind != toolloop.OutcomeFinalAnswer {
+		t.Fatalf("kind=%q iterations=%d err=%v final text=%q", out.Kind, out.Iterations, out.Err, out.Response.Text)
+	}
+	if calls == 0 {
+		t.Fatalf("model answered without calling %s: %q", tool.Name, out.Response.Text)
+	}
+	t.Logf("answer: %q usage: %+v", truncate(out.Response.Text, 200), out.Response.Usage)
+	if !strings.Contains(strings.ToLower(out.Response.Text), strings.ToLower(want)) {
+		t.Fatalf("answer %q does not contain %q", out.Response.Text, want)
+	}
+	// The last request is the transcript before the final answer.
+	last := llms.ChatRequest{Messages: out.Messages[:len(out.Messages)-1], Tools: []llms.ToolDefinition{tool}}
+	est := middleware.DefaultEstimator{}.EstimateChat(last).InputTokens
+	t.Logf("DefaultEstimator input estimate: %d, reported input: %d", est, out.Response.Usage.InputTokens)
+	if out.Response.Usage.InputTokens > est {
+		t.Fatalf("estimate %d below reported input tokens %d", est, out.Response.Usage.InputTokens)
+	}
+}
+
+// ToolResultPDF has a get_document tool return a text part and a one-page
+// PDF, and asks for the code word in the document (ADR-0041).
+func ToolResultPDF(t *testing.T, c llms.ChatClient) {
+	t.Helper()
+	toolResultMedia(t, c, documentCodeWord,
+		"Call get_document to fetch the document, then tell me the code word in it. Answer with the word only.",
+		toolDef("get_document", "Returns the document as a PDF.", `{"type":"object","properties":{}}`),
+		llms.Text("Here is the document."),
+		llms.Document("application/pdf", codeWordPDF()),
+	)
+}
+
+// ToolResultImage has a get_screenshot tool return a solid red PNG and asks
+// for its color (ADR-0041).
+func ToolResultImage(t *testing.T, c llms.ChatClient) {
+	t.Helper()
+	toolResultMedia(t, c, "red",
+		"Call get_screenshot, then tell me the single color that fills the screenshot. Answer with one word.",
+		toolDef("get_screenshot", "Returns a screenshot as a PNG image.", `{"type":"object","properties":{}}`),
+		llms.Image("image/png", redPNG(t, 256)),
+	)
+}
+
+// ToolResultCachedPDF is ToolResultPDF with CacheBreakpoint on the document
+// part, proving the provider accepts a cache marker inside a tool result
+// (Anthropic, ADR-0041). The document is below the minimum cacheable size,
+// so no cache write is expected; the request must simply be accepted.
+func ToolResultCachedPDF(t *testing.T, c llms.ChatClient) {
+	t.Helper()
+	doc := llms.Document("application/pdf", codeWordPDF())
+	doc.CacheBreakpoint = true
+	toolResultMedia(t, c, documentCodeWord,
+		"Call get_document to fetch the document, then tell me the code word in it. Answer with the word only.",
+		toolDef("get_document", "Returns the document as a PDF.", `{"type":"object","properties":{}}`),
+		llms.Text("Here is the document."),
+		doc,
 	)
 }

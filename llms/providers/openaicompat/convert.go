@@ -85,7 +85,11 @@ func (c *Client) buildMessages(req llms.ChatRequest, system string) ([]openai.Ch
 				if p.Type != llms.ContentToolResult || p.ToolResult == nil {
 					return nil, chatBadRequest(c.model, "tool messages must contain only tool_result parts")
 				}
-				out = append(out, openai.ToolMessage(p.ToolResult.Content, p.ToolResult.ToolCallID))
+				content, perr := c.toolResultText(p.ToolResult)
+				if perr != nil {
+					return nil, perr
+				}
+				out = append(out, openai.ToolMessage(content, p.ToolResult.ToolCallID))
 			}
 		default:
 			return nil, chatBadRequest(c.model, "unknown message role: "+string(m.Role))
@@ -95,6 +99,22 @@ func (c *Client) buildMessages(req llms.ChatRequest, system string) ([]openai.Ch
 		return nil, chatBadRequest(c.model, "request has no messages")
 	}
 	return out, nil
+}
+
+// toolResultText returns a tool result's text. Chat Completions tool
+// messages are text-only, so Parts (ADR-0041) may hold text parts only,
+// joined by a blank line; an image or document is rejected before the call.
+func (c *Client) toolResultText(r *llms.ToolResult) (string, *llms.ProviderError) {
+	if len(r.Parts) == 0 {
+		return r.Content, nil
+	}
+	if err := media.CheckToolResult(r); err != nil {
+		return "", chatBadRequest(c.model, err.Error())
+	}
+	if media.HasMedia(r.Parts) {
+		return "", chatBadRequest(c.model, "openaicompat does not accept image or document parts in a tool result (tool messages are text-only)")
+	}
+	return media.JoinText(r.Parts), nil
 }
 
 // hasMedia reports whether parts include an image or document part.

@@ -80,8 +80,65 @@ func CheckRole(m *llms.Message) error {
 	}
 	for i := range m.Content {
 		if t := m.Content[i].Type; IsMedia(t) {
-			return fmt.Errorf("%s content part is not valid in a %q message; media is allowed on user messages only", t, m.Role)
+			return fmt.Errorf("%s content part is not valid in a %q message; media is allowed on user messages and in ToolResult.Parts only", t, m.Role)
 		}
 	}
 	return nil
+}
+
+// CheckToolResult validates the shape of a tool result's Parts (ADR-0041):
+// Content and Parts are not both set, and each part is a non-empty text part
+// or a well-formed image or document part (Check). Which media a provider
+// accepts in a tool result is the adapter's decision. The validation
+// middleware, toolloop and every adapter call it.
+func CheckToolResult(r *llms.ToolResult) error {
+	if len(r.Parts) == 0 {
+		return nil
+	}
+	if r.Content != "" {
+		return errors.New("tool result sets both Content and Parts; set one")
+	}
+	for i := range r.Parts {
+		p := &r.Parts[i]
+		switch p.Type {
+		case llms.ContentText:
+			if p.Text == "" {
+				return fmt.Errorf("tool result part %d: empty text part", i)
+			}
+		case llms.ContentImage, llms.ContentDocument:
+			if _, err := Check(p); err != nil {
+				return fmt.Errorf("tool result part %d: %w", i, err)
+			}
+		default:
+			return fmt.Errorf("tool result part %d: %q part not allowed; tool result parts are text, image or document", i, p.Type)
+		}
+	}
+	return nil
+}
+
+// HasMedia reports whether parts contains an image or document part.
+func HasMedia(parts []llms.ContentPart) bool {
+	for i := range parts {
+		if IsMedia(parts[i].Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// JoinText joins the text parts of a tool result's Parts with a blank line,
+// for providers whose tool result is a single string (ADR-0041). It ignores
+// other parts; callers reject media first.
+func JoinText(parts []llms.ContentPart) string {
+	var b strings.Builder
+	for i := range parts {
+		if parts[i].Type != llms.ContentText {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(parts[i].Text)
+	}
+	return b.String()
 }

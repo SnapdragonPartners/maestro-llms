@@ -1,6 +1,6 @@
 # 0040. Image and document content parts
 
-- **Status:** Accepted; amends [ADR-0008](0008-prompt-cache-hint.md) (`CacheBreakpoint` on media)
+- **Status:** Accepted; amends [ADR-0008](0008-prompt-cache-hint.md) (`CacheBreakpoint` on media); amended by [ADR-0041](0041-tool-result-parts.md) (media in tool results)
 - **Date:** 2026-11-08
 
 ## Context

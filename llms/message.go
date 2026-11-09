@@ -33,16 +33,17 @@ const (
 	// requires reasoning to be sent back (Anthropic thinking blocks) and
 	// replay it only to the provider that produced it. See ADR-0021.
 	ContentReasoning ContentPartType = "reasoning"
-	// ContentImage is an image the user sends to the model; Media is
-	// populated and Media.MediaType is an image type ("image/png"). Allowed
-	// on user messages only. Each adapter accepts the image types its
-	// provider documents and rejects others before the call. See ADR-0040.
+	// ContentImage is an image sent to the model; Media is populated and
+	// Media.MediaType is an image type ("image/png"). Allowed on user
+	// messages and in ToolResult.Parts (ADR-0041). Each adapter accepts the
+	// image types its provider documents and rejects others before the
+	// call. See ADR-0040.
 	ContentImage ContentPartType = "image"
-	// ContentDocument is a document the user sends to the model, such as a
-	// PDF; Media is populated and Media.MediaType is not an image type.
-	// Allowed on user messages only. Adapters whose provider takes no
-	// documents (Ollama, openaicompat) reject it before the call. See
-	// ADR-0040.
+	// ContentDocument is a document sent to the model, such as a PDF; Media
+	// is populated and Media.MediaType is not an image type. Allowed on user
+	// messages and in ToolResult.Parts (ADR-0041). Adapters whose provider
+	// takes no documents (Ollama, openaicompat) reject it before the call.
+	// See ADR-0040.
 	ContentDocument ContentPartType = "document"
 )
 

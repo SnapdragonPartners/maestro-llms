@@ -18,7 +18,7 @@ import (
 // OPENAI_CHAT_MODEL, and the fixed model for tests sized or tuned to one
 // model (context overflow, cache, params). Change it here when the model
 // reaches end of life.
-const defaultChatModel = "gpt-6-luna"
+const defaultChatModel = "gpt-5.1"
 
 func openaiChatModel() string {
 	if m := os.Getenv("OPENAI_CHAT_MODEL"); m != "" {

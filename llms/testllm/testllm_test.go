@@ -377,3 +377,24 @@ func TestFakeChatRecordingIsolatesMedia(t *testing.T) {
 		t.Fatalf("media recording not isolated: %q %q", rec.MediaType, rec.Data)
 	}
 }
+
+// TestFakeChatRecordingIsolatesToolResultParts: a tool result's Parts and
+// their media bytes are deep-copied too (ADR-0041).
+func TestFakeChatRecordingIsolatesToolResultParts(t *testing.T) {
+	c := &FakeChatClient{Text: "ok"}
+	req := llms.ChatRequest{Messages: []llms.Message{llms.ToolResultMessage(llms.ToolResult{
+		ToolCallID: "c1", Parts: []llms.ContentPart{llms.Text("t"), llms.Image("image/png", []byte("img"))},
+	})}}
+	if _, err := c.Complete(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	parts := req.Messages[0].Content[0].ToolResult.Parts
+	parts[0].Text = "changed"
+	parts[1].Media.Data[0] = 'X'
+	c.Calls()[0].Messages[0].Content[0].ToolResult.Parts[1].Media.Data[1] = 'Y'
+
+	rec := c.Calls()[0].Messages[0].Content[0].ToolResult.Parts
+	if rec[0].Text != "t" || string(rec[1].Media.Data) != "img" {
+		t.Fatalf("tool result parts recording not isolated: %q %q", rec[0].Text, rec[1].Media.Data)
+	}
+}

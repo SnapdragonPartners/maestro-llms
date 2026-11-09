@@ -109,7 +109,9 @@ func hasNonReasoning(m *llms.Message) bool {
 
 // validateParts checks each content part matches its discriminant AND is
 // legal for the message role: tool_call and reasoning only on assistant,
-// tool_result only on tool, image and document only on user (ADR-0040). Text is allowed on user/assistant here; tool messages are further
+// tool_result only on tool, image and document only on user (ADR-0040) or
+// inside a tool result's Parts (ADR-0041). Text is allowed on
+// user/assistant here; tool messages are further
 // restricted to tool_result-only by pairingState.tool (so the effective
 // contract is: text on user/assistant, tool_call on assistant, tool_result
 // on tool). Enforcing role/part legality here (not just the payload
@@ -138,6 +140,9 @@ func validateParts(mi int, m *llms.Message) error {
 			}
 			if m.Role != llms.RoleTool {
 				return &ValidationError{fmt.Sprintf("message %d part %d: tool_result only allowed on tool messages, got role %q", mi, pi, m.Role)}
+			}
+			if err := media.CheckToolResult(p.ToolResult); err != nil {
+				return &ValidationError{fmt.Sprintf("message %d part %d: %v", mi, pi, err)}
 			}
 		default:
 			return &ValidationError{fmt.Sprintf("message %d part %d: unknown content type %q", mi, pi, p.Type)}

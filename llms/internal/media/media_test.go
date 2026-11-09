@@ -150,3 +150,38 @@ func TestPDFPages(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckToolResult(t *testing.T) {
+	ok := []llms.ToolResult{
+		{Content: "plain"},
+		{},
+		{Parts: []llms.ContentPart{llms.Text("a"), llms.Image("image/png", []byte("x")), llms.Document("application/pdf", []byte("x"))}},
+	}
+	for i := range ok {
+		if err := CheckToolResult(&ok[i]); err != nil {
+			t.Errorf("result %d rejected: %v", i, err)
+		}
+	}
+	bad := map[string]llms.ToolResult{
+		"both":       {Content: "x", Parts: []llms.ContentPart{llms.Text("y")}},
+		"empty text": {Parts: []llms.ContentPart{llms.Text("")}},
+		"bad media":  {Parts: []llms.ContentPart{llms.Document("image/png", []byte("x"))}},
+		"nested":     {Parts: []llms.ContentPart{{Type: llms.ContentToolResult, ToolResult: &llms.ToolResult{}}}},
+		"unknown":    {Parts: []llms.ContentPart{{Type: "audio"}}},
+	}
+	for name, r := range bad {
+		if err := CheckToolResult(&r); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestJoinTextAndHasMedia(t *testing.T) {
+	parts := []llms.ContentPart{llms.Text("a"), llms.Image("image/png", []byte("x")), llms.Text("b")}
+	if got := JoinText(parts); got != "a\n\nb" {
+		t.Fatalf("JoinText = %q", got)
+	}
+	if !HasMedia(parts) || HasMedia(parts[:1]) {
+		t.Fatal("HasMedia wrong")
+	}
+}

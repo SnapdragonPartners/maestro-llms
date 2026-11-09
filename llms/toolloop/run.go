@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 	"github.com/SnapdragonPartners/maestro-llms/llms/middleware"
 )
 
@@ -283,6 +284,11 @@ func executeCalls(
 		if execErr == nil && result.Stop && result.IsError {
 			execErr = fmt.Errorf("toolloop: tool %q (call %q) returned ToolResult with both Stop and IsError set", call.Name, call.ID)
 		}
+		if execErr == nil {
+			if err := media.CheckToolResult(&llms.ToolResult{Content: result.Content, Parts: result.Parts}); err != nil {
+				execErr = fmt.Errorf("toolloop: tool %q (call %q) returned an invalid ToolResult: %w", call.Name, call.ID, err)
+			}
+		}
 		if execErr != nil {
 			kind, err := classifyStop(ctx, execErr, OutcomeToolError)
 			return nil, nil, &Outcome{
@@ -298,6 +304,7 @@ func executeCalls(
 		results[i] = llms.ToolResult{
 			ToolCallID: call.ID,
 			Content:    result.Content,
+			Parts:      result.Parts,
 			IsError:    result.IsError,
 		}
 

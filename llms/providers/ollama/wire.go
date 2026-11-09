@@ -146,6 +146,25 @@ func (c *Client) imageData(p *llms.ContentPart) (string, *llms.ProviderError) {
 	return media.Base64(p.Media.Data), nil
 }
 
+// toolResultText returns a tool result's text. Ollama tool messages are
+// text-only, so Parts (ADR-0041) may hold text parts only, joined by a blank
+// line; an image or document is rejected before the call.
+func (c *Client) toolResultText(r *llms.ToolResult) (string, *llms.ProviderError) {
+	if r == nil {
+		return "", badRequest(c.model, "tool_result content part with nil ToolResult")
+	}
+	if len(r.Parts) == 0 {
+		return r.Content, nil
+	}
+	if err := media.CheckToolResult(r); err != nil {
+		return "", badRequest(c.model, err.Error())
+	}
+	if media.HasMedia(r.Parts) {
+		return "", badRequest(c.model, "ollama does not accept image or document parts in a tool result (tool messages are text-only)")
+	}
+	return media.JoinText(r.Parts), nil
+}
+
 // messageParts converts one app message into wire messages (a tool result
 // becomes its own role:"tool" message, so one app message can yield several).
 func (c *Client) messageParts(m llms.Message) ([]wireMessage, *llms.ProviderError) {
@@ -188,12 +207,13 @@ func (c *Client) messageParts(m llms.Message) ([]wireMessage, *llms.ProviderErro
 				},
 			})
 		case llms.ContentToolResult:
-			if p.ToolResult == nil {
-				return nil, badRequest(c.model, "tool_result content part with nil ToolResult")
+			content, perr := c.toolResultText(p.ToolResult)
+			if perr != nil {
+				return nil, perr
 			}
 			out = append(out, wireMessage{
 				Role:       "tool",
-				Content:    p.ToolResult.Content,
+				Content:    content,
 				ToolCallID: p.ToolResult.ToolCallID,
 			})
 		}

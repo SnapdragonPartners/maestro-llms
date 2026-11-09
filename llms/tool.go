@@ -66,10 +66,19 @@ type ToolCall struct {
 }
 
 // ToolResult is the result of executing a ToolCall, sent back in a RoleTool
-// message. Content is a string (textual or JSON-string); structured or
-// multimodal results may be added later without changing round-trip semantics.
+// message. A result is either Content, a string (textual or JSON-string),
+// which stays the common case, or Parts, for a result with images or
+// documents (ADR-0041). Setting both is invalid; neither is an empty result.
 type ToolResult struct {
 	ToolCallID string
 	Content    string
-	IsError    bool
+	// Parts is the result as content parts: text, image and document parts
+	// only (llms.Text, llms.Image, llms.Document), no tool calls, tool
+	// results or reasoning. Each adapter maps what its provider accepts in
+	// a tool result and rejects anything else before the call; nothing is
+	// moved to another message. Ollama and openaicompat take text parts
+	// only. A reader of Content sees an empty string for such a result. See
+	// ADR-0041.
+	Parts   []ContentPart
+	IsError bool
 }

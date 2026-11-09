@@ -90,7 +90,7 @@ func tokensForPart(p *llms.ContentPart) int {
 			tokensForText(string(p.ToolCall.ProviderSignature)))
 	}
 	if p.ToolResult != nil {
-		n = sum(n, tokensForText(p.ToolResult.Content))
+		n = sum(n, tokensForText(p.ToolResult.Content), tokensForResultParts(p.ToolResult.Parts))
 	}
 	if p.Reasoning != nil {
 		// Opaque provider data is sent back verbatim, so count all of
@@ -103,6 +103,22 @@ func tokensForPart(p *llms.ContentPart) int {
 		n = sum(n, tokensForMedia(p.Type, p.Media))
 	}
 	return n
+}
+
+// tokensForResultParts estimates a tool result's Parts (ADR-0041): text and
+// media as in a message, each with the per-part overhead. It does not
+// recurse, since result parts never nest (and a malformed one must not loop).
+func tokensForResultParts(parts []llms.ContentPart) int {
+	total := 0
+	for i := range parts {
+		p := &parts[i]
+		n := sum(perPartOverhead, tokensForText(p.Text))
+		if p.Media != nil && media.IsMedia(p.Type) {
+			n = sum(n, tokensForMedia(p.Type, p.Media))
+		}
+		total = sum(total, n)
+	}
+	return total
 }
 
 // sum adds token counts, saturating at math.MaxInt. Every estimator sum goes

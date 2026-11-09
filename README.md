@@ -723,7 +723,7 @@ emb, err := google.NewEmbeddings(
 
 // Gemini chat via Vertex, same creds and the same options (ADR-0028).
 gemini, err := google.New(
-	google.WithModel("gemini-2.5-flash"),
+	google.WithModel("gemini-3.8-flash"),
 	google.WithVertex("my-proj", "global"),
 	google.WithCredentials(creds),
 	// google.WithBaseURL(pscURL), google.WithHTTPClient(pscClient),
@@ -1317,6 +1317,14 @@ message is exported as `compact.SummaryMessage` / `SummaryText`, so an app
 can store a summary and put it back to keep it rolling, its format is fixed
 for v1, and `Summarize` rolls a leading summary in place — see
 [ADR-0039](docs/adr/0039-compact-summary-message-format.md); openai-go
-v3.90 and genai v1.77).
+v3.90 and genai v1.77), and **v1.2.0** (image and document content: user
+messages take `ContentImage` / `ContentDocument` parts with inline bytes,
+mapped per provider and rejected before the call where a provider can't
+take them, and `DefaultEstimator` counts them — see
+[ADR-0040](docs/adr/0040-image-and-document-parts.md); a tool result can
+return text, image and document parts in the new `ToolResult.Parts`, so a
+tool can hand the model a PDF or a screenshot as its answer, which on
+Gemini needs a Gemini 3 model — see
+[ADR-0041](docs/adr/0041-tool-result-parts.md)).
 
 MIT — see [`LICENSE`](LICENSE).

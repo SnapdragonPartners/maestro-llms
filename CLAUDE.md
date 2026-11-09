@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 - **Maestro** — desktop/local, in-process rate limiting.
 - **Morris** — cloud (Cloud Run, multi-instance), needs shared/distributed rate limiting, audit, content classification.
 - **maestro-cms** — content service that does budget-aware text chunking for embeddings (requester of ADR-0013's `EstimateTextTokens`).
-- **maestro-agents** — agent foundation library built on `llms`/`toolloop`, compiled into Morris and other apps; needs multimodal input (#147, #148), hard per-run token/cost budgets (#149), and MCP-served tools (#150).
+- **maestro-agents** — agent foundation library built on `llms`/`toolloop`, compiled into Morris and other apps; its multimodal input (#147, #148) shipped in v1.2, and it still needs hard per-run token/cost budgets (#149) and MCP-served tools (#150).
 
 The core design tension to keep in mind on every change: **nothing in this package may import product-specific assumptions from any consumer.** Config resolution, secret sourcing, audit taxonomy, distributed limiter storage, content rules, and chunking policy all belong to the applications, not here. When a feature seems to need app context, the answer is almost always an interface the app implements or a callback hook — not a concrete implementation in this package.
 

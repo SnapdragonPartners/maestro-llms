@@ -36,7 +36,7 @@ func TestIntegrationAnthropicReasoningEffort(t *testing.T) {
 func TestIntegrationAnthropicReasoningBudget(t *testing.T) {
 	model := os.Getenv("ANTHROPIC_BUDGET_MODEL")
 	if model == "" {
-		model = "claude-haiku-4-5-20251001"
+		model = defaultChatModel
 	}
 	u := livetest.ReasoningControl(t, newAnthropic(t, model),
 		livetest.Same(llms.ReasoningConfig{BudgetTokens: 1024}),

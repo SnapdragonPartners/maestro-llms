@@ -10,6 +10,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 )
 
 func chatBadRequest(model, msg string) *llms.ProviderError {
@@ -56,9 +57,19 @@ func (c *Client) buildInput(req llms.ChatRequest) ([]responses.ResponseInputItem
 	var items []responses.ResponseInputItemUnionParam
 	for i := range req.Messages {
 		m := req.Messages[i]
+		if err := media.CheckRole(&m); err != nil {
+			return nil, chatBadRequest(c.model, err.Error())
+		}
 		for j := range m.Content {
 			p := m.Content[j]
 			switch p.Type {
+			case llms.ContentImage, llms.ContentDocument:
+				content, perr := c.mediaContent(&p)
+				if perr != nil {
+					return nil, perr
+				}
+				items = append(items, responses.ResponseInputItemParamOfMessage(
+					responses.ResponseInputMessageContentListParam{content}, responses.EasyInputMessageRoleUser))
 			case llms.ContentText:
 				if p.Text == "" {
 					return nil, chatBadRequest(c.model, "empty text content part")
@@ -90,6 +101,42 @@ func (c *Client) buildInput(req llms.ChatRequest) ([]responses.ResponseInputItem
 		return nil, chatBadRequest(c.model, "request has no messages")
 	}
 	return items, nil
+}
+
+// documentFilename is sent with a PDF: input_file needs a file name beside
+// inline file_data, and the part type carries none.
+const documentFilename = "document.pdf"
+
+// mediaContent maps an image or document part to a Responses input content
+// item (ADR-0040): JPEG, PNG, GIF or WebP as input_image with a data URL and
+// detail "auto" (the API default), and PDF as input_file with a data URL.
+// Anything else is rejected before the call. Each part goes in its own user
+// message item, in order, the same as text parts.
+func (c *Client) mediaContent(p *llms.ContentPart) (responses.ResponseInputContentUnionParam, *llms.ProviderError) {
+	base, err := media.Check(p)
+	if err != nil {
+		return responses.ResponseInputContentUnionParam{}, chatBadRequest(c.model, err.Error())
+	}
+	if p.Type == llms.ContentImage {
+		switch base {
+		case "image/jpeg", "image/png", "image/gif", "image/webp":
+			return responses.ResponseInputContentUnionParam{OfInputImage: &responses.ResponseInputImageParam{
+				Detail:   responses.ResponseInputImageDetailAuto,
+				ImageURL: param.NewOpt(media.DataURI(base, p.Media.Data)),
+			}}, nil
+		default:
+			return responses.ResponseInputContentUnionParam{}, chatBadRequest(c.model,
+				"unsupported image media type "+base+" (want image/jpeg, image/png, image/gif or image/webp)")
+		}
+	}
+	if base != "application/pdf" {
+		return responses.ResponseInputContentUnionParam{}, chatBadRequest(c.model,
+			"unsupported document media type "+base+" (want application/pdf)")
+	}
+	return responses.ResponseInputContentUnionParam{OfInputFile: &responses.ResponseInputFileParam{
+		FileData: param.NewOpt(media.DataURI(base, p.Media.Data)),
+		Filename: param.NewOpt(documentFilename),
+	}}, nil
 }
 
 func (c *Client) buildTools(req llms.ChatRequest) ([]responses.ToolUnionParam, *llms.ProviderError) {

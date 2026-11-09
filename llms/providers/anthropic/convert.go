@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/anthropics/anthropic-sdk-go"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/internal/extraparams"
 )
 
@@ -70,12 +72,73 @@ func countContentBreakpoints(msgs []llms.Message) int {
 	n := 0
 	for i := range msgs {
 		for j := range msgs[i].Content {
-			if msgs[i].Content[j].Type == llms.ContentText && msgs[i].Content[j].CacheBreakpoint {
+			if cacheable(msgs[i].Content[j].Type) && msgs[i].Content[j].CacheBreakpoint {
 				n++
 			}
 		}
 	}
 	return n
+}
+
+// textBlock returns a text block, with cache_control when cache is set.
+func textBlock(text string, cache bool) anthropic.ContentBlockParamUnion {
+	if !cache {
+		return anthropic.NewTextBlock(text)
+	}
+	return anthropic.ContentBlockParamUnion{OfText: &anthropic.TextBlockParam{
+		Text:         text,
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
+	}}
+}
+
+// cacheable reports whether a part of type t maps to a block that carries
+// cache_control: text, image and document.
+func cacheable(t llms.ContentPartType) bool {
+	return t == llms.ContentText || t == llms.ContentImage || t == llms.ContentDocument
+}
+
+// mediaBlock maps an image or document part to an Anthropic block (ADR-0040).
+// Images: JPEG, PNG, GIF and WebP. Documents: PDF (base64 source) and plain
+// text (text source; the bytes must be UTF-8). Anything else is rejected
+// before the call.
+func (c *Client) mediaBlock(p *llms.ContentPart, cache bool) (anthropic.ContentBlockParamUnion, *llms.ProviderError) {
+	base, err := media.Check(p)
+	if err != nil {
+		return anthropic.ContentBlockParamUnion{}, badRequest(c.model, err.Error())
+	}
+	var cc anthropic.CacheControlEphemeralParam
+	if cache {
+		cc = anthropic.NewCacheControlEphemeralParam()
+	}
+	if p.Type == llms.ContentImage {
+		switch mt := anthropic.Base64ImageSourceMediaType(base); mt {
+		case anthropic.Base64ImageSourceMediaTypeImageJPEG, anthropic.Base64ImageSourceMediaTypeImagePNG,
+			anthropic.Base64ImageSourceMediaTypeImageGIF, anthropic.Base64ImageSourceMediaTypeImageWebP:
+			return anthropic.ContentBlockParamUnion{OfImage: &anthropic.ImageBlockParam{
+				Source: anthropic.ImageBlockParamSourceUnion{OfBase64: &anthropic.Base64ImageSourceParam{
+					Data: media.Base64(p.Media.Data), MediaType: mt,
+				}},
+				CacheControl: cc,
+			}}, nil
+		default:
+			return anthropic.ContentBlockParamUnion{}, badRequest(c.model,
+				"unsupported image media type "+base+" (want image/jpeg, image/png, image/gif or image/webp)")
+		}
+	}
+	doc := anthropic.DocumentBlockParam{CacheControl: cc}
+	switch base {
+	case "application/pdf":
+		doc.Source.OfBase64 = &anthropic.Base64PDFSourceParam{Data: media.Base64(p.Media.Data)}
+	case "text/plain":
+		if !utf8.Valid(p.Media.Data) {
+			return anthropic.ContentBlockParamUnion{}, badRequest(c.model, "text/plain document is not valid UTF-8")
+		}
+		doc.Source.OfText = &anthropic.PlainTextSourceParam{Data: string(p.Media.Data)}
+	default:
+		return anthropic.ContentBlockParamUnion{}, badRequest(c.model,
+			"unsupported document media type "+base+" (want application/pdf or text/plain)")
+	}
+	return anthropic.ContentBlockParamUnion{OfDocument: &doc}, nil
 }
 
 // blocksForParts converts app-neutral content parts to SDK content blocks,
@@ -92,14 +155,7 @@ func (c *Client) blocksForParts(parts []llms.ContentPart, cb *cacheBudget) (tool
 			if p.Text == "" {
 				return nil, nil, badRequest(c.model, "empty text content part")
 			}
-			if p.CacheBreakpoint && cb.honor() {
-				others = append(others, anthropic.ContentBlockParamUnion{OfText: &anthropic.TextBlockParam{
-					Text:         p.Text,
-					CacheControl: anthropic.NewCacheControlEphemeralParam(),
-				}})
-			} else {
-				others = append(others, anthropic.NewTextBlock(p.Text))
-			}
+			others = append(others, textBlock(p.Text, p.CacheBreakpoint && cb.honor()))
 		case llms.ContentToolCall:
 			if p.ToolCall == nil {
 				return nil, nil, badRequest(c.model, "tool_call content part with nil ToolCall")
@@ -112,6 +168,12 @@ func (c *Client) blocksForParts(parts []llms.ContentPart, cb *cacheBudget) (tool
 			}
 			toolResults = append(toolResults, anthropic.NewToolResultBlock(
 				p.ToolResult.ToolCallID, p.ToolResult.Content, p.ToolResult.IsError))
+		case llms.ContentImage, llms.ContentDocument:
+			b, perr := c.mediaBlock(&p, p.CacheBreakpoint && cb.honor())
+			if perr != nil {
+				return nil, nil, perr
+			}
+			others = append(others, b)
 		case llms.ContentReasoning:
 			// Only this provider's parts reach here (buildMessages runs
 			// llms.ReasoningFrom first).
@@ -149,6 +211,9 @@ func (c *Client) buildMessages(req llms.ChatRequest, cb *cacheBudget) ([]anthrop
 	msgs := llms.ReasoningFrom(providerName, req.Messages)
 	for i := range msgs {
 		m := msgs[i]
+		if err := media.CheckRole(&m); err != nil {
+			return nil, badRequest(c.model, err.Error())
+		}
 		tr, other, perr := c.blocksForParts(m.Content, cb)
 		if perr != nil {
 			return nil, perr

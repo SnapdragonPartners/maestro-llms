@@ -33,7 +33,7 @@ func TestIntegrationGoogleReasoningBudget(t *testing.T) {
 func TestIntegrationGoogleReasoningEffort(t *testing.T) {
 	m := os.Getenv("GOOGLE_LEVEL_MODEL")
 	if m == "" {
-		m = "gemini-3-flash-preview"
+		m = defaultLevelModel
 	}
 	livetest.ReasoningControl(t, newGemini(t, m),
 		livetest.Same(llms.ReasoningConfig{Effort: llms.ReasoningEffortLow}),

@@ -27,3 +27,27 @@ func TestAddSub(t *testing.T) {
 		}
 	}
 }
+
+func TestMul(t *testing.T) {
+	cases := []struct{ a, b, want int }{
+		{0, math.MaxInt, 0},
+		{3, 4, 12},
+		{-3, 4, -12},
+		{-3, -4, 12},
+		{math.MaxInt, 2, math.MaxInt},
+		{math.MaxInt, -2, math.MinInt},
+		{math.MinInt, -1, math.MaxInt},
+		{-1, math.MinInt, math.MaxInt},
+		{math.MinInt, 1, math.MinInt},
+		{math.MinInt, 2, math.MinInt},
+		{math.MinInt, math.MinInt, math.MaxInt},
+		{math.MaxInt/2 + 1, 2, math.MaxInt},
+		{math.MinInt/2 - 1, 2, math.MinInt},
+		{math.MaxInt / 2, 2, math.MaxInt - 1},
+	}
+	for _, c := range cases {
+		if got := Mul(c.a, c.b); got != c.want {
+			t.Errorf("Mul(%d, %d) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}

@@ -13,7 +13,7 @@ import (
 // model is fixed (not GOOGLE_MODEL) because the prompt is sized to its
 // 1,048,576-token window: 1.1M tokens (~6.6 MB) is rejected unbilled.
 func TestIntegrationGoogleContextOverflow(t *testing.T) {
-	c, err := google.New(google.WithAPIKey(apiKey(t)), google.WithModel("gemini-2.5-flash"))
+	c, err := google.New(google.WithAPIKey(apiKey(t)), google.WithModel(defaultChatModel))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestIntegrationGoogleContextOverflow(t *testing.T) {
 // TestIntegrationGoogleCompactOnOverflow is the ADR-0030 live overflow
 // scenario, sized like the ADR-0026 trigger.
 func TestIntegrationGoogleCompactOnOverflow(t *testing.T) {
-	c, err := google.New(google.WithAPIKey(apiKey(t)), google.WithModel("gemini-2.5-flash"))
+	c, err := google.New(google.WithAPIKey(apiKey(t)), google.WithModel(defaultChatModel))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

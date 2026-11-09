@@ -25,11 +25,19 @@ func apiKey(t *testing.T) string {
 	return ""
 }
 
+// The Gemini models the live tests use (Gemini API and Vertex): the
+// defaults for the *_MODEL overrides, and the fixed model for the
+// context-overflow tests. Change them here when a model reaches end of life.
+const (
+	defaultChatModel  = "gemini-2.5-flash"
+	defaultLevelModel = "gemini-3-flash-preview" // takes thinkingLevel (Gemini 3)
+)
+
 func model() string {
 	if m := os.Getenv("GOOGLE_MODEL"); m != "" {
 		return m
 	}
-	return "gemini-2.5-flash"
+	return defaultChatModel
 }
 
 // complete retries only on errors our own classifier reports retryable, so

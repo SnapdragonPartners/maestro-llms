@@ -42,7 +42,7 @@ Copy `0001`'s structure as the template.
 | [0005](0005-circuit-open-error.md) | Circuit breaker emits a distinct, non-retryable `CircuitOpenError` | Accepted; amended by 0033 |
 | [0006](0006-validation-error.md) | Validation middleware: distinct non-retryable `ValidationError`, structural scope only | Accepted |
 | [0007](0007-toolchoice-required.md) | `ToolChoiceRequired` — force a tool call without naming one | Accepted |
-| [0008](0008-prompt-cache-hint.md) | Provider-neutral prompt-cache hint (`ContentPart.CacheBreakpoint`) | Accepted |
+| [0008](0008-prompt-cache-hint.md) | Provider-neutral prompt-cache hint (`ContentPart.CacheBreakpoint`) | Accepted; amended by 0040 |
 | [0009](0009-vertex-backend-psc-and-gemini-embeddings.md) | Vertex backend (Anthropic + Gemini embeddings), PSC injection, task-typed embeddings — design of record; v0.4 implementation | Accepted; amended by 0027, 0028, 0029 |
 | [0010](0010-toolcall-provider-signature.md) | Round-trip opaque provider state via `ToolCall.ProviderSignature` (Gemini 3 thought_signature) | Accepted |
 | [0011](0011-toolloop-helper.md) | Tool loop helper — scope, API, and non-goals | Accepted; partially superseded by 0017; amended by 0019, 0020, 0026, 0030 |
@@ -73,3 +73,4 @@ Copy `0001`'s structure as the template.
 | [0037](0037-no-model-listing-on-vertex.md) | No model listing on Vertex AI: `ListModels` (and the one-shot `LatestInFamily`) fail fast with a config error on `anthropicvertex` and Gemini-on-Vertex; the catalog and quotas don't say what a project can call | Accepted |
 | [0038](0038-compact-pins-in-flight-prompt.md) | Compaction pins the in-flight prompt: `KeepLast`/`Summarize` keep the last user messages the in-flight turns answer, so a chat transcript's new question survives; summaries are never pinned and keep rolling | Accepted; amended by 0039 |
 | [0039](0039-compact-summary-message-format.md) | The compaction summary message is exported (`SummaryMessage`/`SummaryText`) so apps can store and roll it, and its format is fixed for v1; a summary in the head is rolled in place; "compact now" stays `Reason: CompactOverflow` | Accepted |
+| [0040](0040-image-and-document-parts.md) | Image and document parts: `ContentImage`/`ContentDocument` with inline bytes (`Media`), user messages only, per-provider mapping with a pre-call `bad_request` for anything unsupported (no per-model prediction); `CacheBreakpoint` on media; `DefaultEstimator` counts media from documented figures; a placeholder under compaction | Accepted |

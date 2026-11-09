@@ -1325,6 +1325,9 @@ take them, and `DefaultEstimator` counts them — see
 return text, image and document parts in the new `ToolResult.Parts`, so a
 tool can hand the model a PDF or a screenshot as its answer, which on
 Gemini needs a Gemini 3 model — see
-[ADR-0041](docs/adr/0041-tool-result-parts.md)).
+[ADR-0041](docs/adr/0041-tool-result-parts.md); `llms.ToolResult` and
+`toolloop.ToolResult` are no longer comparable with `==`,
+`toolloop.Outcome.TerminalResult` moved position (unkeyed literals only),
+and `ToolResult.Content` is empty for a result that uses `Parts`).
 
 MIT — see [`LICENSE`](LICENSE).

@@ -1325,8 +1325,9 @@ take them, and `DefaultEstimator` counts them; code that switches on
 `document` parts and needs its `default` case (ADR-0032) — see
 [ADR-0040](docs/adr/0040-image-and-document-parts.md); a tool result can
 return text, image and document parts in the new `ToolResult.Parts`, so a
-tool can hand the model a PDF or a screenshot as its answer, which on
-Gemini needs a Gemini 3 model — see
+tool can hand the model a PDF or a screenshot as its answer (Ollama and
+`openaicompat` reject media there before the call; Gemini needs a Gemini 3
+model, and on Vertex an older model ignores the media without an error) — see
 [ADR-0041](docs/adr/0041-tool-result-parts.md); `llms.ToolResult` and
 `toolloop.ToolResult` are no longer comparable with `==`,
 `toolloop.Outcome.TerminalResult` moved position (unkeyed literals only),

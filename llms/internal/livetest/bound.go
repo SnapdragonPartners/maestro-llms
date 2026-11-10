@@ -163,12 +163,14 @@ func InputBoundToolLoop(t *testing.T, c llms.ChatClient, requireReplay bool) {
 		out, _ := runReasoningLoop(t, chk, notesSystem(), []toolloop.Tool{notesTool()})
 		// A safety classifier's refusal isn't a bound failure; retry it
 		// as reasoningLoop does.
-		if out.Kind == toolloop.OutcomeEmptyResponse && out.Response.StopReason == "refusal" && attempt < attempts {
+		refused := out.Kind == toolloop.OutcomeEmptyResponse && out.Response.StopReason == "refusal"
+		if refused && attempt < attempts {
 			t.Logf("attempt %d: the model refused a turn; retrying", attempt)
 			continue
 		}
 		if out.Kind != toolloop.OutcomeFinalAnswer || out.Iterations < 2 {
-			t.Fatalf("tool loop: kind=%q iterations=%d err=%v, want a final answer after >= 2 iterations", out.Kind, out.Iterations, out.Err)
+			t.Fatalf("tool loop: kind=%q stop=%q iterations=%d err=%v (refused: %v), want a final answer after >= 2 iterations",
+				out.Kind, out.Response.StopReason, out.Iterations, out.Err, refused)
 		}
 		// Iterations counts tool-calling turns; the final answer is one
 		// more provider call.

@@ -157,6 +157,67 @@ func bucketName(t *testing.T) string {
 	return fmt.Sprintf("%s_%d", base, nameSeq.Add(1))
 }
 
+// MaxWait for test limiters (#160). MaxWait bounds the whole acquire,
+// Postgres round trips included, so an acquire a test expects to admit uses
+// admitWait, generous for a slow CI runner. refuseWait is only for acquires a
+// test expects to refuse; never expect an admit within it. A MaxWait expiry
+// is a LimitError whether or not an attempt completed, so a concurrency
+// refusal is checked with mustRefuse instead, which needs no deadline.
+const (
+	admitWait  = 2 * time.Second
+	refuseWait = time.Second
+)
+
+// mustRefuse checks that key has no free slot on a concurrency-only
+// bucket. One admission attempt on l must complete and refuse for lack of
+// capacity: no lease, no error, not impossible. A LimitError from Acquire
+// can't show that, since a MaxWait that expires mid-attempt is one too. Then
+// Acquire on a short-lived probe must return the public refusal's shape:
+// a temporary *LimitError with no Cause and no RetryAfter (ADR-0033).
+func mustRefuse(t *testing.T, l *Limiter, key string, tokens int) {
+	t.Helper()
+	res, err := l.tryAcquire(context.Background(), key, tokens)
+	if err != nil {
+		t.Fatalf("admission attempt on %q: %v", key, err)
+	}
+	if res.Lease != nil {
+		_ = res.Lease.Release(context.Background())
+		t.Fatalf("admission attempt on %q admitted, want a capacity refusal", key)
+	}
+	if res.Impossible != "" {
+		t.Fatalf("admission attempt on %q impossible (%s), want a capacity refusal", key, res.Impossible)
+	}
+	// The probe's window stays well inside the holder's LeaseTTL: outliving
+	// it would let a renewal lapse on a slow runner free the slot, and the
+	// probe would admit. A MaxWait expiry mid-attempt has the same shape as
+	// a capacity refusal here, so a short window loses nothing.
+	probe := newLimiter(t, l.db, Config{LeaseTTL: l.cfg.LeaseTTL, MaxWait: min(refuseWait, l.cfg.LeaseTTL/2)})
+	ls, err := probe.Acquire(context.Background(), key, tokens)
+	if ls != nil {
+		_ = ls.Release(context.Background())
+		t.Fatalf("Acquire on %q admitted while the slot was held, want a refusal", key)
+	}
+	var le *bucket.LimitError
+	if !errors.As(err, &le) {
+		t.Fatalf("Acquire on a full %q = %v, want a *LimitError", key, err)
+	}
+	if le.Permanent || le.Cause != nil || le.RetryAfter != 0 {
+		t.Fatalf("Acquire on a full %q = %+v, want temporary, no Cause, no RetryAfter", key, le)
+	}
+}
+
+// liveLeases counts name's unexpired lease rows.
+func liveLeases(t *testing.T, db *sql.DB, name string) int {
+	t.Helper()
+	var n int
+	err := db.QueryRow(`SELECT count(*) FROM bucket.lease l JOIN bucket.bucket b ON b.id = l.bucket_id
+		WHERE b.name = $1 AND l.expires_at > clock_timestamp()`, name).Scan(&n)
+	if err != nil {
+		t.Fatalf("count live leases: %v", err)
+	}
+	return n
+}
+
 func ensure(t *testing.T, l *Limiter, name string, lim bucket.Limits) {
 	t.Helper()
 	if err := l.Ensure(context.Background(), name, lim, true); err != nil {
@@ -171,11 +232,6 @@ func mustAcquire(t *testing.T, l *Limiter, key string, tokens int) *lease {
 		t.Fatalf("Acquire(%q, %d): %v", key, tokens, err)
 	}
 	return got.(*lease) //nolint:forcetypeassert // test
-}
-
-func isLimitErr(err error) bool {
-	var le *bucket.LimitError
-	return errors.As(err, &le)
 }
 
 // --- schema --------------------------------------------------------------
@@ -331,12 +387,17 @@ func TestConcurrencyCapAcrossInstances(t *testing.T) {
 }
 
 func TestTokenRefillAndAdjust(t *testing.T) {
-	l := newLimiter(t, openMain(t), Config{MaxWait: 50 * time.Millisecond})
+	db := openMain(t)
+	// admitWait stays below the 10s a 100-token refill takes, so a missing
+	// refund still fails the second acquire instead of waiting it out.
+	l := newLimiter(t, db, Config{MaxWait: admitWait})
+	probe := newLimiter(t, db, Config{MaxWait: refuseWait})
 	name := bucketName(t)
 	ensure(t, l, name, bucket.Limits{TokensPerMinute: 600, BufferFactor: 1}) // capacity 600, 10/s
 	ctx := context.Background()
+	start := time.Now()
 	first := mustAcquire(t, l, name, 600)
-	_, err := l.Acquire(ctx, name, 100)
+	_, err := probe.Acquire(ctx, name, 100) // waits up to refuseWait while the bucket refills
 	var le *bucket.LimitError
 	if !errors.As(err, &le) || le.RetryAfter < 8*time.Second || le.RetryAfter > 10*time.Second {
 		t.Fatalf("empty bucket: %v", err)
@@ -352,8 +413,11 @@ func TestTokenRefillAndAdjust(t *testing.T) {
 	if err := openMain(t).QueryRow(`SELECT token_balance FROM bucket.bucket WHERE name = $1`, name).Scan(&balance); err != nil {
 		t.Fatal(err)
 	}
-	if balance > -690 || balance < -720 {
-		t.Fatalf("balance = %v, want about -700", balance)
+	// 600 - 600 + 300 refund - 100 - 900 debt = -700, plus 10 tokens/s
+	// refilled since the first acquire (the refused probe waits).
+	refilled := 10 * time.Since(start).Seconds()
+	if want := -700 + refilled; balance > want+10 || balance < -720 {
+		t.Fatalf("balance = %v, want about -700 + %.1f refilled", balance, refilled)
 	}
 	_ = first.Release(ctx)
 	_ = second.Release(ctx)
@@ -362,13 +426,15 @@ func TestTokenRefillAndAdjust(t *testing.T) {
 // --- leases --------------------------------------------------------------
 
 func TestRenewalKeepsLeaseAlive(t *testing.T) {
-	l := newLimiter(t, openMain(t), Config{LeaseTTL: 600 * time.Millisecond, MaxWait: 100 * time.Millisecond})
+	db := openMain(t)
+	l := newLimiter(t, db, Config{LeaseTTL: 600 * time.Millisecond, MaxWait: admitWait})
 	name := bucketName(t)
 	ensure(t, l, name, bucket.Limits{MaxConcurrency: 1})
 	held := mustAcquire(t, l, name, 0)
 	time.Sleep(2 * time.Second) // several TTLs
-	if _, err := l.Acquire(context.Background(), name, 0); !isLimitErr(err) {
-		t.Fatalf("slot reclaimed while renewed: %v", err)
+	mustRefuse(t, l, name, 0)   // the renewed lease still holds the slot
+	if n := liveLeases(t, db, name); n != 1 {
+		t.Fatalf("live leases = %d after the refusal, want the renewed holder's 1", n)
 	}
 	if err := held.Release(context.Background()); err != nil {
 		t.Fatalf("Release: %v", err)
@@ -462,7 +528,6 @@ func TestAcquireAfterLongLockWait(t *testing.T) {
 	ttl := 500 * time.Millisecond
 	db := openMain(t)
 	l := newLimiter(t, db, Config{LeaseTTL: ttl, MaxWait: 10 * time.Second})
-	probe := newLimiter(t, db, Config{LeaseTTL: ttl, MaxWait: 100 * time.Millisecond})
 	name := bucketName(t)
 	ensure(t, l, name, bucket.Limits{MaxConcurrency: 1})
 
@@ -488,8 +553,9 @@ func TestAcquireAfterLongLockWait(t *testing.T) {
 	if err := db.QueryRow(`SELECT expires_at > clock_timestamp() + interval '200 milliseconds' FROM bucket.lease WHERE id = $1`, ls.id).Scan(&live); err != nil || !live {
 		t.Fatalf("lease after a long lock wait is not live: %v", err)
 	}
-	if _, err := probe.Acquire(context.Background(), name, 0); !isLimitErr(err) {
-		t.Fatalf("slot of a fresh lease was reclaimed: %v", err)
+	mustRefuse(t, l, name, 0) // the fresh lease holds the slot
+	if n := liveLeases(t, db, name); n != 1 {
+		t.Fatalf("live leases = %d after the refusal, want the fresh lease's 1", n)
 	}
 	_ = ls.Release(context.Background())
 }
@@ -656,13 +722,21 @@ func TestEnsureSettlesBeforeRateChange(t *testing.T) {
 }
 
 func TestLimitChangeSeenByEveryInstance(t *testing.T) {
-	a := newLimiter(t, openMain(t), Config{MaxWait: 100 * time.Millisecond})
-	b := newLimiter(t, openMain(t), Config{MaxWait: 100 * time.Millisecond})
+	a := newLimiter(t, openMain(t), Config{MaxWait: admitWait})
+	b := newLimiter(t, openMain(t), Config{MaxWait: admitWait})
 	name := bucketName(t)
 	ensure(t, a, name, bucket.Limits{MaxConcurrency: 1})
+	// b sees the original limit first, so its admit below proves an
+	// instance that already read the limits observes the change (no
+	// per-instance caching, ADR-0025).
+	warm := mustAcquire(t, b, name, 0)
+	if err := warm.Release(context.Background()); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 	held := mustAcquire(t, a, name, 0)
-	if _, err := b.Acquire(context.Background(), name, 0); !isLimitErr(err) {
-		t.Fatalf("over the limit: %v", err)
+	mustRefuse(t, b, name, 0) // over the limit
+	if n := liveLeases(t, openMain(t), name); n != 1 {
+		t.Fatalf("live leases = %d after the refusal, want MaxConcurrency 1", n)
 	}
 	ensure(t, a, name, bucket.Limits{MaxConcurrency: 2})
 	other := mustAcquire(t, b, name, 0)

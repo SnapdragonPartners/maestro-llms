@@ -157,6 +157,15 @@ func bucketName(t *testing.T) string {
 	return fmt.Sprintf("%s_%d", base, nameSeq.Add(1))
 }
 
+// MaxWait for test limiters (#160). MaxWait bounds the whole acquire,
+// Postgres round trips included, so an acquire a test expects to admit uses
+// admitWait, generous for a slow CI runner. refuseWait is only for acquires a
+// test expects to refuse, so they fail fast; never expect an admit within it.
+const (
+	admitWait  = 2 * time.Second
+	refuseWait = 100 * time.Millisecond
+)
+
 func ensure(t *testing.T, l *Limiter, name string, lim bucket.Limits) {
 	t.Helper()
 	if err := l.Ensure(context.Background(), name, lim, true); err != nil {
@@ -331,12 +340,16 @@ func TestConcurrencyCapAcrossInstances(t *testing.T) {
 }
 
 func TestTokenRefillAndAdjust(t *testing.T) {
-	l := newLimiter(t, openMain(t), Config{MaxWait: 50 * time.Millisecond})
+	db := openMain(t)
+	// admitWait stays below the 10s a 100-token refill takes, so a missing
+	// refund still fails the second acquire instead of waiting it out.
+	l := newLimiter(t, db, Config{MaxWait: admitWait})
+	probe := newLimiter(t, db, Config{MaxWait: refuseWait})
 	name := bucketName(t)
 	ensure(t, l, name, bucket.Limits{TokensPerMinute: 600, BufferFactor: 1}) // capacity 600, 10/s
 	ctx := context.Background()
 	first := mustAcquire(t, l, name, 600)
-	_, err := l.Acquire(ctx, name, 100)
+	_, err := probe.Acquire(ctx, name, 100)
 	var le *bucket.LimitError
 	if !errors.As(err, &le) || le.RetryAfter < 8*time.Second || le.RetryAfter > 10*time.Second {
 		t.Fatalf("empty bucket: %v", err)
@@ -362,12 +375,14 @@ func TestTokenRefillAndAdjust(t *testing.T) {
 // --- leases --------------------------------------------------------------
 
 func TestRenewalKeepsLeaseAlive(t *testing.T) {
-	l := newLimiter(t, openMain(t), Config{LeaseTTL: 600 * time.Millisecond, MaxWait: 100 * time.Millisecond})
+	db := openMain(t)
+	l := newLimiter(t, db, Config{LeaseTTL: 600 * time.Millisecond, MaxWait: admitWait})
+	probe := newLimiter(t, db, Config{LeaseTTL: 600 * time.Millisecond, MaxWait: refuseWait})
 	name := bucketName(t)
 	ensure(t, l, name, bucket.Limits{MaxConcurrency: 1})
 	held := mustAcquire(t, l, name, 0)
 	time.Sleep(2 * time.Second) // several TTLs
-	if _, err := l.Acquire(context.Background(), name, 0); !isLimitErr(err) {
+	if _, err := probe.Acquire(context.Background(), name, 0); !isLimitErr(err) {
 		t.Fatalf("slot reclaimed while renewed: %v", err)
 	}
 	if err := held.Release(context.Background()); err != nil {
@@ -656,12 +671,13 @@ func TestEnsureSettlesBeforeRateChange(t *testing.T) {
 }
 
 func TestLimitChangeSeenByEveryInstance(t *testing.T) {
-	a := newLimiter(t, openMain(t), Config{MaxWait: 100 * time.Millisecond})
-	b := newLimiter(t, openMain(t), Config{MaxWait: 100 * time.Millisecond})
+	a := newLimiter(t, openMain(t), Config{MaxWait: admitWait})
+	bProbe := newLimiter(t, openMain(t), Config{MaxWait: refuseWait})
+	b := newLimiter(t, openMain(t), Config{MaxWait: admitWait})
 	name := bucketName(t)
 	ensure(t, a, name, bucket.Limits{MaxConcurrency: 1})
 	held := mustAcquire(t, a, name, 0)
-	if _, err := b.Acquire(context.Background(), name, 0); !isLimitErr(err) {
+	if _, err := bProbe.Acquire(context.Background(), name, 0); !isLimitErr(err) {
 		t.Fatalf("over the limit: %v", err)
 	}
 	ensure(t, a, name, bucket.Limits{MaxConcurrency: 2})

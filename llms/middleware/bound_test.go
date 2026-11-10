@@ -89,11 +89,13 @@ func TestBoundChatCountsEveryField(t *testing.T) {
 	}
 	grow("tool call", llms.Message{Role: llms.RoleAssistant, Content: []llms.ContentPart{
 		{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{ID: "id12", Name: "nm", Parameters: json.RawMessage(`{}`), ProviderSignature: []byte("sig")}},
-	}}, boundPerMessage+boundPerPart+4+2+2+3)
+	}}, boundPerMessage+boundPerPart+4+2+2+4) // "sig" is sent as base64 "c2ln"
+	// With no matching call in the history, a result's ID is counted twice:
+	// Gemini sends it again as the function name.
 	grow("tool result content", llms.ToolResultMessage(llms.ToolResult{ToolCallID: "id12", Content: "abcde"}),
-		boundPerMessage+boundPerPart+4+5)
+		boundPerMessage+boundPerPart+4+4+5)
 	grow("tool result parts", llms.ToolResultMessage(llms.ToolResult{ToolCallID: "id12", Parts: []llms.ContentPart{llms.Text("abc")}}),
-		boundPerMessage+boundPerPart+4+boundPerPart+3)
+		boundPerMessage+boundPerPart+4+4+boundPerPart+3)
 	grow("reasoning", llms.Message{Role: llms.RoleAssistant, Content: []llms.ContentPart{
 		{Type: llms.ContentReasoning, Reasoning: &llms.Reasoning{Provider: llms.ProviderAnthropic, Text: "ab", ProviderData: []byte("opaque")}},
 	}}, boundPerMessage+boundPerPart+2+6)
@@ -260,5 +262,70 @@ func TestRateLimitBounderErrorStopsBeforeReserve(t *testing.T) {
 		llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{{ID: "1", Text: "a"}}})
 	if !errors.Is(err, errBound) || len(lim.reqs) != 0 {
 		t.Fatalf("embeddings: err = %v, reserved %d; want the bounder's error and no reserve", err, len(lim.reqs))
+	}
+}
+
+// The wire-expansion cases (ADR-0043): each field counts at the size an
+// adapter can put on the wire, not its size in the request.
+
+func TestBoundChatToolSchemaReencoded(t *testing.T) {
+	// Anthropic re-encodes a tool schema; 1e20 becomes 21 digits.
+	schema := json.RawMessage(`{"type":"object","properties":{"n":{"type":"number","maximum":1e20}}}`)
+	reencoded := `{"properties":{"n":{"maximum":100000000000000000000,"type":"number"}},"type":"object"}`
+	withTool := func(s json.RawMessage) llms.ChatRequest {
+		return llms.ChatRequest{
+			Messages:  []llms.Message{llms.UserText("x")},
+			Tools:     []llms.ToolDefinition{{Name: "t", InputSchema: s}},
+			MaxTokens: 10,
+		}
+	}
+	got := mustBound(t, anthropicModel, withTool(schema)).InputTokens -
+		mustBound(t, anthropicModel, withTool(json.RawMessage(`{}`))).InputTokens
+	if want := len(reencoded) - len(`{}`); got != want {
+		t.Fatalf("schema counted %d bytes over {}, want the re-encoded %d (raw is %d)", got, want, len(schema)-2)
+	}
+}
+
+func TestBoundChatToolArgumentsReencoded(t *testing.T) {
+	// Gemini decodes tool call arguments into a map that genai re-encodes.
+	call := func(args string) llms.ChatRequest {
+		return llms.ChatRequest{Messages: []llms.Message{
+			{Role: llms.RoleAssistant, Content: []llms.ContentPart{{Type: llms.ContentToolCall,
+				ToolCall: &llms.ToolCall{ID: "c", Name: "f", Parameters: json.RawMessage(args)}}}},
+		}, MaxTokens: 10}
+	}
+	got := mustBound(t, googleModel, call(`{"v":1e20}`)).InputTokens - mustBound(t, googleModel, call(`{}`)).InputTokens
+	if want := len(`{"v":100000000000000000000}`) - len(`{}`); got != want {
+		t.Fatalf("arguments counted %d bytes over {}, want the re-encoded %d", got, want)
+	}
+}
+
+func TestBoundChatToolResultResendsName(t *testing.T) {
+	name := "a_rather_long_function_name_for_gemini"
+	req := llms.ChatRequest{Messages: []llms.Message{
+		{Role: llms.RoleAssistant, Content: []llms.ContentPart{{Type: llms.ContentToolCall,
+			ToolCall: &llms.ToolCall{ID: "c1", Name: name, Parameters: json.RawMessage(`{}`)}}}},
+		llms.ToolResultMessage(llms.ToolResult{ToolCallID: "c1", Content: "ok"}),
+	}, MaxTokens: 10}
+	callOnly := req
+	callOnly.Messages = req.Messages[:1]
+	got := mustBound(t, googleModel, req).InputTokens - mustBound(t, googleModel, callOnly).InputTokens
+	// The result message: its framing, the ID, the resolved name sent
+	// again, and the content.
+	if want := boundPerMessage + boundPerPart + len("c1") + len(name) + len("ok"); got != want {
+		t.Fatalf("tool result counted %d, want %d including the resolved name", got, want)
+	}
+}
+
+func TestBoundChatSignatureBase64(t *testing.T) {
+	sig := make([]byte, 300) // 400 bytes as base64
+	withSig := func(sig []byte) llms.ChatRequest {
+		return llms.ChatRequest{Messages: []llms.Message{
+			{Role: llms.RoleAssistant, Content: []llms.ContentPart{{Type: llms.ContentToolCall,
+				ToolCall: &llms.ToolCall{ID: "c", Name: "f", Parameters: json.RawMessage(`{}`), ProviderSignature: sig}}}},
+		}, MaxTokens: 10}
+	}
+	if got := mustBound(t, googleModel, withSig(sig)).InputTokens - mustBound(t, googleModel, withSig(nil)).InputTokens; got != 400 {
+		t.Fatalf("300-byte signature counted %d, want its base64 length 400", got)
 	}
 }

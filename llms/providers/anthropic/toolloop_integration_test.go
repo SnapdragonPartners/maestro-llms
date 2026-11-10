@@ -100,9 +100,9 @@ func TestIntegrationAnthropicInputBound(t *testing.T) {
 }
 
 func TestIntegrationAnthropicInputBoundToolLoop(t *testing.T) {
-	livetest.InputBoundToolLoop(t, newAnthropicToolLoopClient(t))
+	livetest.InputBoundToolLoop(t, newAnthropicToolLoopClient(t), false)
 }
 
 func TestIntegrationAnthropicInputBoundReasoningLoop(t *testing.T) {
-	livetest.InputBoundToolLoop(t, newStrictReasoningClient(t))
+	livetest.InputBoundToolLoop(t, newStrictReasoningClient(t), true)
 }

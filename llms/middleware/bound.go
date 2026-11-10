@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"encoding/base64"
+	"encoding/json"
+
 	"github.com/SnapdragonPartners/maestro-llms/llms"
 	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 	"github.com/SnapdragonPartners/maestro-llms/llms/internal/satint"
@@ -73,6 +76,18 @@ const (
 // plus the framing margins, plus anthropicToolOverhead for an Anthropic
 // request with tools. Replayed reasoning is counted by its bytes; the live
 // tests check that against billed usage.
+//
+// Each field is counted at the size the adapters can put on the wire, which
+// can exceed its size in the request (the wire-expansion cases):
+//
+//   - JSON an adapter decodes and re-encodes (Anthropic tool schemas, Gemini
+//     tool call arguments) counts at the larger of its raw and re-encoded
+//     length, since re-encoding expands exponent-form numbers;
+//   - a tool call signature, sent base64-encoded (Gemini's
+//     thought_signature), counts at its base64 length;
+//   - a tool result counts its function name again, resolved from the
+//     matching tool call (Gemini sends it with every result), or its call ID
+//     again when there is no match.
 func (DefaultEstimator) BoundChat(model llms.ModelRef, req llms.ChatRequest) (ratelimit.UsageUnits, bool, error) {
 	if req.MaxTokens <= 0 || len(req.ProviderParams) > 0 {
 		return ratelimit.UsageUnits{}, false, nil
@@ -85,13 +100,14 @@ func (DefaultEstimator) BoundChat(model llms.ModelRef, req llms.ChatRequest) (ra
 	if len(req.Tools) > 0 && model.Provider != llms.ProviderAnthropic {
 		return ratelimit.UsageUnits{}, false, nil
 	}
-	input, ok := boundParts(req.System)
+	names := toolCallNames(req.Messages)
+	input, ok := boundParts(req.System, names)
 	if !ok {
 		return ratelimit.UsageUnits{}, false, nil
 	}
 	input = sum(input, boundPerRequest)
 	for i := range req.Messages {
-		n, ok := boundParts(req.Messages[i].Content)
+		n, ok := boundParts(req.Messages[i].Content, names)
 		if !ok {
 			return ratelimit.UsageUnits{}, false, nil
 		}
@@ -101,7 +117,7 @@ func (DefaultEstimator) BoundChat(model llms.ModelRef, req llms.ChatRequest) (ra
 		input = sum(input, anthropicToolOverhead, len(req.ToolChoice.Name))
 		for i := range req.Tools {
 			td := &req.Tools[i]
-			input = sum(input, boundPerTool, len(td.Name), len(td.Description), len(td.InputSchema))
+			input = sum(input, boundPerTool, len(td.Name), len(td.Description), jsonWireLen(td.InputSchema))
 		}
 	}
 	return ratelimit.UsageUnits{
@@ -119,12 +135,46 @@ func (DefaultEstimator) BoundEmbeddings(llms.ModelRef, llms.EmbeddingRequest) (r
 	return ratelimit.UsageUnits{}, false, nil
 }
 
+// toolCallNames maps each tool call ID in msgs to its name, as the Gemini
+// adapter resolves a tool result's function name.
+func toolCallNames(msgs []llms.Message) map[string]string {
+	names := map[string]string{}
+	for i := range msgs {
+		for j := range msgs[i].Content {
+			if tc := msgs[i].Content[j].ToolCall; tc != nil && tc.ID != "" {
+				names[tc.ID] = tc.Name
+			}
+		}
+	}
+	return names
+}
+
+// jsonWireLen is the size of raw JSON on the wire after an adapter decodes it
+// into generic values and re-encodes it: the larger of the raw and re-encoded
+// lengths (re-encoding expands an exponent such as 1e20 into 21 digits).
+// Invalid JSON counts at its raw length; the adapter rejects it before the
+// call.
+func jsonWireLen(raw json.RawMessage) int {
+	if len(raw) == 0 {
+		return 0
+	}
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return len(raw)
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return len(raw)
+	}
+	return max(len(raw), len(out))
+}
+
 // boundParts bounds a list of content parts, or reports false when one has no
-// bound (media).
-func boundParts(parts []llms.ContentPart) (int, bool) {
+// bound (media). names resolves tool result names (toolCallNames).
+func boundParts(parts []llms.ContentPart, names map[string]string) (int, bool) {
 	total := 0
 	for i := range parts {
-		n, ok := boundPart(&parts[i])
+		n, ok := boundPart(&parts[i], names)
 		if !ok {
 			return 0, false
 		}
@@ -135,16 +185,23 @@ func boundParts(parts []llms.ContentPart) (int, bool) {
 
 // boundPart bounds one content part. Every byte the adapters can send counts,
 // so a field an adapter omits only loosens the bound.
-func boundPart(p *llms.ContentPart) (int, bool) {
+func boundPart(p *llms.ContentPart, names map[string]string) (int, bool) {
 	if media.IsMedia(p.Type) || p.Media != nil {
 		return 0, false
 	}
 	n := sum(boundPerPart, len(p.Text))
 	if tc := p.ToolCall; tc != nil {
-		n = sum(n, len(tc.ID), len(tc.Name), len(tc.Parameters), len(tc.ProviderSignature))
+		n = sum(n, len(tc.ID), len(tc.Name), jsonWireLen(tc.Parameters),
+			base64.StdEncoding.EncodedLen(len(tc.ProviderSignature)))
 	}
 	if tr := p.ToolResult; tr != nil {
-		n = sum(n, len(tr.ToolCallID), len(tr.Content))
+		// The name sent again with the result: the matching call's, or
+		// the ID itself when the history has no match.
+		resent, ok := names[tr.ToolCallID]
+		if !ok {
+			resent = tr.ToolCallID
+		}
+		n = sum(n, len(tr.ToolCallID), len(resent), len(tr.Content))
 		for i := range tr.Parts {
 			rp := &tr.Parts[i]
 			if media.IsMedia(rp.Type) || rp.Media != nil {

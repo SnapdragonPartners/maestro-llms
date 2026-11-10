@@ -67,7 +67,20 @@ field.
    Otherwise the input bound is the UTF-8 byte count of every text field the
    adapters can send (system; message text; tool call IDs, names, arguments
    and signatures; tool results; reasoning text and opaque provider data;
-   tool definitions and a forced tool's name). To that it adds 64 per
+   tool definitions and a forced tool's name). Each field counts at the size
+   the adapters can put on the wire, which can exceed its size in the
+   request:
+   - JSON an adapter decodes and re-encodes (Anthropic tool schemas, Gemini
+     tool call arguments) counts at the larger of its raw and re-encoded
+     length, since re-encoding expands an exponent such as `1e20` into 21
+     digits;
+   - a tool call signature, sent base64-encoded (Gemini's
+     `thought_signature`), counts at its base64 length;
+   - a tool result counts its function name again: the matching call's name
+     (Gemini sends it with every result), or the call ID when the history has
+     no match.
+
+   To that it adds 64 per
    request, 16 per message, 16 per part and 32 per tool definition, plus
    1,024 for an Anthropic request with tools. Anthropic lists at most 804
    tool-use system-prompt tokens per model (Opus 4.7, `any`/`tool`); current
@@ -83,9 +96,11 @@ field.
      Anthropic model and on a thinking model with replayed reasoning.
    - Both wrap the client and fail if billed `InputTokens` ever exceeds the
      bound.
+   - The thinking-model run must include at least one bounded request that
+     replays reasoning; it retries when adaptive thinking skips thinking.
    - First run (2026-11-10): billed input was 2.5× under the bound for
-     Haiku 4.5 with tools (the tightest), 6–12× under for text, and 3.5–6.5×
-     under for Opus 5.5 replaying thinking.
+     Haiku 4.5 with tools (the tightest), 6–12× under for text (up to 33× on
+     Gemini), and 3.5–6.7× under for Opus 5.5 replaying thinking.
 
 ## Consequences
 
@@ -101,6 +116,9 @@ field.
   `InputBounder`: image formulas for the models it uses, OpenAI or Google
   tool overheads it has measured, or a tokenizer-exact count. It can
   delegate the text-only case to `DefaultEstimator`.
+- An adapter change that puts more bytes on the wire than the request holds
+  (a new re-encoding, a duplicated field) must update `boundPart`; the unit
+  tests pin each wire-expansion case.
 - The bound rests on documented and measured facts that providers can
   change: a tokenizer that emits sub-byte tokens, or an Anthropic model
   listed above 1,024 tool tokens, would break it. The live tests are the

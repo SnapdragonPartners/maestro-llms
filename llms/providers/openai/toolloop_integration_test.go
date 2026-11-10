@@ -61,3 +61,7 @@ func TestIntegrationOpenAICompactSummarize(t *testing.T) {
 func TestIntegrationOpenAIInputBound(t *testing.T) {
 	livetest.InputBound(t, newOpenAIToolLoopClient(t))
 }
+
+func TestIntegrationOpenAIInputBoundToolHistory(t *testing.T) {
+	livetest.InputBoundToolHistory(t, newOpenAIToolLoopClient(t))
+}

@@ -851,12 +851,15 @@ own `TokenEstimator`.
 For a hard budget, the reservation also carries an **upper bound** in
 `ReservationRequest.BoundUnits` (nil when none can be established), beside
 the estimate in `EstimatedUnits`
-([ADR-0043](docs/adr/0043-input-bound.md)). `DefaultEstimator` bounds
-text-only chat requests on Anthropic, OpenAI and Google that set `MaxTokens`,
-and Anthropic requests with tools; anything with media, `ProviderParams` or
-another provider has no bound. To bound more (image formulas for your
-models, say), implement the optional `middleware.InputBounder` on your
-estimator.
+([ADR-0043](docs/adr/0043-input-bound.md)). `DefaultEstimator` bounds a
+chat request on Anthropic, OpenAI or Google only when it sets `MaxTokens`.
+There is no bound for a request with media or `ProviderParams`, for tools on
+a provider other than Anthropic, or for any other provider. The bound covers
+the request as the adapters send it, so if a client rewrites the body
+(`anthropic.WithRequestOptions` with a body option, or an HTTP client or
+proxy that adds content), supply your own `InputBounder` or one that returns
+ok false. To bound more (image formulas for your models, say), implement the
+optional `middleware.InputBounder` on your estimator.
 
 The protocol the middleware runs per call is a **reservation**: `Reserve`
 (estimate units up front) → run the request → `Commit` (actual `Usage`) →

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -311,8 +312,8 @@ func TestBoundChatToolResultResendsName(t *testing.T) {
 	callOnly.Messages = req.Messages[:1]
 	got := mustBound(t, googleModel, req).InputTokens - mustBound(t, googleModel, callOnly).InputTokens
 	// The result message: its framing, the ID, the resolved name sent
-	// again, and the content.
-	if want := boundPerMessage + boundPerPart + len("c1") + len(name) + len("ok"); got != want {
+	// again, and the content as a JSON string in the response object.
+	if want := boundPerMessage + boundPerPart + len("c1") + len(name) + geminiResultFrame + len(`"ok"`); got != want {
 		t.Fatalf("tool result counted %d, want %d including the resolved name", got, want)
 	}
 }
@@ -327,5 +328,52 @@ func TestBoundChatSignatureBase64(t *testing.T) {
 	}
 	if got := mustBound(t, googleModel, withSig(sig)).InputTokens - mustBound(t, googleModel, withSig(nil)).InputTokens; got != 400 {
 		t.Fatalf("300-byte signature counted %d, want its base64 length 400", got)
+	}
+}
+
+// TestBoundChatGeminiResultJSONEncoded: Gemini sends tool result text as a
+// JSON string inside the function response object, so it counts at its
+// encoded length; other providers send it as text and count raw bytes.
+func TestBoundChatGeminiResultJSONEncoded(t *testing.T) {
+	nuls := strings.Repeat("\x00", 1024)
+	cases := []struct {
+		name   string
+		result llms.ToolResult
+		text   string // what the Gemini adapter puts in "content"
+	}{
+		{"content", llms.ToolResult{ToolCallID: "c1", Content: nuls}, nuls},
+		{"parts", llms.ToolResult{ToolCallID: "c1", Parts: []llms.ContentPart{
+			llms.Text("<a href=\"x\">&</a>"), llms.Text(nuls),
+		}}, "<a href=\"x\">&</a>\n\n" + nuls},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resultOnly := func(m llms.ModelRef) int {
+				req := llms.ChatRequest{Messages: []llms.Message{llms.ToolResultMessage(tc.result)}, MaxTokens: 10}
+				empty := llms.ChatRequest{Messages: []llms.Message{llms.UserText("")}, MaxTokens: 10}
+				return mustBound(t, m, req).InputTokens - mustBound(t, m, empty).InputTokens
+			}
+			enc, err := json.Marshal(tc.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parts := len(tc.result.Parts)
+			// The ID counts twice (no matching call), plus the result's
+			// part framing.
+			fixed := 2*len("c1") + parts*boundPerPart
+			if got, want := resultOnly(googleModel), fixed+geminiResultFrame+len(enc); got != want {
+				t.Fatalf("google: counted %d, want %d (encoded text is %d bytes)", got, want, len(enc))
+			}
+			if len(enc) < 6*1024 {
+				t.Fatalf("encoded text is %d bytes, want each NUL escaped to 6", len(enc))
+			}
+			raw := len(tc.result.Content)
+			for i := range tc.result.Parts {
+				raw += len(tc.result.Parts[i].Text)
+			}
+			if got, want := resultOnly(anthropicModel), fixed+raw; got != want {
+				t.Fatalf("anthropic: counted %d, want raw %d", got, want)
+			}
+		})
 	}
 }

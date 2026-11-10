@@ -78,7 +78,12 @@ field.
      `thought_signature`), counts at its base64 length;
    - a tool result counts its function name again: the matching call's name
      (Gemini sends it with every result), or the call ID when the history has
-     no match.
+     no match;
+   - on Google, a tool result's text (its `Content`, or its text parts joined
+     as the adapter joins them) counts at its JSON-encoded length plus the
+     `{"content":…,"is_error":…}` object around it: Gemini sends the text as
+     a string inside the function response's JSON, and encoding escapes a
+     control character to six bytes (and, in Go, `<`, `>` and `&`).
 
    To that it adds 64 per
    request, 16 per message, 16 per part and 32 per tool definition, plus
@@ -89,18 +94,33 @@ field.
 4. **Replayed reasoning counts at its byte length.** Whether billed input
    for a replayed thinking block is at most its bytes isn't documented, so
    the live tests check it on a thinking model (below).
-5. **Live checks guard the margins.**
+5. **The bound covers the request as the adapters send it.** A client
+   configured to change the body beyond the request is outside it, as
+   `ProviderParams` are: `anthropic.WithRequestOptions` with a body option
+   such as `option.WithJSONSet` (which can replace `system` or `max_tokens`),
+   or an HTTP client or proxy that rewrites or adds content. The bounder sees
+   the model and the request, not the client's configuration, so an app that
+   configures one supplies its own `InputBounder`, or one that returns ok
+   false. Detecting these from the client would need new API on every
+   adapter, for a configuration the app already knows it made.
+6. **Live checks guard the margins.**
    - `livetest.InputBound`: minimal and multi-turn text, on Anthropic, OpenAI
      and Google.
+   - `livetest.InputBoundToolHistory`: a replayed tool call and an
+     escape-heavy tool result (control characters, HTML, multi-byte text)
+     with no tools defined, on OpenAI and Google (Anthropic requires tools
+     with a tool history, which the tool loop check covers).
    - `livetest.InputBoundToolLoop`: the notes tool loop, on the default
      Anthropic model and on a thinking model with replayed reasoning.
-   - Both wrap the client and fail if billed `InputTokens` ever exceeds the
-     bound.
+   - Each wraps the client and fails if billed `InputTokens` ever exceeds
+     the bound, or is zero (unreported, so nothing was measured).
    - The thinking-model run must include at least one bounded request that
      replays reasoning; it retries when adaptive thinking skips thinking.
    - First run (2026-11-10): billed input was 2.5× under the bound for
      Haiku 4.5 with tools (the tightest), 6–12× under for text (up to 33× on
-     Gemini), and 3.5–6.7× under for Opus 5.5 replaying thinking.
+     Gemini), and 3.5–6.7× under for Opus 5.5 replaying thinking. The
+     escape-heavy tool history billed 1,021 input tokens against a bound of
+     4,894 on Gemini, and 1,058 against 2,863 on OpenAI.
 
 ## Consequences
 

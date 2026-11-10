@@ -2,6 +2,8 @@ package livetest
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -36,11 +38,17 @@ func (b *boundChecker) Complete(ctx context.Context, req llms.ChatRequest) (llms
 		}
 		return resp, err //nolint:wrapcheck // pass through for the scenario to classify
 	}
+	in := resp.Usage.InputTokens
+	if in <= 0 {
+		// Zero is unreported usage (the Google adapter leaves it zero
+		// without UsageMetadata); 0 <= bound would pass unmeasured.
+		b.t.Errorf("no billed input reported (InputTokens %d), so the bound can't be checked", in)
+		return resp, nil
+	}
 	b.checked++
 	if replaysReasoning(req.Messages) {
 		b.replayed++
 	}
-	in := resp.Usage.InputTokens
 	b.t.Logf("bound check: billed input %d <= bound %d? (%d messages, %d tools; bound is %.1fx billed)",
 		in, bound.InputTokens, len(req.Messages), len(req.Tools), float64(bound.InputTokens)/float64(max(in, 1)))
 	if in > bound.InputTokens {
@@ -89,6 +97,48 @@ func InputBound(t *testing.T, c llms.ChatClient) {
 	}
 	if chk.unbounded > 0 || chk.checked != len(reqs) {
 		t.Fatalf("checked %d of %d requests (%d unbounded), want all bounded", chk.checked, len(reqs), chk.unbounded)
+	}
+}
+
+// escapeHeavyResult is a tool result whose JSON encoding is much longer than
+// its bytes: control characters (six bytes each), <, > and & (six each in
+// Go), quotes, newlines, and multi-byte text.
+func escapeHeavyResult() string {
+	var b strings.Builder
+	for range 40 {
+		b.WriteString("<p class=\"x\">Tom &amp; Jerry</p>\n\x01\x02\x03\t\x00日本語のテキスト\n")
+	}
+	return b.String()
+}
+
+// InputBoundToolHistory checks the bound on a request that replays a tool
+// call and an escape-heavy tool result but defines no tools, which is
+// bounded on every provider that accepts such a history (Gemini sends the
+// result inside a JSON object, so this checks its encoded-length count).
+func InputBoundToolHistory(t *testing.T, c llms.ChatClient) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("live bound check skipped under -short")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), scenarioTimeout)
+	defer cancel()
+	chk := &boundChecker{next: withRetry(c), t: t}
+	req := llms.ChatRequest{
+		Messages: []llms.Message{
+			llms.UserText("Fetch https://example.com for me."),
+			{Role: llms.RoleAssistant, Content: []llms.ContentPart{{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{
+				ID: "call_fetch_1", Name: "fetch_page", Parameters: json.RawMessage(`{"url":"https://example.com"}`),
+			}}}},
+			llms.ToolResultMessage(llms.ToolResult{ToolCallID: "call_fetch_1", Content: escapeHeavyResult()}),
+			llms.UserText("In one short sentence, what did the page say?"),
+		},
+		MaxTokens: 128,
+	}
+	if _, err := chk.Complete(ctx, req); err != nil {
+		t.Fatalf("tool history request: %v", err)
+	}
+	if chk.checked != 1 {
+		t.Fatalf("checked %d requests (%d unbounded), want the tool history request bounded", chk.checked, chk.unbounded)
 	}
 }
 

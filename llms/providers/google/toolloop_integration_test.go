@@ -43,3 +43,7 @@ func TestIntegrationGoogleCompactSummarize(t *testing.T) {
 func TestIntegrationGoogleInputBound(t *testing.T) {
 	livetest.InputBound(t, newGoogleToolLoopClient(t))
 }
+
+func TestIntegrationGoogleInputBoundToolHistory(t *testing.T) {
+	livetest.InputBoundToolHistory(t, newGoogleToolLoopClient(t))
+}

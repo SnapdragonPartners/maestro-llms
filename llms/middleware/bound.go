@@ -87,7 +87,17 @@ const (
 //     thought_signature), counts at its base64 length;
 //   - a tool result counts its function name again, resolved from the
 //     matching tool call (Gemini sends it with every result), or its call ID
-//     again when there is no match.
+//     again when there is no match;
+//   - on Google, a tool result's text counts at its JSON-encoded length plus
+//     the response object around it, since Gemini sends it as a string inside
+//     the function response's JSON object; encoding escapes control
+//     characters (six bytes each) and, in Go, <, > and &.
+//
+// The bound covers the request as the adapters send it. A client set up to
+// change the body beyond the request (anthropic.WithRequestOptions with a
+// body option such as option.WithJSONSet, or an HTTP client or proxy that
+// rewrites or adds content) is outside it, like ProviderParams: an app that
+// configures one supplies its own InputBounder, or one that returns ok false.
 func (DefaultEstimator) BoundChat(model llms.ModelRef, req llms.ChatRequest) (ratelimit.UsageUnits, bool, error) {
 	if req.MaxTokens <= 0 || len(req.ProviderParams) > 0 {
 		return ratelimit.UsageUnits{}, false, nil
@@ -100,14 +110,14 @@ func (DefaultEstimator) BoundChat(model llms.ModelRef, req llms.ChatRequest) (ra
 	if len(req.Tools) > 0 && model.Provider != llms.ProviderAnthropic {
 		return ratelimit.UsageUnits{}, false, nil
 	}
-	names := toolCallNames(req.Messages)
-	input, ok := boundParts(req.System, names)
+	w := wire{names: toolCallNames(req.Messages), jsonResults: model.Provider == llms.ProviderGoogle}
+	input, ok := boundParts(req.System, &w)
 	if !ok {
 		return ratelimit.UsageUnits{}, false, nil
 	}
 	input = sum(input, boundPerRequest)
 	for i := range req.Messages {
-		n, ok := boundParts(req.Messages[i].Content, names)
+		n, ok := boundParts(req.Messages[i].Content, &w)
 		if !ok {
 			return ratelimit.UsageUnits{}, false, nil
 		}
@@ -169,12 +179,38 @@ func jsonWireLen(raw json.RawMessage) int {
 	return max(len(raw), len(out))
 }
 
+// wire is what boundPart needs to know about how the adapter encodes a
+// request.
+type wire struct {
+	// names resolves tool result names (toolCallNames).
+	names map[string]string
+	// jsonResults is set when tool result text is sent as a JSON string
+	// inside a response object (Gemini's function response).
+	jsonResults bool
+}
+
+// geminiResultFrame is the Gemini function response object around the
+// result text (llms/providers/google functionResponse), with is_error at
+// its longer value.
+const geminiResultFrame = len(`{"content":,"is_error":false}`)
+
+// jsonStringLen is the length of s encoded as a JSON string, quotes
+// included, by encoding/json (which escapes control characters, <, > and &,
+// and replaces invalid UTF-8).
+func jsonStringLen(s string) int {
+	out, err := json.Marshal(s)
+	if err != nil { // unreachable for a string; the worst-case escape
+		return sum(2, 6*len(s))
+	}
+	return len(out)
+}
+
 // boundParts bounds a list of content parts, or reports false when one has no
-// bound (media). names resolves tool result names (toolCallNames).
-func boundParts(parts []llms.ContentPart, names map[string]string) (int, bool) {
+// bound (media).
+func boundParts(parts []llms.ContentPart, w *wire) (int, bool) {
 	total := 0
 	for i := range parts {
-		n, ok := boundPart(&parts[i], names)
+		n, ok := boundPart(&parts[i], w)
 		if !ok {
 			return 0, false
 		}
@@ -185,7 +221,7 @@ func boundParts(parts []llms.ContentPart, names map[string]string) (int, bool) {
 
 // boundPart bounds one content part. Every byte the adapters can send counts,
 // so a field an adapter omits only loosens the bound.
-func boundPart(p *llms.ContentPart, names map[string]string) (int, bool) {
+func boundPart(p *llms.ContentPart, w *wire) (int, bool) {
 	if media.IsMedia(p.Type) || p.Media != nil {
 		return 0, false
 	}
@@ -197,17 +233,31 @@ func boundPart(p *llms.ContentPart, names map[string]string) (int, bool) {
 	if tr := p.ToolResult; tr != nil {
 		// The name sent again with the result: the matching call's, or
 		// the ID itself when the history has no match.
-		resent, ok := names[tr.ToolCallID]
+		resent, ok := w.names[tr.ToolCallID]
 		if !ok {
 			resent = tr.ToolCallID
 		}
-		n = sum(n, len(tr.ToolCallID), len(resent), len(tr.Content))
+		n = sum(n, len(tr.ToolCallID), len(resent))
 		for i := range tr.Parts {
 			rp := &tr.Parts[i]
 			if media.IsMedia(rp.Type) || rp.Media != nil {
 				return 0, false
 			}
-			n = sum(n, boundPerPart, len(rp.Text))
+			n = sum(n, boundPerPart)
+			if !w.jsonResults {
+				n = sum(n, len(rp.Text))
+			}
+		}
+		if w.jsonResults {
+			// The text the Gemini adapter sends: Content, or the text
+			// parts joined.
+			text := tr.Content
+			if len(tr.Parts) > 0 {
+				text = media.JoinText(tr.Parts)
+			}
+			n = sum(n, geminiResultFrame, jsonStringLen(text))
+		} else {
+			n = sum(n, len(tr.Content))
 		}
 	}
 	if r := p.Reasoning; r != nil {

@@ -844,6 +844,7 @@ type ReservationRequest struct {
     Operation      Operation
     Purpose        llms.Purpose
     Metadata       map[string]string
+    BoundUnits     *UsageUnits // upper bound from an InputBounder; nil when none was established (ADR-0043)
     Subject        Subject
     EstimatedUnits UsageUnits
 }
@@ -959,7 +960,7 @@ type InputBounder interface {
 ```
 
 - The middleware puts the bound in `ReservationRequest.BoundUnits` beside `EstimatedUnits`. nil means no bound was established (ok false, or an estimator without `InputBounder`); the limiter decides what that means. A bounder error is returned unwrapped before reserving, and the provider is not called.
-- `DefaultEstimator` bounds chat requests on Anthropic, OpenAI and Google with `MaxTokens` set: input is the UTF-8 byte count of every text field sent, plus framing margins, plus a 1,024-token tool-prompt allowance for an Anthropic request with tools. There is no bound for a request with media, `ProviderParams`, tools on a provider other than Anthropic, or a provider other than those three, and none for embeddings. An estimator embedding `DefaultEstimator` inherits the bound.
+- `DefaultEstimator` bounds chat requests on Anthropic, OpenAI and Google with `MaxTokens` set: input is the UTF-8 byte count of every text field sent, each at the size the adapters put on the wire (re-encoded JSON, base64 signatures, Gemini's resent function name and JSON-encoded tool result text), plus framing margins, plus a 1,024-token tool-prompt allowance for an Anthropic request with tools. There is no bound for a request with media, `ProviderParams`, tools on a provider other than Anthropic, or a provider other than those three, and none for embeddings. An estimator embedding `DefaultEstimator` inherits the bound. The bound covers the request as the adapters send it: a client that changes the body beyond the request (`anthropic.WithRequestOptions` with a body option, or an HTTP client or proxy that adds content) is outside it, as `ProviderParams` are, and its app supplies its own `InputBounder` or one that returns ok false.
 - Live tests check the bound against billed input on each of the three providers. Its margins and which requests it bounds are tuning, not contract: only that a returned bound is an upper bound is promised.
 
 A separate, exported text-level helper is available at the core level for consumers that need to estimate the token count of a standalone string (budget-aware chunking, ad-hoc inspection) without going through the request-shaped interface (ADR-0013):

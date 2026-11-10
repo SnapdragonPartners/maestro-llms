@@ -847,6 +847,20 @@ about 4,000 tokens per page, from provider-documented figures for current
 models ([ADR-0040](docs/adr/0040-image-and-document-parts.md)). If your model
 bills media differently, or you know your documents' page counts, pass your
 own `TokenEstimator`.
+
+For a hard budget, the reservation also carries an **upper bound** in
+`ReservationRequest.BoundUnits` (nil when none can be established), beside
+the estimate in `EstimatedUnits`
+([ADR-0043](docs/adr/0043-input-bound.md)). `DefaultEstimator` bounds a
+chat request on Anthropic, OpenAI or Google only when it sets `MaxTokens`.
+There is no bound for a request with media or `ProviderParams`, for tools on
+a provider other than Anthropic, or for any other provider. The bound covers
+the request as the adapters send it, so if a client rewrites the body
+(`anthropic.WithRequestOptions` with a body option, or an HTTP client or
+proxy that adds content), supply your own `InputBounder` or one that returns
+ok false. To bound more (image formulas for your models, say), implement the
+optional `middleware.InputBounder` on your estimator.
+
 The protocol the middleware runs per call is a **reservation**: `Reserve`
 (estimate units up front) → run the request → `Commit` (actual `Usage`) →
 `Release`. Over-use drives the bucket negative (debt repaid by future
@@ -1161,7 +1175,7 @@ of record for this list.
 **Interfaces are frozen.** Adding a method to an exported interface would
 break every implementation, including consumers' own fakes and wrappers.
 That applies to `ChatClient`, `EmbeddingClient`, `ModelLister`, `ratelimit.Limiter`, `Reservation`, `LimiterStats`, `Rollbacker`,
-`middleware.Observer`, `ContextObserver`, `TokenEstimator`,
+`middleware.Observer`, `ContextObserver`, `TokenEstimator`, `InputBounder`,
 `bucket.Limiter` and `bucket.Lease`. So adding a method is a v2 change.
 Capabilities grow through new optional interfaces, which callers detect with
 a type assertion, as `ModelLister` and `ContextObserver` already do.
@@ -1215,7 +1229,10 @@ its upgrades.
   public API exposes an SDK type.
 - Exact default tuning values that aren't part of a documented semantic:
   default backoff timings, the default `TokenEstimator`'s exact numbers
-  (only its bias toward over-reserving is promised), and the coefficients
+  (only its bias toward over-reserving is promised), its input bound's
+  margins and which requests it bounds (only that a bound it returns is an
+  upper bound is promised: a margin may grow, and a request may stop being
+  bounded), and the coefficients
   `testllm.FakeEmbeddingClient` derives hash vectors from, which may change
   between releases (within one version, the same input always gives the
   same vector). The names, types and documented meaning of the identifiers

@@ -844,6 +844,7 @@ type ReservationRequest struct {
     Operation      Operation
     Purpose        llms.Purpose
     Metadata       map[string]string
+    BoundUnits     *UsageUnits // upper bound from an InputBounder; nil when none was established (ADR-0043)
     Subject        Subject
     EstimatedUnits UsageUnits
 }
@@ -946,6 +947,21 @@ type TokenEstimator interface {
 ```
 
 `DefaultEstimator` is approximate and byte-based (a low bytes-per-token divisor, so non-ASCII text over-reserves further). Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added. Image and document parts are counted from provider-documented figures: an image from its pixel dimensions (capped at the largest documented per-image cost), a PDF at a typical-high figure per page, other documents by their bytes, each document with a framing allowance (ADR-0040), in user messages and in tool results (ADR-0041). The figures cover current models; an app on a model that bills media differently, or that knows its page counts, supplies its own `TokenEstimator`.
+
+### Input bound
+
+A hard budget needs an upper bound on a request's usage, not an estimate ([ADR-0043](adr/0043-input-bound.md)). A `TokenEstimator` may also implement the optional `InputBounder`, which the rate-limit middleware discovers by type assertion:
+
+```go
+type InputBounder interface {
+    BoundChat(model llms.ModelRef, req llms.ChatRequest) (units ratelimit.UsageUnits, ok bool, err error)
+    BoundEmbeddings(model llms.ModelRef, req llms.EmbeddingRequest) (units ratelimit.UsageUnits, ok bool, err error)
+}
+```
+
+- The middleware puts the bound in `ReservationRequest.BoundUnits` beside `EstimatedUnits`. nil means no bound was established (ok false, or an estimator without `InputBounder`); the limiter decides what that means. A bounder error is returned unwrapped before reserving, and the provider is not called.
+- `DefaultEstimator` bounds chat requests on Anthropic, OpenAI and Google with `MaxTokens` set: input is the UTF-8 byte count of every text field sent, each at the size the adapters put on the wire (re-encoded JSON, base64 signatures, Gemini's resent function name and JSON-encoded tool result text), plus framing margins, plus a 1,024-token tool-prompt allowance for an Anthropic request with tools. There is no bound for a request with media, `ProviderParams`, tools on a provider other than Anthropic, or a provider other than those three, and none for embeddings. An estimator embedding `DefaultEstimator` inherits the bound. The bound covers the request as the adapters send it: a client that changes the body beyond the request (`anthropic.WithRequestOptions` with a body option, or an HTTP client or proxy that adds content) is outside it, as `ProviderParams` are, and its app supplies its own `InputBounder` or one that returns ok false.
+- Live tests check the bound against billed input on each of the three providers. Its margins and which requests it bounds are tuning, not contract: only that a returned bound is an upper bound is promised.
 
 A separate, exported text-level helper is available at the core level for consumers that need to estimate the token count of a standalone string (budget-aware chunking, ad-hoc inspection) without going through the request-shaped interface (ADR-0013):
 

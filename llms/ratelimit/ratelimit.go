@@ -59,6 +59,12 @@ type Subject struct {
 
 // ReservationRequest is presented to a Limiter before a provider call.
 //
+// EstimatedUnits is always an estimate, biased high. BoundUnits, when non-nil,
+// is an upper bound on the request's usage: input tokens bounded from the
+// request, output tokens by its MaxTokens (ADR-0043). It is nil when no bound
+// could be established, or the estimator doesn't supply bounds; a limiter that
+// needs one (a hard budget) decides what nil means, for example refusing.
+//
 // Fields are grouped pointer-bearing first (fieldalignment); construct with
 // keyed literals.
 type ReservationRequest struct {
@@ -67,6 +73,7 @@ type ReservationRequest struct {
 	Operation      Operation
 	Purpose        llms.Purpose
 	Metadata       map[string]string
+	BoundUnits     *UsageUnits
 	Subject        Subject
 	EstimatedUnits UsageUnits
 }

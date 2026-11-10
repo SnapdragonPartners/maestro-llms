@@ -36,7 +36,7 @@ beside the estimate) is a separate decision.
 
 1. **`ratelimit.All(limiters ...Limiter) (Limiter, error)`** composes
    limiters into one that admits a request only when every limiter admits
-   it. It rejects an empty list and a nil limiter with an error, as
+   it. It rejects an empty list and a nil limiter (including a typed nil, such as a nil `*InMemoryLimiter`) with an error, as
    `NewInMemoryLimiter` rejects invalid config (ADR-0034).
    - `Reserve` reserves on each limiter in the order given, with the same
      `ReservationRequest`, and stops at the first refusal. It then rolls back
@@ -48,7 +48,7 @@ beside the estimate) is a separate decision.
    - The composite reservation commits the same usage to every member and
      releases them in reverse order, joining errors; a failing member does
      not stop the others. The first `Release` or `Rollback` ends it; later
-     calls to either are no-ops.
+     calls to either, and any `Commit`, are no-ops.
    - Order is the caller's policy. The documented guidance is to put a
      limiter that waits (a rate limiter) before one that holds a scarce
      resource (a budget), so the wait happens before the budget is held.

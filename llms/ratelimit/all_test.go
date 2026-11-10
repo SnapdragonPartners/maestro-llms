@@ -112,6 +112,11 @@ func TestAllRejectsBadConfig(t *testing.T) {
 	if l, err := All(&fakeLimiter{name: "a", log: log}, nil); err == nil || l != nil {
 		t.Fatalf("All(a, nil): got (%v, %v), want error", l, err)
 	}
+	var typedNil *InMemoryLimiter
+	if l, err := All(&fakeLimiter{name: "a", log: log}, typedNil); err == nil || l != nil {
+		t.Fatalf("All(a, typed nil): got (%v, %v), want error", l, err)
+	}
+	assertEvents(t, log) // rejected configs never reserve
 }
 
 func TestAllAdmitsWhenEveryLimiterAdmits(t *testing.T) {
@@ -227,13 +232,14 @@ func TestAllReservationJoinsErrors(t *testing.T) {
 		"a.commit", "b.commit", "c.commit", "c.release", "b.release", "a.release")
 }
 
-func TestAllReleaseAndRollbackEndOnce(t *testing.T) {
+func TestAllReleaseRollbackAndCommitAfterEnd(t *testing.T) {
 	t.Run("release then rollback", func(t *testing.T) {
 		log := &eventLog{}
 		res := mustReserve(t, mustAll(t, &fakeLimiter{name: "a", log: log, rollback: true}), chatReq(1))
 		_ = res.Release(context.Background())
 		_ = res.Release(context.Background())
 		_ = res.(Rollbacker).Rollback(context.Background()) //nolint:forcetypeassert // asserted by var block
+		_ = res.Commit(context.Background(), llms.Usage{InputTokens: 1})
 		assertEvents(t, log, "a.reserve", "a.release")
 	})
 	t.Run("rollback then release", func(t *testing.T) {
@@ -243,6 +249,7 @@ func TestAllReleaseAndRollbackEndOnce(t *testing.T) {
 		_ = rb.Rollback(context.Background())
 		_ = rb.Rollback(context.Background())
 		_ = res.Release(context.Background())
+		_ = res.Commit(context.Background(), llms.Usage{InputTokens: 1})
 		assertEvents(t, log, "a.reserve", "a.rollback")
 	})
 }

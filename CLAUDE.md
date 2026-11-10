@@ -28,7 +28,7 @@ Module `github.com/SnapdragonPartners/maestro-llms`, core import name `llms` (fu
 ```
 llms/                core interfaces and shared types (ChatClient, EmbeddingClient, Message, errors)
 llms/middleware/     provider-neutral middleware (timeout, retry, circuit, ratelimit, metrics, validation)
-llms/ratelimit/      Limiter/Reservation interfaces + optional in-memory limiter + FromBucket
+llms/ratelimit/      Limiter/Reservation interfaces + optional in-memory limiter + FromBucket + All
 llms/toolloop/       synchronous tool loop; llms/toolloop/compact compaction policies
 llms/providers/{anthropic,anthropic/anthropicvertex,openai,google,ollama,openaicompat}/   one package per provider, imported only if used (vllm = deprecated alias of openaicompat)
 llms/testllm/        deterministic FakeChatClient / FakeEmbeddingClient

@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync/atomic"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -36,7 +37,9 @@ var (
 
 // All composes limiters into one Limiter that admits a request only when every
 // limiter admits it. It returns an error, and no limiter, when given no
-// limiters or a nil one.
+// limiters or a nil one, including a typed nil such as a nil
+// *InMemoryLimiter stored in a Limiter, which would otherwise panic on the
+// first Reserve.
 //
 // Reserve reserves on each limiter in the order given and stops at the first
 // refusal. It then rolls back the reservations already held, in reverse
@@ -59,11 +62,26 @@ func All(limiters ...Limiter) (Limiter, error) {
 		return nil, errNoLimiters
 	}
 	for _, l := range limiters {
-		if l == nil {
+		if isNil(l) {
 			return nil, errNilLimiter
 		}
 	}
 	return &allLimiter{limiters: append([]Limiter(nil), limiters...)}, nil
+}
+
+// isNil reports whether l is a nil interface or holds a nil pointer, map,
+// slice, func or channel.
+func isNil(l Limiter) bool {
+	if l == nil {
+		return true
+	}
+	v := reflect.ValueOf(l)
+	switch v.Kind() { //nolint:exhaustive // only nillable kinds can hold nil
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 type allLimiter struct {
@@ -113,8 +131,12 @@ type allReservation struct {
 }
 
 // Commit implements Reservation: it commits usage to every reservation and
-// joins their errors.
+// joins their errors. Commit after Release or Rollback is a no-op: a
+// rolled-back request was never sent, and an ended composite forwards nothing.
 func (r *allReservation) Commit(ctx context.Context, usage llms.Usage) error {
+	if r.ended.Load() {
+		return nil
+	}
 	var errs []error
 	for _, h := range r.held {
 		if err := h.Commit(ctx, usage); err != nil {

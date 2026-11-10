@@ -1152,7 +1152,7 @@ of record for this list.
 
 **Interfaces are frozen.** Adding a method to an exported interface would
 break every implementation, including consumers' own fakes and wrappers.
-That applies to `ChatClient`, `EmbeddingClient`, `ModelLister`, `ratelimit.Limiter`, `Reservation`, `LimiterStats`,
+That applies to `ChatClient`, `EmbeddingClient`, `ModelLister`, `ratelimit.Limiter`, `Reservation`, `LimiterStats`, `Rollbacker`,
 `middleware.Observer`, `ContextObserver`, `TokenEstimator`,
 `bucket.Limiter` and `bucket.Lease`. So adding a method is a v2 change.
 Capabilities grow through new optional interfaces, which callers detect with

@@ -94,7 +94,7 @@ The following decisions are normative:
 github.com/SnapdragonPartners/maestro-llms
   llms/                     core interfaces and shared types
   llms/middleware/          provider-neutral middleware, chain helpers, Recommended*
-  llms/ratelimit/           Limiter/Reservation interfaces, in-memory limiter, FromBucket
+  llms/ratelimit/           Limiter/Reservation interfaces, in-memory limiter, FromBucket, All (composition)
   llms/toolloop/            synchronous tool-loop helper
   llms/toolloop/compact/    ready-made compaction policies for the tool loop
   llms/testllm/             deterministic fakes
@@ -924,7 +924,7 @@ type Rollbacker interface {
 - `All` admits a request only when every limiter admits it, so one `RecommendedConfig.Limiter` slot can hold, for example, a rate limiter and a budget. It returns an error for an empty list or a nil limiter.
 - `Reserve` reserves on each limiter in the order given, with the same request, and stops at the first refusal. It rolls back the reservations already held, in reverse order, on a context that survives cancellation, and returns the refusing limiter's error unwrapped. Rollback errors are discarded.
 - Rollback uses `Rollback` when the reservation implements the optional `Rollbacker`, otherwise `Release`. `Rollback` means the request was never sent, distinct from `Release` without `Commit` (sent; usage unknown). `All` calls it at most once and never calls `Commit` or `Release` afterwards, so it must free everything `Release` would. The built-in limiters don't implement it: a rolled-back reservation is released and keeps its charge.
-- The composite reservation commits the same usage to every member and releases them in reverse order, joining errors. The first `Release` or `Rollback` ends it. It implements `Rollbacker`, so compositions nest.
+- The composite reservation commits the same usage to every member and releases them in reverse order, joining errors. The first `Release` or `Rollback` ends it; later `Release`, `Rollback` and `Commit` calls are no-ops. It implements `Rollbacker`, so compositions nest.
 - Order is the caller's policy: put a limiter that waits before one that holds a scarce resource, so the wait happens before the resource is held.
 
 Shared limiter ([ADR-0025](adr/0025-bucket-distributed-limiter.md), which replaced the original plan for Morris to build its own first):

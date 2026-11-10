@@ -56,7 +56,9 @@ var (
 // Each limiter receives the same ReservationRequest. The returned
 // Reservation commits the same usage to every reservation and releases them
 // in reverse order, joining their errors. It also implements Rollbacker, so
-// an All nests inside another All.
+// an All nests inside another All. The returned Limiter exposes no other
+// optional capability; in particular it does not implement LimiterStats, so
+// read stats from the member limiters.
 func All(limiters ...Limiter) (Limiter, error) {
 	if len(limiters) == 0 {
 		return nil, errNoLimiters

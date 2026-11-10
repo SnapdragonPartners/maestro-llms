@@ -931,6 +931,9 @@ required"**.
 
 ```go
 lim, err := ratelimit.All(rateLimiter, budgetLimiter) // rate limiter first: wait before holding budget
+if err != nil { // no limiters, or a nil one
+	return err
+}
 c := middleware.RecommendedChat(client, middleware.RecommendedConfig{Limiter: lim})
 ```
 
@@ -941,6 +944,11 @@ limiter alone. A reservation that implements the optional
 `ratelimit.Rollbacker` gets `Rollback` ("never sent") instead of `Release`
 ("sent, usage unknown"), so a budget can refund it instead of charging it.
 The built-in limiters are released and keep their charge.
+
+`All` returns an error, and no limiter, for an empty list or a nil limiter;
+don't drop it, since a nil `Limiter` in `RecommendedConfig` means no limiting
+at all. The composite exposes no other optional capability: read
+`LimiterStats` from the member limiters, which you still hold.
 
 ### Text-level token estimation
 

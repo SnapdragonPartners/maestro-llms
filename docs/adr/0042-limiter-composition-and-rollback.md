@@ -60,6 +60,10 @@ beside the estimate) is a separate decision.
    free everything `Release` would. A reservation without it is released,
    the conservative fallback (the limiter keeps its charge). The composite
    reservation implements `Rollbacker` itself, so an `All` nests in another.
+   No other optional capability passes through the composite: the
+   `Limiter` it returns does not implement `LimiterStats`, because a
+   `LimiterSnapshot` describes one limiter and no merge of several is
+   meaningful. Callers read stats from the member limiters they hold.
 3. **The built-in limiters do not implement `Rollbacker`.** A rolled-back
    `InMemoryLimiter` or `FromBucket` reservation is released and keeps its
    token charge, overcounting by one never-sent request, which is the safe

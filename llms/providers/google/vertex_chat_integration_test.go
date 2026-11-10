@@ -223,3 +223,13 @@ func TestIntegrationVertexGeminiListModels(t *testing.T) {
 	}
 	t.Logf("OK Vertex ListModels fails fast: %v", err)
 }
+
+// MaxTokens caps billable output, thinking included, on Vertex too (#149,
+// ADR-0044).
+func TestIntegrationVertexGeminiOutputCapText(t *testing.T) {
+	livetest.OutputCapText(t, newVertexGemini(t, vertexModel()), "MAX_TOKENS")
+}
+
+func TestIntegrationVertexGeminiOutputCapReasoning(t *testing.T) {
+	livetest.OutputCapReasoning(t, newVertexGemini(t, defaultLevelModel), "MAX_TOKENS", &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh})
+}

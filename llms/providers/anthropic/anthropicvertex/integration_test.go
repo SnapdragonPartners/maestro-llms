@@ -156,3 +156,15 @@ func TestIntegrationVertexListModelsFailsFast(t *testing.T) {
 	}
 	t.Logf("OK Vertex ListModels fails fast: %v", err)
 }
+
+// MaxTokens caps billable output, thinking included, on Vertex too (#149,
+// ADR-0044).
+func TestIntegrationVertexAnthropicOutputCapText(t *testing.T) {
+	livetest.OutputCapText(t, newVertexClient(t), "max_tokens")
+}
+
+func TestIntegrationVertexAnthropicOutputCapReasoning(t *testing.T) {
+	// A model that thinks by default (adaptive thinking).
+	t.Setenv("VERTEX_ANTHROPIC_MODEL", envOr("VERTEX_ANTHROPIC_REASONING_MODEL", "claude-opus-5-5"))
+	livetest.OutputCapReasoning(t, newVertexClient(t), "max_tokens", &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh})
+}

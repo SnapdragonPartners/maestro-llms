@@ -48,7 +48,10 @@ type ChatRequest struct {
 	// MaxTokens caps output tokens. Zero (or negative) leaves the cap to the
 	// adapter: most omit it and use the provider/model default, but the
 	// Anthropic API requires one, so the anthropic and anthropicvertex
-	// adapters send 4096.
+	// adapters send 4096. On anthropic, anthropicvertex, openai and google,
+	// a positive MaxTokens caps Usage.BillableOutputTokens, reasoning
+	// included (ADR-0044); ollama and openaicompat leave that to the
+	// backend.
 	MaxTokens int
 	// Temperature: nil means provider/model default; a non-nil 0 means
 	// intentionally deterministic.

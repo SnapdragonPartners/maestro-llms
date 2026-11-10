@@ -861,6 +861,13 @@ proxy that adds content), supply your own `InputBounder` or one that returns
 ok false. To bound more (image formulas for your models, say), implement the
 optional `middleware.InputBounder` on your estimator.
 
+The output half of the bound is `MaxTokens`. On Anthropic (including
+Vertex), OpenAI and Gemini (API and Vertex), it caps billable output with
+reasoning included, verified by live tests
+([ADR-0044](docs/adr/0044-maxtokens-caps-billable-output.md)). A request
+that hits the cap ends with the provider's length stop reason, possibly with
+an empty reply. Ollama and `openaicompat` leave this to the backend.
+
 The protocol the middleware runs per call is a **reservation**: `Reserve`
 (estimate units up front) → run the request → `Commit` (actual `Usage`) →
 `Release`. Over-use drives the bucket negative (debt repaid by future

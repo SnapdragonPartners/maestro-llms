@@ -168,10 +168,12 @@ const (
 	refuseWait = time.Second
 )
 
-// mustRefuse makes one admission attempt on l and fails unless it completed
-// and refused for lack of capacity: no lease, no error, not impossible. A
-// LimitError from Acquire can't show that, since a MaxWait that expires
-// mid-attempt is one too.
+// mustRefuse checks that key has no free slot on a concurrency-only
+// bucket. One admission attempt on l must complete and refuse for lack of
+// capacity: no lease, no error, not impossible. A LimitError from Acquire
+// can't show that, since a MaxWait that expires mid-attempt is one too. Then
+// Acquire on a probe with refuseWait must return the public refusal's shape:
+// a temporary *LimitError with no Cause and no RetryAfter (ADR-0033).
 func mustRefuse(t *testing.T, l *Limiter, key string, tokens int) {
 	t.Helper()
 	res, err := l.tryAcquire(context.Background(), key, tokens)
@@ -184,6 +186,18 @@ func mustRefuse(t *testing.T, l *Limiter, key string, tokens int) {
 	}
 	if res.Impossible != "" {
 		t.Fatalf("admission attempt on %q impossible (%s), want a capacity refusal", key, res.Impossible)
+	}
+	probe := newLimiter(t, l.db, Config{LeaseTTL: l.cfg.LeaseTTL, MaxWait: refuseWait})
+	ls, err := probe.Acquire(context.Background(), key, tokens)
+	if ls != nil {
+		_ = ls.Release(context.Background())
+	}
+	var le *bucket.LimitError
+	if !errors.As(err, &le) {
+		t.Fatalf("Acquire on a full %q = %v, want a *LimitError", key, err)
+	}
+	if le.Permanent || le.Cause != nil || le.RetryAfter != 0 {
+		t.Fatalf("Acquire on a full %q = %+v, want temporary, no Cause, no RetryAfter", key, le)
 	}
 }
 

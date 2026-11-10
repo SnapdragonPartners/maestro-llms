@@ -172,7 +172,7 @@ const (
 // bucket. One admission attempt on l must complete and refuse for lack of
 // capacity: no lease, no error, not impossible. A LimitError from Acquire
 // can't show that, since a MaxWait that expires mid-attempt is one too. Then
-// Acquire on a probe with refuseWait must return the public refusal's shape:
+// Acquire on a short-lived probe must return the public refusal's shape:
 // a temporary *LimitError with no Cause and no RetryAfter (ADR-0033).
 func mustRefuse(t *testing.T, l *Limiter, key string, tokens int) {
 	t.Helper()
@@ -187,7 +187,11 @@ func mustRefuse(t *testing.T, l *Limiter, key string, tokens int) {
 	if res.Impossible != "" {
 		t.Fatalf("admission attempt on %q impossible (%s), want a capacity refusal", key, res.Impossible)
 	}
-	probe := newLimiter(t, l.db, Config{LeaseTTL: l.cfg.LeaseTTL, MaxWait: refuseWait})
+	// The probe's window stays well inside the holder's LeaseTTL: outliving
+	// it would let a renewal lapse on a slow runner free the slot, and the
+	// probe would admit. A MaxWait expiry mid-attempt has the same shape as
+	// a capacity refusal here, so a short window loses nothing.
+	probe := newLimiter(t, l.db, Config{LeaseTTL: l.cfg.LeaseTTL, MaxWait: min(refuseWait, l.cfg.LeaseTTL/2)})
 	ls, err := probe.Acquire(context.Background(), key, tokens)
 	if ls != nil {
 		_ = ls.Release(context.Background())

@@ -28,14 +28,18 @@ func TestIntegrationGoogleReasoningBudget(t *testing.T) {
 	)
 }
 
-// ADR-0022: Effort maps to thinkingLevel (Gemini 3; GOOGLE_LEVEL_MODEL,
-// default gemini-3-flash-preview).
-func TestIntegrationGoogleReasoningEffort(t *testing.T) {
-	m := os.Getenv("GOOGLE_LEVEL_MODEL")
-	if m == "" {
-		m = defaultLevelModel
+// levelModel is a model that takes thinkingLevel (Gemini 3), for tests that
+// set an effort: GOOGLE_LEVEL_MODEL, default gemini-3-flash-preview.
+func levelModel() string {
+	if m := os.Getenv("GOOGLE_LEVEL_MODEL"); m != "" {
+		return m
 	}
-	livetest.ReasoningControl(t, newGemini(t, m),
+	return defaultLevelModel
+}
+
+// ADR-0022: Effort maps to thinkingLevel (Gemini 3).
+func TestIntegrationGoogleReasoningEffort(t *testing.T) {
+	livetest.ReasoningControl(t, newGemini(t, levelModel()),
 		livetest.Same(llms.ReasoningConfig{Effort: llms.ReasoningEffortLow}),
 		livetest.Same(llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh}),
 	)

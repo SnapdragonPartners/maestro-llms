@@ -11,9 +11,10 @@ import (
 	"github.com/SnapdragonPartners/maestro-llms/llms/providers/openai"
 )
 
-// ADR-0022: effort maps to reasoning.effort. OPENAI_REASONING_MODEL must be
-// a reasoning model (default gpt-5-mini).
-func TestIntegrationOpenAIReasoningEffort(t *testing.T) {
+// newOpenAIReasoningClient is a client on OPENAI_REASONING_MODEL, which must
+// be a reasoning model (default gpt-5-mini), for tests that set an effort.
+func newOpenAIReasoningClient(t *testing.T) llms.ChatClient {
+	t.Helper()
 	key := os.Getenv("OPENAI_API_KEY")
 	if key == "" {
 		t.Skip("OPENAI_API_KEY not set")
@@ -26,7 +27,12 @@ func TestIntegrationOpenAIReasoningEffort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	livetest.ReasoningControl(t, c,
+	return c
+}
+
+// ADR-0022: effort maps to reasoning.effort.
+func TestIntegrationOpenAIReasoningEffort(t *testing.T) {
+	livetest.ReasoningControl(t, newOpenAIReasoningClient(t),
 		livetest.Same(llms.ReasoningConfig{Effort: llms.ReasoningEffortMinimal}),
 		livetest.Same(llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh}),
 	)

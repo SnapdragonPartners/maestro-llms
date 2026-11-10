@@ -16,5 +16,5 @@ func TestIntegrationOpenAIOutputCapText(t *testing.T) {
 }
 
 func TestIntegrationOpenAIOutputCapReasoning(t *testing.T) {
-	livetest.OutputCapReasoning(t, newOpenAIToolLoopClient(t), "max_output_tokens", &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh})
+	livetest.OutputCapReasoning(t, newOpenAIReasoningClient(t), "max_output_tokens", &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh})
 }

@@ -16,5 +16,5 @@ func TestIntegrationGoogleOutputCapText(t *testing.T) {
 }
 
 func TestIntegrationGoogleOutputCapReasoning(t *testing.T) {
-	livetest.OutputCapReasoning(t, newGoogleToolLoopClient(t), "MAX_TOKENS", &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh})
+	livetest.OutputCapReasoning(t, newGemini(t, levelModel()), "MAX_TOKENS", &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh})
 }

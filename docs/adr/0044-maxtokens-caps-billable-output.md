@@ -47,15 +47,17 @@ verifying it live, per provider.
      `MaxTokens`. A run that finishes under the cap, or doesn't reason when
      the scenario requires it, is retried.
 
-   First run (2026-11-10), billable output (visible + reasoning) against
-   the cap:
+   The reasoning scenario runs on each provider's reasoning-effort test
+   model (the same `*_REASONING_MODEL` / `*_LEVEL_MODEL` overrides). First
+   run (2026-11-10), billable output (visible + reasoning) against the cap,
+   text model / reasoning model:
 
    | Backend, model | Text, cap 64 | Reasoning, cap 512 |
    | --- | --- | --- |
    | Anthropic, Haiku 4.5 / Opus 5.5 | 64 (64 + 0) | 512 (0 + 512) |
    | Anthropic on Vertex, Opus 4.6 / Opus 5.5 | 64 (64 + 0) | 512 (0 + 512) |
-   | OpenAI, gpt-5.1 | 64 (64 + 0) | 512 (0 + 512) |
-   | Gemini API, gemini-3.8-flash | 60 (0 + 60) | 508 (17 + 491) |
+   | OpenAI, gpt-5.1 / gpt-5-mini | 64 (64 + 0) | 512 (0 + 512) |
+   | Gemini API, gemini-3.8-flash / gemini-3-flash-preview | 60 (0 + 60) | 508 (21 + 487) |
    | Gemini on Vertex, gemini-3.8-flash / gemini-3-flash-preview | 60 (1 + 59) | 508 (20 + 488) |
 
    Gemini stops a few tokens under the cap and spends its default thinking

@@ -161,11 +161,19 @@ func InputBoundToolLoop(t *testing.T, c llms.ChatClient, requireReplay bool) {
 	for attempt := 1; ; attempt++ {
 		chk := &boundChecker{next: c, t: t}
 		out, _ := runReasoningLoop(t, chk, notesSystem(), []toolloop.Tool{notesTool()})
+		// A safety classifier's refusal isn't a bound failure; retry it
+		// as reasoningLoop does.
+		if out.Kind == toolloop.OutcomeEmptyResponse && out.Response.StopReason == "refusal" && attempt < attempts {
+			t.Logf("attempt %d: the model refused a turn; retrying", attempt)
+			continue
+		}
 		if out.Kind != toolloop.OutcomeFinalAnswer || out.Iterations < 2 {
 			t.Fatalf("tool loop: kind=%q iterations=%d err=%v, want a final answer after >= 2 iterations", out.Kind, out.Iterations, out.Err)
 		}
-		if chk.unbounded > 0 || chk.checked < out.Iterations {
-			t.Fatalf("checked %d of %d iterations (%d unbounded), want all bounded", chk.checked, out.Iterations, chk.unbounded)
+		// Iterations counts tool-calling turns; the final answer is one
+		// more provider call.
+		if calls := out.Iterations + 1; chk.unbounded > 0 || chk.checked < calls {
+			t.Fatalf("checked %d of %d provider calls (%d unbounded), want all bounded", chk.checked, calls, chk.unbounded)
 		}
 		if requireReplay && chk.replayed == 0 {
 			if attempt < attempts {
@@ -174,7 +182,7 @@ func InputBoundToolLoop(t *testing.T, c llms.ChatClient, requireReplay bool) {
 			}
 			t.Fatalf("no checked request replayed reasoning in %d attempts", attempts)
 		}
-		t.Logf("bound held on %d iteration(s); %d replayed reasoning", chk.checked, chk.replayed)
+		t.Logf("bound held on %d provider call(s); %d replayed reasoning", chk.checked, chk.replayed)
 		return
 	}
 }

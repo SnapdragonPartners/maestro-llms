@@ -29,28 +29,8 @@ func ReasoningReplay(t *testing.T, c llms.ChatClient) {
 	if testing.Short() {
 		t.Skip("live reasoning replay skipped under -short")
 	}
-	notes := map[string]string{
-		"a": "Not here yet. Continue with note b.",
-		"b": "End of chain. The answer word is " + codename + ".",
-	}
-	readNote := toolloop.Tool{
-		Definition: toolDef("read_note", "Read a note by id.",
-			`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
-		Execute: func(_ context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
-			var a struct {
-				ID string `json:"id"`
-			}
-			_ = json.Unmarshal(call.Parameters, &a)
-			if body, ok := notes[strings.TrimSpace(a.ID)]; ok {
-				return toolloop.ToolResult{Content: body}, nil
-			}
-			return toolloop.ToolResult{Content: "no such note", IsError: true}, nil
-		},
-	}
-	system := []llms.ContentPart{llms.Text(
-		"Follow the chain of notes with read_note, one note at a time, until a note gives the answer word. " +
-			"Before each tool call, think about what the notes so far tell you. " +
-			"Then reply in plain text with the answer word.")}
+	readNote := notesTool()
+	system := notesSystem()
 
 	tools := []toolloop.Tool{readNote}
 	msgs := reasoningLoop(t, c, system, tools)
@@ -175,4 +155,35 @@ func hasReasoning(m *llms.Message) bool {
 		}
 	}
 	return false
+}
+
+// notesTool is the read_note tool for the notes-chain scenarios: note a
+// points to note b, which gives the answer word.
+func notesTool() toolloop.Tool {
+	notes := map[string]string{
+		"a": "Not here yet. Continue with note b.",
+		"b": "End of chain. The answer word is " + codename + ".",
+	}
+	return toolloop.Tool{
+		Definition: toolDef("read_note", "Read a note by id.",
+			`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		Execute: func(_ context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
+			var a struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal(call.Parameters, &a)
+			if body, ok := notes[strings.TrimSpace(a.ID)]; ok {
+				return toolloop.ToolResult{Content: body}, nil
+			}
+			return toolloop.ToolResult{Content: "no such note", IsError: true}, nil
+		},
+	}
+}
+
+// notesSystem is the system prompt for the notes-chain scenarios.
+func notesSystem() []llms.ContentPart {
+	return []llms.ContentPart{llms.Text(
+		"Follow the chain of notes with read_note, one note at a time, until a note gives the answer word. " +
+			"Before each tool call, think about what the notes so far tell you. " +
+			"Then reply in plain text with the answer word.")}
 }

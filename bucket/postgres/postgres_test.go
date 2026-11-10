@@ -191,6 +191,7 @@ func mustRefuse(t *testing.T, l *Limiter, key string, tokens int) {
 	ls, err := probe.Acquire(context.Background(), key, tokens)
 	if ls != nil {
 		_ = ls.Release(context.Background())
+		t.Fatalf("Acquire on %q admitted while the slot was held, want a refusal", key)
 	}
 	var le *bucket.LimitError
 	if !errors.As(err, &le) {

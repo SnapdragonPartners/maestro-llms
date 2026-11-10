@@ -676,6 +676,13 @@ func TestLimitChangeSeenByEveryInstance(t *testing.T) {
 	b := newLimiter(t, openMain(t), Config{MaxWait: admitWait})
 	name := bucketName(t)
 	ensure(t, a, name, bucket.Limits{MaxConcurrency: 1})
+	// b sees the original limit first, so its admit below proves an
+	// instance that already read the limits observes the change (no
+	// per-instance caching, ADR-0025).
+	warm := mustAcquire(t, b, name, 0)
+	if err := warm.Release(context.Background()); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 	held := mustAcquire(t, a, name, 0)
 	if _, err := bProbe.Acquire(context.Background(), name, 0); !isLimitErr(err) {
 		t.Fatalf("over the limit: %v", err)

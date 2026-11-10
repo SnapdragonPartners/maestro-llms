@@ -15,6 +15,10 @@ import (
 // Per the spec, Release is always called and runs on a context that survives
 // request cancellation, and Commit records actual usage only when the call
 // returned one. A nil est selects DefaultEstimator (ADR-0034).
+//
+// When est also implements InputBounder, the reservation carries its bound in
+// ReservationRequest.BoundUnits (ADR-0043). A bounder error is returned before
+// reserving, unwrapped, and the inner client is not called.
 func RateLimitChat(limiter ratelimit.Limiter, est TokenEstimator) ChatMiddleware {
 	est = estimatorOrDefault(est)
 	return func(next llms.ChatClient) llms.ChatClient {
@@ -88,12 +92,23 @@ func (c *rlChat) Model() llms.ModelRef { return c.next.Model() }
 //nolint:dupl // parallel typed adapter; shared logic already extracted to reserved()
 func (c *rlChat) Complete(ctx context.Context, req llms.ChatRequest) (llms.ChatResponse, error) {
 	m := c.next.Model()
+	var bound *ratelimit.UsageUnits
+	if b, ok := c.est.(InputBounder); ok {
+		u, has, err := b.BoundChat(m, req)
+		if err != nil {
+			return llms.ChatResponse{}, err //nolint:wrapcheck // the app's bounder names its own failure
+		}
+		if has {
+			bound = &u
+		}
+	}
 	return reserved(ctx, c.limiter, ratelimit.ReservationRequest{
 		Provider:       m.Provider,
 		Model:          m.Name,
 		Operation:      ratelimit.OperationChat,
 		Purpose:        req.Purpose,
 		EstimatedUnits: c.est.EstimateChat(req),
+		BoundUnits:     bound,
 		Metadata:       req.Metadata,
 	}, llms.ChatResponse{},
 		func(ctx context.Context) (llms.ChatResponse, error) { return c.next.Complete(ctx, req) },
@@ -116,12 +131,23 @@ func (c *rlEmbedding) DefaultDimensions() int { return c.next.DefaultDimensions(
 //nolint:dupl // parallel typed adapter; shared logic already extracted to reserved()
 func (c *rlEmbedding) Embed(ctx context.Context, req llms.EmbeddingRequest) (llms.EmbeddingResponse, error) {
 	m := c.next.Model()
+	var bound *ratelimit.UsageUnits
+	if b, ok := c.est.(InputBounder); ok {
+		u, has, err := b.BoundEmbeddings(m, req)
+		if err != nil {
+			return llms.EmbeddingResponse{}, err //nolint:wrapcheck // the app's bounder names its own failure
+		}
+		if has {
+			bound = &u
+		}
+	}
 	return reserved(ctx, c.limiter, ratelimit.ReservationRequest{
 		Provider:       m.Provider,
 		Model:          m.Name,
 		Operation:      ratelimit.OperationEmbedding,
 		Purpose:        req.Purpose,
 		EstimatedUnits: c.est.EstimateEmbeddings(req),
+		BoundUnits:     bound,
 		Metadata:       req.Metadata,
 	}, llms.EmbeddingResponse{},
 		func(ctx context.Context) (llms.EmbeddingResponse, error) { return c.next.Embed(ctx, req) },

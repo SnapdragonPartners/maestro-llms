@@ -37,3 +37,9 @@ func TestIntegrationGoogleToolLoopNoTools(t *testing.T) {
 func TestIntegrationGoogleCompactSummarize(t *testing.T) {
 	livetest.CompactSummarize(t, newGoogleToolLoopClient(t), nil)
 }
+
+// ADR-0043: DefaultEstimator's input bound holds against billed usage for
+// text requests (requests with tools have no bound on Google).
+func TestIntegrationGoogleInputBound(t *testing.T) {
+	livetest.InputBound(t, newGoogleToolLoopClient(t))
+}

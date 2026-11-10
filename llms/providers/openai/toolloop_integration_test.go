@@ -55,3 +55,9 @@ func TestIntegrationOpenAICompactSummarize(t *testing.T) {
 	}
 	livetest.CompactSummarize(t, loop, summarizer)
 }
+
+// ADR-0043: DefaultEstimator's input bound holds against billed usage for
+// text requests (requests with tools have no bound on OpenAI).
+func TestIntegrationOpenAIInputBound(t *testing.T) {
+	livetest.InputBound(t, newOpenAIToolLoopClient(t))
+}

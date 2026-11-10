@@ -91,3 +91,18 @@ func TestIntegrationAnthropicReasoningReplay(t *testing.T) {
 func TestIntegrationAnthropicReasoningCompaction(t *testing.T) {
 	livetest.CompactSummarize(t, newStrictReasoningClient(t), newAnthropicToolLoopClient(t))
 }
+
+// ADR-0043: DefaultEstimator's input bound holds against billed usage, for
+// text requests and across a tool loop (tool overhead allowance), on the
+// default model and on a thinking model (replayed reasoning).
+func TestIntegrationAnthropicInputBound(t *testing.T) {
+	livetest.InputBound(t, newAnthropicToolLoopClient(t))
+}
+
+func TestIntegrationAnthropicInputBoundToolLoop(t *testing.T) {
+	livetest.InputBoundToolLoop(t, newAnthropicToolLoopClient(t))
+}
+
+func TestIntegrationAnthropicInputBoundReasoningLoop(t *testing.T) {
+	livetest.InputBoundToolLoop(t, newStrictReasoningClient(t))
+}

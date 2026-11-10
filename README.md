@@ -923,6 +923,25 @@ tests with fakes pass without the migration, so watch the release notes: any
 release that raises `SchemaVersion` opens them with **"Database migration
 required"**.
 
+#### Composing limiters
+
+`RecommendedConfig` has one `Limiter` slot. To enforce more than one limit
+(say, the host's rate limit and a per-run budget), compose them with
+`ratelimit.All` ([ADR-0042](docs/adr/0042-limiter-composition-and-rollback.md)):
+
+```go
+lim, err := ratelimit.All(rateLimiter, budgetLimiter) // rate limiter first: wait before holding budget
+c := middleware.RecommendedChat(client, middleware.RecommendedConfig{Limiter: lim})
+```
+
+A request is admitted only when every limiter admits it. On a refusal, the
+reservations already held are rolled back in reverse order and the refusal is
+returned unwrapped, so retry and the circuit treat it as they would that
+limiter alone. A reservation that implements the optional
+`ratelimit.Rollbacker` gets `Rollback` ("never sent") instead of `Release`
+("sent, usage unknown"), so a budget can refund it instead of charging it.
+The built-in limiters are released and keep their charge.
+
 ### Text-level token estimation
 
 For consumers that need to estimate the token count of a standalone string

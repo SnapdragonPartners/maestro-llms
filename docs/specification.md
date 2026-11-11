@@ -642,7 +642,7 @@ Provider clients return a typed validation/config error when `Inputs` exceeds th
 ### Task-typed embeddings, Vertex, single-input models
 
 These rules come from [ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md),
-as amended by ADR-0027, ADR-0028 and ADR-0029.
+as amended by ADR-0027, ADR-0028, ADR-0029 and ADR-0045.
 
 `Task`/`Title` (shown in the types above) are provider-neutral and advisory,
 honored only where the provider supports them (Gemini retrieval-document/-query
@@ -951,7 +951,7 @@ type TokenEstimator interface {
 }
 ```
 
-`DefaultEstimator` is approximate and byte-based (a low bytes-per-token divisor, so non-ASCII text over-reserves further). Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added. Image and document parts are counted from provider-documented figures: an image from its pixel dimensions (capped at the largest documented per-image cost), a PDF at a typical-high figure per page, other documents by their bytes, each document with a framing allowance (ADR-0040), in user messages and in tool results (ADR-0041). The figures cover current models; an app on a model that bills media differently, or that knows its page counts, supplies its own `TokenEstimator`.
+`DefaultEstimator` is approximate and byte-based (a low bytes-per-token divisor, so non-ASCII text over-reserves further). Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added. Image and document parts are counted from provider-documented figures: an image from its pixel dimensions (capped at the largest documented per-image cost), a PDF at a typical-high figure per page, other documents by their bytes, each document with a framing allowance (ADR-0040), in user messages, in tool results (ADR-0041) and in embedding inputs (ADR-0045). The figures cover current models; an app on a model that bills media differently, or that knows its page counts, supplies its own `TokenEstimator`.
 
 ### Input bound
 

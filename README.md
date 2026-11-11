@@ -870,7 +870,9 @@ A nil estimator passed to `RateLimitChat`/`RateLimitEmbeddings` selects
 `DefaultEstimator`.
 `DefaultEstimator` counts an image from its pixel dimensions and a PDF at
 about 4,000 tokens per page, from provider-documented figures for current
-models ([ADR-0040](docs/adr/0040-image-and-document-parts.md)). If your model
+models ([ADR-0040](docs/adr/0040-image-and-document-parts.md)), in chat
+messages, tool results and embedding inputs
+([ADR-0045](docs/adr/0045-embedding-media-inputs.md)). If your model
 bills media differently, or you know your documents' page counts, pass your
 own `TokenEstimator`.
 
@@ -1116,7 +1118,7 @@ credentials/host are present (so any subset works).
 | Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`); reasoning test: `OLLAMA_THINK_MODEL` (`gpt-oss:20b`); image test runs only with `OLLAMA_VISION_MODEL` (e.g. `mistral-small3.2`) |
 | vLLM | `MAESTRO_VLLM` (full base URL incl. `/v1`, e.g. `http://my-vllm:8000/v1`); optional `MAESTRO_VLLM_API_KEY` | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
 | LunaRoute (via `openaicompat`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`); image test runs only with `LUNAROUTE_VISION_MODEL` (e.g. `glm-5.3-vision`) |
-| Vertex AI (`anthropicvertex`, `google` with `WithVertex`) | `VERTEX_PROJECT` plus Application Default Credentials (`gcloud auth application-default login`; the tests load ADC themselves, the toolkit never does) | Claude: `VERTEX_REGION` (`global`), `VERTEX_ANTHROPIC_MODEL` (`claude-opus-4-6`), `VERTEX_ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`). Gemini: `VERTEX_GEMINI_LOCATION` (`global`), `VERTEX_GEMINI_MODEL` (`gemini-3.8-flash`), `VERTEX_GEMINI_LEVEL_MODEL` (`gemini-3-flash-preview`), `VERTEX_EMBEDDINGS_LOCATION` (`us-central1`), `VERTEX_EMBEDDINGS_MODEL` (`gemini-embedding-001`) |
+| Vertex AI (`anthropicvertex`, `google` with `WithVertex`) | `VERTEX_PROJECT` plus Application Default Credentials (`gcloud auth application-default login`; the tests load ADC themselves, the toolkit never does) | Claude: `VERTEX_REGION` (`global`), `VERTEX_ANTHROPIC_MODEL` (`claude-opus-4-6`), `VERTEX_ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`). Gemini: `VERTEX_GEMINI_LOCATION` (`global`), `VERTEX_GEMINI_MODEL` (`gemini-3.8-flash`), `VERTEX_GEMINI_LEVEL_MODEL` (`gemini-3-flash-preview`), `VERTEX_EMBEDDINGS_LOCATION` (`us-central1`), `VERTEX_EMBEDDINGS_MODEL` (`gemini-embedding-001`), `VERTEX_PREDICT_EMBEDDINGS_MODEL` (`text-embedding-005`). Multimodal embeddings: `VERTEX_MULTIMODAL_EMBEDDINGS_MODEL` (`gemini-embedding-2`), `VERTEX_MULTIMODAL_EMBEDDINGS_LOCATION` (`global`; on 2026-11-11 `gemini-embedding-2` was served on `global` only and `gemini-embedding-2-preview` on `us-central1` only) |
 
 ```sh
 MAESTRO_ANTHROPIC_API_KEY=sk-ant-… OPENAI_API_KEY=sk-… GEMINI_API_KEY=… make test-integration

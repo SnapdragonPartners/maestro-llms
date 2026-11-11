@@ -64,16 +64,13 @@ func TestIntegrationVertexGeminiEmbeddings(t *testing.T) {
 	t.Logf("OK Vertex embeddings: project=%s location=%s model=%s dims=%d", project, location, model, len(resp.Vectors[0].Values))
 }
 
-// vertexEmbedClient builds a live Vertex embedding client for model, or skips.
-func vertexEmbedClient(t *testing.T, model string) *google.EmbeddingClient {
+// vertexEmbedClient builds a live Vertex embedding client for model in
+// location, or skips.
+func vertexEmbedClient(t *testing.T, model, location string) *google.EmbeddingClient {
 	t.Helper()
 	project := os.Getenv("VERTEX_PROJECT")
 	if project == "" {
 		t.Skip("VERTEX_PROJECT not set")
-	}
-	location := os.Getenv("VERTEX_EMBEDDINGS_LOCATION")
-	if location == "" {
-		location = "us-central1"
 	}
 	creds, err := credentials.DetectDefault(&credentials.DetectOptions{
 		Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
@@ -94,25 +91,32 @@ func vertexEmbedClient(t *testing.T, model string) *google.EmbeddingClient {
 	return c
 }
 
-// Image and document embedding inputs on Vertex (ADR-0045).
+// Image and document embedding inputs on Vertex (ADR-0045). On 2026-11-11
+// gemini-embedding-2 was served on "global" only, and
+// gemini-embedding-2-preview on "us-central1" only.
 //
-//	VERTEX_MULTIMODAL_EMBEDDINGS_MODEL   default "gemini-embedding-2"
+//	VERTEX_MULTIMODAL_EMBEDDINGS_MODEL      default "gemini-embedding-2"
+//	VERTEX_MULTIMODAL_EMBEDDINGS_LOCATION   default "global"
 func TestIntegrationVertexEmbeddingMedia(t *testing.T) {
-	model := os.Getenv("VERTEX_MULTIMODAL_EMBEDDINGS_MODEL")
-	if model == "" {
-		model = "gemini-embedding-2"
-	}
-	livetest.EmbeddingMedia(t, vertexEmbedClient(t, model))
+	model := envOr("VERTEX_MULTIMODAL_EMBEDDINGS_MODEL", "gemini-embedding-2")
+	location := envOr("VERTEX_MULTIMODAL_EMBEDDINGS_LOCATION", "global")
+	livetest.EmbeddingMedia(t, vertexEmbedClient(t, model, location))
 }
 
 // Text Parts on Vertex's predict route are joined (ADR-0045 item 7), and
 // usage is reported from the prediction statistics (item 11).
 //
 //	VERTEX_PREDICT_EMBEDDINGS_MODEL   default "text-embedding-005"
+//	VERTEX_EMBEDDINGS_LOCATION        default "us-central1"
 func TestIntegrationVertexEmbeddingJoinedText(t *testing.T) {
-	model := os.Getenv("VERTEX_PREDICT_EMBEDDINGS_MODEL")
-	if model == "" {
-		model = "text-embedding-005"
+	model := envOr("VERTEX_PREDICT_EMBEDDINGS_MODEL", "text-embedding-005")
+	location := envOr("VERTEX_EMBEDDINGS_LOCATION", "us-central1")
+	livetest.EmbeddingJoinedText(t, vertexEmbedClient(t, model, location))
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	livetest.EmbeddingJoinedText(t, vertexEmbedClient(t, model))
+	return def
 }

@@ -1,6 +1,6 @@
 # 0045. Image and document inputs for embeddings
 
-- **Status:** Proposed; amends [ADR-0006](0006-validation-error.md) (adds `ValidationEmbeddings`) and [ADR-0009](0009-vertex-backend-psc-and-gemini-embeddings.md) (the Vertex single-input rule)
+- **Status:** Accepted; amends [ADR-0006](0006-validation-error.md) (adds `ValidationEmbeddings`) and [ADR-0009](0009-vertex-backend-psc-and-gemini-embeddings.md) (the Vertex single-input rule)
 - **Date:** 2026-11-11
 
 ## Context
@@ -225,8 +225,32 @@ One PR (`feat/embedding-media`), then the v1.4 docs wrap and tag.
    single-input rule), ADR-0006 and ADR-0009 status lines ("amended by
    0045"), the ADR index, and `MAESTRO_DIVERGENCES.md` row X17
    (informational: Maestro embeds text only).
-9. Status moves to Accepted in the same PR once live tests pass.
+9. Status moves to Accepted in the same PR once live tests pass (done).
 
 ## Verification
 
-To be filled in with the live results before this ADR is accepted.
+Live tests on 2026-11-11, project `morris-qa`
+(`llms/internal/livetest/embedding.go`, run from
+`google/vertex_integration_test.go`):
+
+- `TestIntegrationVertexEmbeddingMedia`, `gemini-embedding-2` on `global`:
+  an image (256x256 red PNG), the image with a caption, and a one-page
+  PDF each gave one 3,072-dimension vector, with reported usage of 258,
+  263 and 258 tokens. The image was nearer "A solid red square." than an
+  unrelated sentence (cosine 0.4608 against 0.2645), so the bytes were
+  embedded. `DefaultEstimator`'s estimate was at least the reported
+  tokens in every case, and a two-input request was a `bad_request`
+  before the call. Availability depends on the name: `gemini-embedding-2`
+  returned 404 on `us-central1` and was served on `global`;
+  `gemini-embedding-2-preview` passed the same test on `us-central1` and
+  returned 404 on `global`. The test defaults to the GA name on `global`
+  (`VERTEX_MULTIMODAL_EMBEDDINGS_MODEL` / `_LOCATION` override).
+- `TestIntegrationVertexEmbeddingJoinedText`, `text-embedding-005` on
+  `us-central1` (predict route): two text parts gave the same vector as
+  the same text joined by a blank line in `Text` (cosine at least
+  0.9999), each reporting 14 tokens from the prediction statistics.
+- Regression: `TestIntegrationVertexGeminiEmbeddings`
+  (`gemini-embedding-001`) and `TestIntegrationOpenAIEmbeddings` pass.
+
+Not verified live: media on the Gemini API backend (the unit tests check
+the wire shape; Morris uses Vertex), and the 6-images-per-prompt limit.

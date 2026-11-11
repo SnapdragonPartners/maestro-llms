@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -16,8 +17,10 @@ const defaultFakeDimensions = 8
 // FakeEmbeddingClient is a deterministic, concurrency-safe llms.EmbeddingClient
 // for tests. A vector is chosen for each input by, in order: Func (if set),
 // an exact match in Vectors keyed by input text, otherwise a deterministic
-// hash of the text. Hash-derived vectors are stable across processes and
-// platforms (no map iteration, no unseeded randomness).
+// hash of the text. An input with Parts (ADR-0045) is not looked up in
+// Vectors; its vector hashes every part (type, media type and bytes, or
+// text), so equal parts give equal vectors. Hash-derived vectors are stable
+// across processes and platforms (no map iteration, no unseeded randomness).
 // Fields are grouped pointer-bearing first (fieldalignment); construct with
 // keyed literals.
 type FakeEmbeddingClient struct {
@@ -77,7 +80,11 @@ func (f *FakeEmbeddingClient) Embed(ctx context.Context, req llms.EmbeddingReque
 
 	vectors := make([]llms.EmbeddingVector, len(req.Inputs))
 	for i := range req.Inputs {
-		in := req.Inputs[i]
+		in := &req.Inputs[i]
+		if len(in.Parts) > 0 {
+			vectors[i] = llms.EmbeddingVector{ID: in.ID, Values: hashVector(partsKey(in.Parts), dims)}
+			continue
+		}
 		values, ok := f.Vectors[in.Text]
 		if !ok {
 			values = hashVector(in.Text, dims)
@@ -118,4 +125,25 @@ func hashVector(text string, dims int) []float32 {
 		out[i] = float32(float64(u) / twoPow32)
 	}
 	return out
+}
+
+// partsKey encodes an input's Parts for hashVector. Each part contributes its
+// type and, for media, its media type and a digest of its bytes, otherwise
+// its text, each length-prefixed so no two different part lists collide by
+// concatenation.
+func partsKey(parts []llms.ContentPart) string {
+	var b strings.Builder
+	b.WriteString("parts")
+	field := func(v string) { fmt.Fprintf(&b, "|%d:%s", len(v), v) }
+	for i := range parts {
+		p := &parts[i]
+		field(string(p.Type))
+		if p.Media != nil {
+			field(p.Media.MediaType)
+			field(fmt.Sprintf("%x", sha256.Sum256(p.Media.Data)))
+			continue
+		}
+		field(p.Text)
+	}
+	return b.String()
 }

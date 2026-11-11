@@ -52,9 +52,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   OpenAI-compatible servers and gateways such as vLLM and LunaRoute
   (`openaicompat`, OpenAI Chat Completions via openai-go; ADR-0015,
   ADR-0027; `vllm` remains as an alias).
-- **Embeddings**: OpenAI and Gemini/Vertex (`gemini-embedding-001`),
-  order/ID-preserving, per-request dimension override, task-typed
-  (`EmbeddingTask`/`Title`, advisory).
+- **Embeddings**: OpenAI and Gemini/Vertex (`gemini-embedding-001`,
+  `gemini-embedding-2`), order/ID-preserving, per-request dimension
+  override, task-typed (`EmbeddingTask`/`Title`, advisory), image and
+  document inputs on Gemini (`EmbeddingInput.Parts`, ADR-0045).
 - **Vertex AI backend**: Claude via `anthropicvertex` (separate leaf
   package — base `anthropic` stays Google-dep-free), Gemini chat, and
   Gemini embeddings;
@@ -675,6 +676,29 @@ Task-typed embeddings are provider-neutral and advisory: `EmbeddingRequest.Task`
 optional `EmbeddingInput.Title` are honored where supported (Gemini) and
 ignored where not (OpenAI).
 
+Images and documents embed through `EmbeddingInput.Parts` instead of
+`Text` (the two are exclusive). One input gives one vector, whatever the
+number of parts, so an image with a caption is one embedding (ADR-0045):
+
+```go
+out, err := emb.Embed(ctx, llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{
+	{ID: "photo-1", Parts: []llms.ContentPart{
+		llms.Text("Product photo: red running shoe"),
+		llms.Image("image/jpeg", jpegBytes),
+	}},
+}})
+```
+
+On Gemini (a multimodal model such as `gemini-embedding-2`, on the Gemini
+API or Vertex) the parts go to the provider as one content, and the model
+decides which media types it accepts. OpenAI embeddings, and Vertex models
+served by the predict API (`text-embedding-005`, `gemini-embedding-001`),
+are text-only: text parts are joined by a blank line and an image or
+document is a `bad_request` before the call. `WithMaxInputBytes` limits
+the text as sent; media bytes don't count. On Vertex, Gemini embedding
+models other than `gemini-embedding-001` (by the SDK's routing, any name
+containing `gemini` or `maas`) take one input per call.
+
 ### Vertex AI (Anthropic, Gemini chat & Gemini embeddings)
 
 For Google Vertex AI (e.g. behind Private Service Connect), auth and the
@@ -744,8 +768,10 @@ Vertex global / `us`/`eu` multi-region / regional endpoint for the
 (divergence G6, as X6 for `OPENAI_*`), so a PSC or gateway host must be
 passed as `WithBaseURL`.
 
-`gemini-embedding-001` is single-input: a multi-input request is rejected with
-a typed `bad_request` (the toolkit never fans out — the app owns chunking).
+`gemini-embedding-001` is single-input, and so is every Vertex embedding model
+the SDK sends to `:embedContent` (ADR-0045): a multi-input request is rejected
+with a typed `bad_request` (the toolkit never fans out — the app owns
+chunking). On Vertex, embedding responses report `Usage.EmbeddingTokens`.
 `google.WithAPIKey` instead selects the direct Gemini API rather than Vertex;
 mixing the API key with `WithVertex`/`WithCredentials` fails closed.
 `google.New` (chat) and `NewEmbeddings` share one option type; an option a
@@ -762,7 +788,7 @@ just performance.**
 
 | Middleware | Purpose |
 |---|---|
-| `ValidationChat` | Reject structurally invalid requests (text-only `System`, well-formed image/document parts on user messages or in tool result `Parts` only, `Content` and `Parts` not both set, tool-call↔result pairing, valid roles). Chat only. |
+| `ValidationChat` / `ValidationEmbeddings` | Reject structurally invalid requests. Chat: text-only `System`, well-formed image/document parts on user messages or in tool result `Parts` only, `Content` and `Parts` not both set, tool-call↔result pairing, valid roles. Embeddings: `Text` and `Parts` not both set, and `Parts` holding only non-empty text and well-formed image/document parts (ADR-0045). |
 | `RetryChat` / `RetryEmbeddings` | Retry while `llms.Retryable`, honoring `RetryAfter`; exponential backoff + optional jitter. |
 | `TimeoutChat` / `TimeoutEmbeddings` | Per-attempt `context` deadline. |
 | `CircuitChat` / `CircuitEmbeddings` | Three-state breaker; fast-fails with a non-retryable `*CircuitOpenError`; single-flight HalfOpen probe. |
@@ -844,7 +870,9 @@ A nil estimator passed to `RateLimitChat`/`RateLimitEmbeddings` selects
 `DefaultEstimator`.
 `DefaultEstimator` counts an image from its pixel dimensions and a PDF at
 about 4,000 tokens per page, from provider-documented figures for current
-models ([ADR-0040](docs/adr/0040-image-and-document-parts.md)). If your model
+models ([ADR-0040](docs/adr/0040-image-and-document-parts.md)), in chat
+messages, tool results and embedding inputs
+([ADR-0045](docs/adr/0045-embedding-media-inputs.md)). If your model
 bills media differently, or you know your documents' page counts, pass your
 own `TokenEstimator`.
 
@@ -1090,7 +1118,7 @@ credentials/host are present (so any subset works).
 | Ollama | local daemon at `OLLAMA_HOST` (`http://localhost:11434`) | `OLLAMA_MODEL` (Makefile defaults `llama3.2:1b`); reasoning test: `OLLAMA_THINK_MODEL` (`gpt-oss:20b`); image test runs only with `OLLAMA_VISION_MODEL` (e.g. `mistral-small3.2`) |
 | vLLM | `MAESTRO_VLLM` (full base URL incl. `/v1`, e.g. `http://my-vllm:8000/v1`); optional `MAESTRO_VLLM_API_KEY` | `MAESTRO_VLLM_MODEL` (defaults to first model `/v1/models` reports) |
 | LunaRoute (via `openaicompat`) | `LUNAROUTE_API_KEY` | `LUNAROUTE_MODELS` (`deepseek-4.1-flash`), `LUNAROUTE_BASE_URL` (`https://gw.lunaroute.com/v1`); image test runs only with `LUNAROUTE_VISION_MODEL` (e.g. `glm-5.3-vision`) |
-| Vertex AI (`anthropicvertex`, `google` with `WithVertex`) | `VERTEX_PROJECT` plus Application Default Credentials (`gcloud auth application-default login`; the tests load ADC themselves, the toolkit never does) | Claude: `VERTEX_REGION` (`global`), `VERTEX_ANTHROPIC_MODEL` (`claude-opus-4-6`), `VERTEX_ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`). Gemini: `VERTEX_GEMINI_LOCATION` (`global`), `VERTEX_GEMINI_MODEL` (`gemini-3.8-flash`), `VERTEX_GEMINI_LEVEL_MODEL` (`gemini-3-flash-preview`), `VERTEX_EMBEDDINGS_LOCATION` (`us-central1`), `VERTEX_EMBEDDINGS_MODEL` (`gemini-embedding-001`) |
+| Vertex AI (`anthropicvertex`, `google` with `WithVertex`) | `VERTEX_PROJECT` plus Application Default Credentials (`gcloud auth application-default login`; the tests load ADC themselves, the toolkit never does) | Claude: `VERTEX_REGION` (`global`), `VERTEX_ANTHROPIC_MODEL` (`claude-opus-4-6`), `VERTEX_ANTHROPIC_REASONING_MODEL` (`claude-opus-5-5`). Gemini: `VERTEX_GEMINI_LOCATION` (`global`), `VERTEX_GEMINI_MODEL` (`gemini-3.8-flash`), `VERTEX_GEMINI_LEVEL_MODEL` (`gemini-3-flash-preview`), `VERTEX_EMBEDDINGS_LOCATION` (`us-central1`), `VERTEX_EMBEDDINGS_MODEL` (`gemini-embedding-001`), `VERTEX_PREDICT_EMBEDDINGS_MODEL` (`text-embedding-005`). Multimodal embeddings: `VERTEX_MULTIMODAL_EMBEDDINGS_MODEL` (`gemini-embedding-2`), `VERTEX_MULTIMODAL_EMBEDDINGS_LOCATION` (`global`; on 2026-11-11 `gemini-embedding-2` was served on `global` only and `gemini-embedding-2-preview` on `us-central1` only) |
 
 ```sh
 MAESTRO_ANTHROPIC_API_KEY=sk-ant-… OPENAI_API_KEY=sk-… GEMINI_API_KEY=… make test-integration

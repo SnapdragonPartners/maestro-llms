@@ -160,6 +160,9 @@ func deepCopyJSON(v any) any {
 
 func copyEmbeddingRequest(r llms.EmbeddingRequest) llms.EmbeddingRequest {
 	r.Inputs = slices.Clone(r.Inputs)
+	for i := range r.Inputs {
+		r.Inputs[i].Parts = copyContentParts(r.Inputs[i].Parts)
+	}
 	r.Metadata = maps.Clone(r.Metadata)
 	return r
 }

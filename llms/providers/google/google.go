@@ -109,9 +109,12 @@ func WithDimensions(n int) Option {
 }
 
 // WithMaxInputBytes sets the no-silent-truncation guard: unless
-// WithAutoTruncate(true), an input whose Text exceeds this many UTF-8 bytes
-// is rejected with a typed bad_request before the provider call. It is a
-// literal byte count (not tokens — conservative, mechanical, auditable); the
+// WithAutoTruncate(true), an input whose text as sent exceeds this many
+// UTF-8 bytes is rejected with a typed bad_request before the provider call.
+// The text as sent is Text, or for an input with Parts its text parts: their
+// sum where they go as separate parts, or the joined string, separators
+// included, where they are joined (Vertex's predict route). Image and
+// document bytes never count (ADR-0045 item 8). It is a literal byte count (not tokens — conservative, mechanical, auditable); the
 // application sets it from its model/chunking policy. Required unless
 // WithAutoTruncate(true). NewEmbeddings only.
 func WithMaxInputBytes(n int) Option {

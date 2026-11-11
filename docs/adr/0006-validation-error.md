@@ -1,6 +1,6 @@
 # 0006. Validation middleware emits a distinct, non-retryable `ValidationError`; structural scope only
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0045](0045-embedding-media-inputs.md) (adds `ValidationEmbeddings`)
 - **Date:** 2026-05-16
 
 ## Context

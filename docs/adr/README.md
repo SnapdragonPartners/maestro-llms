@@ -40,10 +40,10 @@ Copy `0001`'s structure as the template.
 | [0003](0003-middleware-complete-only-defer-streaming.md) | Middleware wraps `Complete` only; defer streaming semantics | Accepted |
 | [0004](0004-retry-circuit-reuse-llms-retryable.md) | Retry/circuit middleware reuse `llms.Retryable`, not a ported classifier | Accepted; amended by 0033 |
 | [0005](0005-circuit-open-error.md) | Circuit breaker emits a distinct, non-retryable `CircuitOpenError` | Accepted; amended by 0033 |
-| [0006](0006-validation-error.md) | Validation middleware: distinct non-retryable `ValidationError`, structural scope only | Accepted |
+| [0006](0006-validation-error.md) | Validation middleware: distinct non-retryable `ValidationError`, structural scope only | Accepted; amended by 0045 |
 | [0007](0007-toolchoice-required.md) | `ToolChoiceRequired` — force a tool call without naming one | Accepted |
 | [0008](0008-prompt-cache-hint.md) | Provider-neutral prompt-cache hint (`ContentPart.CacheBreakpoint`) | Accepted; amended by 0040 |
-| [0009](0009-vertex-backend-psc-and-gemini-embeddings.md) | Vertex backend (Anthropic + Gemini embeddings), PSC injection, task-typed embeddings — design of record; v0.4 implementation | Accepted; amended by 0027, 0028, 0029 |
+| [0009](0009-vertex-backend-psc-and-gemini-embeddings.md) | Vertex backend (Anthropic + Gemini embeddings), PSC injection, task-typed embeddings — design of record; v0.4 implementation | Accepted; amended by 0027, 0028, 0029, 0045 |
 | [0010](0010-toolcall-provider-signature.md) | Round-trip opaque provider state via `ToolCall.ProviderSignature` (Gemini 3 thought_signature) | Accepted |
 | [0011](0011-toolloop-helper.md) | Tool loop helper — scope, API, and non-goals | Accepted; partially superseded by 0017; amended by 0019, 0020, 0026, 0030 |
 | [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted; amended by 0037 |
@@ -78,3 +78,4 @@ Copy `0001`'s structure as the template.
 | [0042](0042-limiter-composition-and-rollback.md) | Limiter composition: `ratelimit.All` admits only when every limiter admits, reserving in order and rolling back held reservations on a refusal; optional `Rollbacker` on a reservation tells "never sent" from "sent and failed"; built-in limiters release instead | Accepted |
 | [0043](0043-input-bound.md) | An input bound beside the estimate: optional `middleware.InputBounder` on a `TokenEstimator` fills `ReservationRequest.BoundUnits` (nil = no bound); `DefaultEstimator` bounds text by UTF-8 bytes plus margins on Anthropic/OpenAI/Google, with a 1,024-token tool allowance on Anthropic; no bound for media, ProviderParams, other providers or embeddings; live tests check it | Accepted |
 | [0044](0044-maxtokens-caps-billable-output.md) | `MaxTokens` caps billable output, reasoning included, on Anthropic (incl. Vertex), OpenAI and Gemini (API and Vertex), verified by live tests that hit the cap with and without reasoning; nothing promised for Ollama, `openaicompat`, unset `MaxTokens` or body overrides | Accepted |
+| [0045](0045-embedding-media-inputs.md) | Image and document inputs for embeddings: `EmbeddingInput.Parts` (text, image, document) exclusive with `Text`, one vector per input; new `ValidationEmbeddings`; Gemini maps parts 1:1, OpenAI rejects media pre-call; `MaxInputBytes` counts text only; the Vertex route and single-input rule follow genai's raw-string routing (text-only on predict); Vertex usage from embedding statistics | Accepted |

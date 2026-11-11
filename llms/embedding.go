@@ -44,14 +44,23 @@ const (
 )
 
 // EmbeddingInput is one item to embed. ID lets callers defensively match
-// responses to inputs.
+// responses to inputs. Set Text for text, or Parts for multimodal content;
+// one input always yields one vector (ADR-0045).
 type EmbeddingInput struct {
 	ID   string
 	Text string
 	// Title is an optional document title, advisory and only meaningful with
 	// EmbeddingTaskRetrievalDocument; providers that do not support it ignore
-	// it.
+	// it. It applies to an input with Parts too.
 	Title string
+	// Parts is multimodal content embedded as one vector: non-empty text
+	// parts and image or document parts with inline bytes (ContentImage,
+	// ContentDocument). Parts and Text are exclusive; an input that sets
+	// both is rejected (ADR-0045). Providers that cannot embed media reject
+	// it before the call with a bad_request ProviderError; there is no
+	// per-model capability check, so a text-only model on a multimodal
+	// route returns the provider's own error.
+	Parts []ContentPart
 }
 
 // EmbeddingRequest is a provider-neutral embedding request. Provider clients

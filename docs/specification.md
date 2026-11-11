@@ -605,7 +605,8 @@ type EmbeddingRequest struct {
 type EmbeddingInput struct {
     ID    string
     Text  string
-    Title string // optional; only meaningful with EmbeddingTaskRetrievalDocument
+    Title string        // optional; only meaningful with EmbeddingTaskRetrievalDocument
+    Parts []ContentPart // text, image, document; exclusive with Text (ADR-0045)
 }
 
 // EmbeddingTask is a provider-neutral, advisory embedding-intent hint.
@@ -632,6 +633,8 @@ type EmbeddingVector struct {
 
 The response must preserve input ordering. IDs are included so callers can defensively match responses to inputs.
 
+An input carries either `Text` or `Parts`, never both. `Parts` holds non-empty text parts and image or document parts with inline bytes (the ADR-0040 `ContentImage`/`ContentDocument` shapes, checked by the same rules), and one input yields one vector however many parts it has. `Title` and `Task` apply to it as to text. An adapter maps the parts to what its provider documents and rejects anything else as `bad_request` before the call, with no per-model capability prediction: Gemini sends them as one content (Gemini API and Vertex `:embedContent`), while OpenAI and Vertex's predict API are text-only, so text parts are joined by a blank line and media is rejected. `MaxInputBytes` measures the text as sent, and media bytes don't count. Vertex embedding responses report `Usage.EmbeddingTokens`/`TotalTokens` from the per-embedding statistics, left zero if any embedding lacks a count ([ADR-0045](adr/0045-embedding-media-inputs.md)).
+
 `DefaultDimensions` is advisory. Some providers/models support caller-selected dimensions, so `EmbeddingRequest.Dimensions` may override the model default when the provider supports it. The true dimension is always the length of each returned vector.
 
 Provider clients return a typed validation/config error when `Inputs` exceeds the provider or model batch limit. Automatic chunking is intentionally outside provider clients; applications own chunking because they also own retry policy, progress reporting, source IDs, and ingestion transaction boundaries.
@@ -639,14 +642,16 @@ Provider clients return a typed validation/config error when `Inputs` exceeds th
 ### Task-typed embeddings, Vertex, single-input models
 
 These rules come from [ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md),
-as amended by ADR-0027, ADR-0028 and ADR-0029.
+as amended by ADR-0027, ADR-0028, ADR-0029 and ADR-0045.
 
 `Task`/`Title` (shown in the types above) are provider-neutral and advisory,
 honored only where the provider supports them (Gemini retrieval-document/-query
 etc.) and ignored elsewhere (OpenAI). They are *not* app context smuggled
 through `Metadata` — task type materially changes the vectors for retrieval.
 
-`gemini-embedding-001` accepts **one input per call**: this is simply the
+`gemini-embedding-001` accepts **one input per call**, and so does every Vertex
+model the SDK sends to `:embedContent` (its raw model name contains `gemini`
+or `maas`; ADR-0045): this is simply the
 "batch limit" rule above with a limit of 1 — the client returns a typed
 `bad_request`/validation error when `len(Inputs) > 1`. It must **not**
 internally fan out or otherwise make a hidden chunking exception; applications
@@ -787,9 +792,9 @@ ChainChat(base, A, B, C)
 // call order: A -> B -> C -> base
 ```
 
-The package ships these middleware, each as a chat and (except validation) an embedding variant:
+The package ships these middleware, each as a chat and an embedding variant:
 
-- `ValidationChat`: structural checks only ([ADR-0006](adr/0006-validation-error.md))
+- `ValidationChat` / `ValidationEmbeddings`: structural checks only ([ADR-0006](adr/0006-validation-error.md); embeddings since [ADR-0045](adr/0045-embedding-media-inputs.md))
 - `RetryChat` / `RetryEmbeddings`: classified by `llms.Retryable` ([ADR-0004](adr/0004-retry-circuit-reuse-llms-retryable.md))
 - `TimeoutChat` / `TimeoutEmbeddings`
 - `CircuitChat` / `CircuitEmbeddings` ([ADR-0005](adr/0005-circuit-open-error.md))
@@ -812,7 +817,7 @@ Recommended order for most apps:
 
 With this default, each retry attempt flows through timeout, circuit breaker, and rate-limit reservation independently. That is intentional: retries are real provider traffic and should be gated by the same limiter as first attempts.
 
-`RecommendedChat` and `RecommendedEmbeddings` build exactly this order from a `RecommendedConfig`: validation (chat only; there is no structural embedding validation), retry and circuit always; timeout, rate limiting and metrics only when configured. A nil `RecommendedConfig.Retry` selects the jittered `DefaultRetryConfig()` ([ADR-0036](adr/0036-recommended-retry-pointer.md)). Because metrics is innermost, its `Observer` sees each real provider attempt but not outer rejections; an application that also wants those adds a second, outer `MetricsChat` with `ChainChat`.
+`RecommendedChat` and `RecommendedEmbeddings` build exactly this order from a `RecommendedConfig`: validation, retry and circuit always (embedding validation since ADR-0045); timeout, rate limiting and metrics only when configured. A nil `RecommendedConfig.Retry` selects the jittered `DefaultRetryConfig()` ([ADR-0036](adr/0036-recommended-retry-pointer.md)). Because metrics is innermost, its `Observer` sees each real provider attempt but not outer rejections; an application that also wants those adds a second, outer `MetricsChat` with `ChainChat`.
 
 Applications may change the order with `ChainChat`/`ChainEmbeddings`. The tradeoffs:
 
@@ -946,7 +951,7 @@ type TokenEstimator interface {
 }
 ```
 
-`DefaultEstimator` is approximate and byte-based (a low bytes-per-token divisor, so non-ASCII text over-reserves further). Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added. Image and document parts are counted from provider-documented figures: an image from its pixel dimensions (capped at the largest documented per-image cost), a PDF at a typical-high figure per page, other documents by their bytes, each document with a framing allowance (ADR-0040), in user messages and in tool results (ADR-0041). The figures cover current models; an app on a model that bills media differently, or that knows its page counts, supplies its own `TokenEstimator`.
+`DefaultEstimator` is approximate and byte-based (a low bytes-per-token divisor, so non-ASCII text over-reserves further). Only its bias toward over-reserving is promised, not its exact numbers: overestimation is safer for rate limiting than underestimation. Provider-specific estimators may be added. Image and document parts are counted from provider-documented figures: an image from its pixel dimensions (capped at the largest documented per-image cost), a PDF at a typical-high figure per page, other documents by their bytes, each document with a framing allowance (ADR-0040), in user messages, in tool results (ADR-0041) and in embedding inputs (ADR-0045). The figures cover current models; an app on a model that bills media differently, or that knows its page counts, supplies its own `TokenEstimator`.
 
 ### Input bound
 

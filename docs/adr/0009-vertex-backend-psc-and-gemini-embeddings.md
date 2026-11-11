@@ -1,6 +1,6 @@
 # 0009. Vertex AI backend (Anthropic + Gemini embeddings), PSC endpoint injection, task-typed embeddings
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [ADR-0045](0045-embedding-media-inputs.md) (the Vertex single-input rule follows genai's routing)
 - **Date:** 2026-05-17
 
 > Design decision of record. The implementation is a v0.4-class multi-PR

@@ -9,6 +9,8 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/satint"
 )
 
 // EmbeddingClient is an llms.EmbeddingClient backed by genai (Gemini /
@@ -21,16 +23,13 @@ type EmbeddingClient struct {
 	dims          int
 	autoTruncate  bool
 	maxInputBytes int
+	vertex        bool
 }
 
 // defaultBatchLimit bounds inputs for models without a known single-input
 // constraint (Vertex text-embedding models cap at 250 per call).
 const defaultBatchLimit = 250
 
-// batchLimit is the max inputs per call. Single-input models (e.g.
-// gemini-embedding-001) return 1: a multi-input request is rejected up front
-// with a typed error — the client never fans out or chunks (the application
-// owns batching; ADR-0009).
 // baseModel strips genai/Vertex path and "models/" prefixes so the
 // single-input rule still matches "models/gemini-embedding-001" and
 // "projects/.../publishers/google/models/gemini-embedding-001".
@@ -41,13 +40,29 @@ func baseModel(model string) string {
 	return model
 }
 
-func batchLimit(model string) int {
-	switch baseModel(model) {
-	case "gemini-embedding-001":
+// embedContentRoute reports whether genai sends model to Vertex's
+// :embedContent API rather than predict. It mirrors genai v1.77's
+// tIsVertexEmbedContentModel on the raw model string, so a resource path
+// whose project or location contains "gemini" or "maas" matches as genai
+// does (ADR-0045 item 9). TestEmbedContentRouteMatchesSDK pins the SDK's
+// behavior. On :embedContent genai sends one content per call with all its
+// parts; on predict it sends only each content's first text part.
+func embedContentRoute(model string) bool {
+	return (strings.Contains(model, "gemini") && model != "gemini-embedding-001") ||
+		strings.Contains(model, "maas")
+}
+
+// batchLimit is the max inputs per call. Single-input models return 1: a
+// multi-input request is rejected up front with a typed error; the client
+// never fans out or chunks (the application owns batching; ADR-0009).
+// gemini-embedding-001 is single-input on both backends (by base name, so a
+// full path matches too), and on Vertex so is every model on the
+// :embedContent route, where genai takes one content per call (ADR-0045).
+func batchLimit(model string, vertex bool) int {
+	if baseModel(model) == "gemini-embedding-001" || (vertex && embedContentRoute(model)) {
 		return 1
-	default:
-		return defaultBatchLimit
 	}
+	return defaultBatchLimit
 }
 
 // embedConfig validates the options for NewEmbeddings and builds the genai
@@ -102,6 +117,7 @@ func NewEmbeddings(opts ...Option) (*EmbeddingClient, error) {
 	return &EmbeddingClient{
 		api: api, model: s.model, dims: s.dims,
 		autoTruncate: s.autoTruncate, maxInputBytes: s.maxInputBytes,
+		vertex: cc.Backend == genai.BackendVertexAI,
 	}, nil
 }
 
@@ -142,8 +158,9 @@ func taskType(t llms.EmbeddingTask) string {
 }
 
 // Embed embeds req.Inputs, preserving input order/IDs. It rejects oversized
-// input up front unless AutoTruncate was set (ADR-0009), and rejects a
-// multi-input request for single-input models.
+// input up front unless AutoTruncate was set (ADR-0009), rejects a
+// multi-input request for single-input models, and maps each input's Parts
+// for the API route genai will use (ADR-0045).
 func (c *EmbeddingClient) Embed(ctx context.Context, req llms.EmbeddingRequest) (llms.EmbeddingResponse, error) {
 	if len(req.Inputs) == 0 {
 		return llms.EmbeddingResponse{}, badRequest(c.model, "no inputs")
@@ -151,27 +168,29 @@ func (c *EmbeddingClient) Embed(ctx context.Context, req llms.EmbeddingRequest) 
 	if req.Dimensions < 0 || req.Dimensions > math.MaxInt32 {
 		return llms.EmbeddingResponse{}, badRequest(c.model, "Dimensions must be >= 0 and fit int32")
 	}
-	if limit := batchLimit(c.model); len(req.Inputs) > limit {
+	if limit := batchLimit(c.model, c.vertex); len(req.Inputs) > limit {
 		return llms.EmbeddingResponse{}, badRequest(c.model,
 			"too many inputs for this model: the application owns chunking/batching")
-	}
-	// No-silent-truncation guard: when not opting into provider truncation,
-	// reject oversized input here (genai cannot send autoTruncate:false, so
-	// this client-side byte check is the enforcement — ADR-0009). The
-	// application owns chunking; it sees a typed error, not a silent cut.
-	if !c.autoTruncate {
-		for i := range req.Inputs {
-			if n := len(req.Inputs[i].Text); n > c.maxInputBytes {
-				return llms.EmbeddingResponse{}, badRequest(c.model, fmt.Sprintf(
-					"input %d is %d bytes, exceeds MaxInputBytes %d (set AutoTruncate or chunk smaller)",
-					i, n, c.maxInputBytes))
-			}
-		}
 	}
 
 	contents := make([]*genai.Content, len(req.Inputs))
 	for i := range req.Inputs {
-		contents[i] = genai.NewContentFromText(req.Inputs[i].Text, genai.RoleUser)
+		content, textBytes, perr := c.content(i, &req.Inputs[i])
+		if perr != nil {
+			return llms.EmbeddingResponse{}, perr
+		}
+		// No-silent-truncation guard: when not opting into provider
+		// truncation, reject oversized text here (genai cannot send
+		// autoTruncate:false, so this client-side byte check is the
+		// enforcement; ADR-0009). It measures the text as sent, so joined
+		// separators count, and media bytes don't (ADR-0045 item 8). The
+		// application owns chunking; it sees a typed error, not a silent cut.
+		if !c.autoTruncate && textBytes > c.maxInputBytes {
+			return llms.EmbeddingResponse{}, badRequest(c.model, fmt.Sprintf(
+				"input %d is %d bytes, exceeds MaxInputBytes %d (set AutoTruncate or chunk smaller)",
+				i, textBytes, c.maxInputBytes))
+		}
+		contents[i] = content
 	}
 
 	ecfg := &genai.EmbedContentConfig{
@@ -202,9 +221,66 @@ func (c *EmbeddingClient) Embed(ctx context.Context, req llms.EmbeddingRequest) 
 	for i := range req.Inputs {
 		vectors[i] = llms.EmbeddingVector{ID: req.Inputs[i].ID, Values: resp.Embeddings[i].Values}
 	}
-	// genai reports BillableCharacterCount, not tokens; per the spec, leave
-	// Usage zero when the provider does not report tokens.
-	return llms.EmbeddingResponse{Vectors: vectors, Raw: resp}, nil
+	return llms.EmbeddingResponse{Vectors: vectors, Usage: embedUsage(resp.Embeddings), Raw: resp}, nil
+}
+
+// content translates one input into the genai content to send and the number
+// of text bytes in it, as sent (ADR-0045 items 7 and 8). Text maps to one
+// text part. Parts map 1:1 on the Gemini API and on Vertex's :embedContent
+// route; on Vertex's predict route genai would keep only the first part's
+// text, so text parts are joined into one and media is a bad_request.
+func (c *EmbeddingClient) content(i int, in *llms.EmbeddingInput) (*genai.Content, int, *llms.ProviderError) {
+	if err := media.CheckEmbeddingInput(in); err != nil {
+		return nil, 0, badRequest(c.model, fmt.Sprintf("embedding input %d: %v", i, err))
+	}
+	if len(in.Parts) == 0 {
+		return genai.NewContentFromText(in.Text, genai.RoleUser), len(in.Text), nil
+	}
+	if c.vertex && !embedContentRoute(c.model) {
+		if media.HasMedia(in.Parts) {
+			return nil, 0, badRequest(c.model, fmt.Sprintf(
+				"embedding input %d: this model is served by Vertex's predict API, which takes text only; "+
+					"image and document parts need a model on the embedContent API (a Gemini embedding model other than gemini-embedding-001)", i))
+		}
+		text := media.JoinText(in.Parts)
+		return genai.NewContentFromText(text, genai.RoleUser), len(text), nil
+	}
+	parts := make([]*genai.Part, len(in.Parts))
+	textBytes := 0
+	for j := range in.Parts {
+		p := &in.Parts[j]
+		if p.Type == llms.ContentText {
+			parts[j] = genai.NewPartFromText(p.Text)
+			textBytes = satint.Add(textBytes, len(p.Text))
+			continue
+		}
+		base, err := media.Check(p) // already checked; this returns the normalized type
+		if err != nil {
+			return nil, 0, badRequest(c.model, fmt.Sprintf("embedding input %d part %d: %v", i, j, err))
+		}
+		parts[j] = &genai.Part{InlineData: &genai.Blob{MIMEType: base, Data: p.Media.Data}}
+	}
+	return genai.NewContentFromParts(parts, genai.RoleUser), textBytes, nil
+}
+
+// embedUsage sums the per-embedding token counts Vertex reports (genai puts
+// them in Statistics on both the predict and :embedContent routes; ADR-0045
+// item 11), each rounded up. If any embedding lacks a positive count (the
+// Gemini API reports none, and genai sets empty statistics on :embedContent
+// when usageMetadata is absent), Usage stays zero rather than undercounting.
+func embedUsage(embs []*genai.ContentEmbedding) llms.Usage {
+	total := 0
+	for _, e := range embs {
+		if e == nil || e.Statistics == nil || !(e.Statistics.TokenCount > 0) {
+			return llms.Usage{}
+		}
+		n := math.Ceil(float64(e.Statistics.TokenCount))
+		if n >= math.MaxInt32 {
+			n = math.MaxInt32
+		}
+		total = satint.Add(total, int(n))
+	}
+	return llms.Usage{EmbeddingTokens: total, TotalTokens: total}
 }
 
 // outputDims returns the OutputDimensionality pointer: a per-request override

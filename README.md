@@ -1387,11 +1387,12 @@ and `ToolResult.Content` is empty for a result that uses `Parts`), and
 with your rate limiter in the one `RecommendedConfig.Limiter` slot,
 all-or-nothing, and a reservation can implement the optional
 `ratelimit.Rollbacker` to tell "never sent" from "sent and failed" — see
-[ADR-0042](docs/adr/0042-limiter-composition-and-rollback.md); every
-reservation now carries `ReservationRequest.BoundUnits`, an upper bound on
-usage beside the estimate, when the estimator can establish one:
-`DefaultEstimator` bounds text requests on Anthropic, OpenAI and Gemini
-(and requests with tools on Anthropic) when `MaxTokens` is set, an estimator that embeds it inherits the bound, and an app
+[ADR-0042](docs/adr/0042-limiter-composition-and-rollback.md); a
+reservation request now carries `ReservationRequest.BoundUnits`, an upper
+bound on usage beside the estimate, nil when no bound was established:
+`DefaultEstimator` bounds text requests without `ProviderParams` on
+Anthropic, OpenAI and Gemini (and requests with tools on Anthropic) when
+`MaxTokens` is set, an estimator that embeds it inherits the bound, and an app
 supplies its own through `middleware.InputBounder` — see
 [ADR-0043](docs/adr/0043-input-bound.md); on Anthropic (including Vertex),
 OpenAI and Gemini (API and Vertex), `MaxTokens` caps billable output with

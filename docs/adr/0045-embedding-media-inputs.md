@@ -94,10 +94,15 @@ batch limit").
      as ADR-0041 does for text-only tool messages); an image or document
      is `ProviderError{Kind: BadRequest}` before the call.
 8. **`MaxInputBytes` measures text only.** It is the no-silent-truncation
-   guard (ADR-0009) and protects text from being cut. For an input with
-   `Parts` it measures the sum of the text parts' bytes; image and
-   document bytes do not count and are bounded by the provider. An app
-   sized for text would otherwise reject nearly every image.
+   guard (ADR-0009) and protects text from being cut, so it measures the
+   text **as sent**: on the Vertex predict route, the joined string from
+   item 7, separators included; on the `:embedContent` route and the
+   Gemini API, where text parts are sent as separate parts, the sum of
+   their bytes. Image and document bytes do not count and are bounded by
+   the provider. An app sized for text would otherwise reject nearly
+   every image. The check runs on the translated request, so it cannot
+   drift from what the adapter sends; boundary tests cover parts that fit
+   only without separators.
 9. **The Vertex route and single-input rule follow genai's routing**
    (amends ADR-0009). One unexported predicate mirrors genai's
    `tIsVertexEmbedContentModel` on the **raw** model string (contains
@@ -192,7 +197,8 @@ One PR (`feat/embedding-media`), then the v1.4 docs wrap and tag.
    `EstimateEmbeddings` counts `Parts` (item 10). Tests for each.
 4. `llms/providers/google/embeddings.go`: check inputs, the route
    predicate and single-input rule (item 9), map `Parts` per route
-   (item 7), `MaxInputBytes` on text parts (item 8), usage from
+   (item 7), `MaxInputBytes` on the text as sent (item 8, with a
+   separator boundary test on predict), usage from
    statistics (item 11). Unit tests against the recorded request and
    response: media bytes and type on the wire, one content for a
    multi-part input on `:embedContent`, joined text and a pre-call media

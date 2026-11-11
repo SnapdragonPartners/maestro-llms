@@ -2,7 +2,7 @@ module github.com/SnapdragonPartners/maestro-llms/examples/chat
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 // During development this example resolves the toolkit from the parent
 // worktree. When the example is copied out of the monorepo, replace the

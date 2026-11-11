@@ -1410,7 +1410,7 @@ model, and on Vertex an older model ignores the media without an error) — see
 [ADR-0041](docs/adr/0041-tool-result-parts.md); `llms.ToolResult` and
 `toolloop.ToolResult` are no longer comparable with `==`,
 `toolloop.Outcome.TerminalResult` moved position (unkeyed literals only),
-and `ToolResult.Content` is empty for a result that uses `Parts`), and
+and `ToolResult.Content` is empty for a result that uses `Parts`),
 **v1.3.0** (hard per-run budgets: `ratelimit.All` composes a budget limiter
 with your rate limiter in the one `RecommendedConfig.Limiter` slot,
 all-or-nothing, and a reservation can implement the optional
@@ -1426,6 +1426,20 @@ supplies its own through `middleware.InputBounder` — see
 OpenAI and Gemini (API and Vertex), `MaxTokens` caps billable output with
 reasoning included, verified by live tests — see
 [ADR-0044](docs/adr/0044-maxtokens-caps-billable-output.md); existing
-limiters ignore the new field).
+limiters ignore the new field), and **v1.4.0** (image and document inputs for
+embeddings: `EmbeddingInput.Parts` takes text, image and document parts,
+exclusive with `Text`, one vector per input; Gemini API and Vertex
+`:embedContent` models (such as `gemini-embedding-2`, served on Vertex
+`global`) take the parts 1:1, while Vertex predict models (such as
+`text-embedding-005`) and OpenAI join text parts and reject media before the
+call; Vertex models on the `:embedContent` route take one input per call, so
+a multi-input request is a `bad_request`; the new `ValidationEmbeddings`
+middleware runs first in `RecommendedEmbeddings`; `MaxInputBytes` measures
+the text as sent; `DefaultEstimator` counts the parts; and Vertex embeddings
+now report usage, which a limiter commits — see
+[ADR-0045](docs/adr/0045-embedding-media-inputs.md); code that reads
+`EmbeddingInput.Text` must also read `Parts`, `EmbeddingInput` is no longer
+comparable with `==`, and unkeyed `middleware.ValidationError` literals no
+longer compile).
 
 MIT — see [`LICENSE`](LICENSE).

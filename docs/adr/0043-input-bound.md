@@ -144,8 +144,8 @@ field.
   listed above 1,024 tool tokens, would break it. The live tests are the
   tripwire; a breach means raising the margin or narrowing what is bounded.
 - Hard budgets also rely on `MaxTokens` capping billable output, reasoning
-  included. That is verified per provider separately (#149 PR 3); the bound
-  assumes it.
+  included. [ADR-0044](0044-maxtokens-caps-billable-output.md) records that
+  guarantee and the live tests that verify it per provider.
 
 ## References
 

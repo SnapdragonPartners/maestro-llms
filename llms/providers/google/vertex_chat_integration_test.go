@@ -171,13 +171,18 @@ func TestIntegrationVertexGeminiReasoningBudget(t *testing.T) {
 	)
 }
 
+// vertexLevelModel is the Vertex model that takes thinkingLevel (Gemini 3):
+// VERTEX_GEMINI_LEVEL_MODEL, default gemini-3-flash-preview.
+func vertexLevelModel() string {
+	if m := os.Getenv("VERTEX_GEMINI_LEVEL_MODEL"); m != "" {
+		return m
+	}
+	return defaultLevelModel
+}
+
 // ADR-0022 on Vertex: Effort -> thinkingLevel (Gemini 3).
 func TestIntegrationVertexGeminiReasoningEffort(t *testing.T) {
-	m := os.Getenv("VERTEX_GEMINI_LEVEL_MODEL")
-	if m == "" {
-		m = defaultLevelModel
-	}
-	livetest.ReasoningControl(t, newVertexGemini(t, m),
+	livetest.ReasoningControl(t, newVertexGemini(t, vertexLevelModel()),
 		livetest.Same(llms.ReasoningConfig{Effort: llms.ReasoningEffortLow}),
 		livetest.Same(llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh}),
 	)
@@ -222,4 +227,14 @@ func TestIntegrationVertexGeminiListModels(t *testing.T) {
 		t.Fatalf("ListModels on Vertex: got %v, want a config ProviderError", err)
 	}
 	t.Logf("OK Vertex ListModels fails fast: %v", err)
+}
+
+// MaxTokens caps billable output, thinking included, on Vertex too (#149,
+// ADR-0044).
+func TestIntegrationVertexGeminiOutputCapText(t *testing.T) {
+	livetest.OutputCapText(t, newVertexGemini(t, vertexModel()), "MAX_TOKENS")
+}
+
+func TestIntegrationVertexGeminiOutputCapReasoning(t *testing.T) {
+	livetest.OutputCapReasoning(t, newVertexGemini(t, vertexLevelModel()), "MAX_TOKENS", &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh})
 }

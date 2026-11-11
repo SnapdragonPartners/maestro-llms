@@ -25,8 +25,18 @@ What the providers offer (checked 2026-11-11):
   sends every model whose name contains `gemini` (except the bare name
   `gemini-embedding-001`) or `maas` through the `:embedContent` API, with
   a full `Content` (inline data included). That path takes **one content
-  per call**: more returns a plain `fmt` error from the SDK. Other models
-  go through the predict API, which genai maps text-only.
+  per call**: more returns a plain `fmt` error from the SDK. The match is
+  on the raw model string, so a resource path whose project or location
+  contains `gemini` or `maas` also takes this route. Other models go
+  through the predict API, where genai's `tContentsForEmbed` keeps only
+  the **first part's text** of each content: later parts are silently
+  dropped, and a content whose first part is media fails with an untyped
+  SDK error. On the Gemini API backend the contents pass through whole.
+- **Usage.** On Vertex, genai fills `ContentEmbedding.Statistics.TokenCount`
+  on both routes: from `usageMetadata.promptTokenCount` (with per-modality
+  details) on `:embedContent`, and from the prediction's statistics on
+  predict. The Gemini API reports no token count. The adapter leaves
+  `Usage` zero today.
 - **`multimodalembedding@001`** (Vertex) uses predict instances with
   `image.bytesBase64Encoded`, which genai does not produce.
 - **OpenAI embeddings** are text-only.
@@ -69,11 +79,17 @@ batch limit").
    puts it outermost, as `RecommendedChat` does.
 7. **Per provider, fail before the call; no per-model prediction**
    (ADR-0022, ADR-0040 item 6).
-   - `google` (both backends): the parts map 1:1 into one `genai.Content`:
-     text parts as text, media as inline data with the normalized media
-     type. Any image or document type passes; a model that cannot take it
-     returns the provider's error (for example a text-only model, or
-     `multimodalembedding@001`, which is not supported).
+   - `google`, Gemini API and the Vertex `:embedContent` route: the parts
+     map 1:1 into one `genai.Content`: text parts as text, media as inline
+     data with the normalized media type. Any image or document type
+     passes; a model that cannot take it returns the provider's error.
+   - `google`, the Vertex predict route (`text-embedding-005`,
+     `multimodalembedding@001` and other models item 9's predicate does
+     not send to `:embedContent`): genai would keep only the first part's
+     text, so the adapter joins the text parts by a blank line into one
+     text part and rejects an image or document as `bad_request` before
+     the call. This is a property of the API route the SDK chooses, from
+     the same predicate as item 9, not a prediction about the model.
    - `openai`: text parts are joined by a blank line (`media.JoinText`,
      as ADR-0041 does for text-only tool messages); an image or document
      is `ProviderError{Kind: BadRequest}` before the call.
@@ -82,19 +98,32 @@ batch limit").
    `Parts` it measures the sum of the text parts' bytes; image and
    document bytes do not count and are bounded by the provider. An app
    sized for text would otherwise reject nearly every image.
-9. **The Vertex single-input rule follows genai's routing** (amends
-   ADR-0009). On Vertex, a model genai sends to `:embedContent` (name
-   contains `gemini` or `maas`) or `gemini-embedding-001` is single-input;
-   `len(Inputs) > 1` is a typed `bad_request` before the call. On the
-   Gemini API, only `gemini-embedding-001` stays single-input. The match
-   uses the base model name, as `batchLimit` does today. This fixes the
-   defect above for text and is required for media.
+9. **The Vertex route and single-input rule follow genai's routing**
+   (amends ADR-0009). One unexported predicate mirrors genai's
+   `tIsVertexEmbedContentModel` on the **raw** model string (contains
+   `gemini` and is not exactly `gemini-embedding-001`, or contains `maas`)
+   and picks the route for item 7. On Vertex, a model on the
+   `:embedContent` route is single-input, and so is `gemini-embedding-001`
+   by its base name (the existing check, which also covers a full path to
+   it); `len(Inputs) > 1` is a typed `bad_request` before the call. On the
+   Gemini API, only `gemini-embedding-001` stays single-input. Tests cover
+   bare names, full resource paths, and a project or location containing
+   `gemini` or `maas`. A predicate test pins the genai version's behavior,
+   so an SDK bump that changes routing shows up as a failing test. This
+   fixes the defect above for text and is required for media.
 10. **Estimate, no bound.** `DefaultEstimator.EstimateEmbeddings` counts
     an input's `Parts` with the chat rules (text by bytes, media from the
     ADR-0040 figures, per-part overhead). `BoundEmbeddings` stays
-    unbounded (ADR-0043). `Usage` stays zero for Gemini embeddings
-    (unchanged: genai reports characters, not tokens).
-11. **`testllm`.** `FakeEmbeddingClient`'s deterministic vector hashes
+    unbounded (ADR-0043).
+11. **Reported usage on Vertex.** When every returned embedding carries
+    `Statistics`, `google` sets `Usage.EmbeddingTokens` and
+    `Usage.TotalTokens` to the sum of their `TokenCount` (rounded up per
+    embedding), as `openai` does from `prompt_tokens`. If any embedding
+    lacks statistics (the Gemini API, or a partial response), `Usage`
+    stays zero rather than undercounting, and the limiter keeps the
+    estimate (spec "Usage Metadata": leave fields zero when the provider
+    does not report them).
+12. **`testllm`.** `FakeEmbeddingClient`'s deterministic vector hashes
     each part (type, media type, bytes, text), so equal inputs give equal
     vectors and an image differs from its media type alone.
     `copyEmbeddingRequest` deep-copies `Parts` and their bytes.
@@ -116,6 +145,14 @@ batch limit").
   read `Parts`.
 - Images in embeddings bill as image tokens; `MaxInputBytes` does not
   limit their size (item 8).
+- **Behavior change on Vertex:** Gemini and text embeddings on Vertex
+  start reporting `Usage.EmbeddingTokens`/`TotalTokens` (item 11), text
+  included. A rate limiter in the chain now commits these actuals instead
+  of keeping the estimate. Release notes.
+- **Behavior change on the Vertex predict route:** text-only `Parts` are
+  joined rather than truncated to the first part, and media there is a
+  typed `bad_request` (item 7). Text-only callers (`Text` set) see no
+  change.
 
 ## Alternatives considered
 
@@ -133,6 +170,12 @@ batch limit").
 - **Supporting `multimodalembedding@001`.** Rejected: genai cannot send
   its request shape, and a hand-built predict call would be a second
   client for a superseded model.
+- **Passing parts through on the Vertex predict route** and letting the
+  provider decide. Rejected: genai drops every part after the first
+  without an error, so the provider never sees them (item 7).
+- **Matching the route on the base model name.** Rejected: genai matches
+  the raw string, so a path whose project contains `maas` would pass a
+  base-name check and still hit the SDK's untyped error (item 9).
 - **Mapping each part to its own vector.** Rejected: Gemini returns one
   embedding per content, and the response contract is one vector per
   input.
@@ -147,18 +190,25 @@ One PR (`feat/embedding-media`), then the v1.4 docs wrap and tag.
    prefix (item 6); `RecommendedEmbeddings` puts it first; the
    "intentionally no ValidationEmbeddings" comments go.
    `EstimateEmbeddings` counts `Parts` (item 10). Tests for each.
-4. `llms/providers/google/embeddings.go`: check inputs, map `Parts`
-   (item 7), `MaxInputBytes` on text parts (item 8), the Vertex
-   single-input rule (item 9). Unit tests against the recorded request
-   (media bytes and type on the wire, one content for a multi-part input,
-   the typed batch error on Vertex and none on the Gemini API).
+4. `llms/providers/google/embeddings.go`: check inputs, the route
+   predicate and single-input rule (item 9), map `Parts` per route
+   (item 7), `MaxInputBytes` on text parts (item 8), usage from
+   statistics (item 11). Unit tests against the recorded request and
+   response: media bytes and type on the wire, one content for a
+   multi-part input on `:embedContent`, joined text and a pre-call media
+   rejection on predict, the typed batch error on Vertex (bare names,
+   paths, `maas`/`gemini` substrings) and none on the Gemini API, and
+   usage summed from statistics, zero when any is missing.
 5. `llms/providers/openai/embeddings.go`: join text parts, reject media
    (item 7), with tests.
-6. `llms/testllm`: hashing and the deep copy (item 11), with tests.
+6. `llms/testllm`: hashing and the deep copy (item 12), with tests.
 7. Live test on Vertex, gated on `VERTEX_PROJECT`, model
    `gemini-embedding-2` (override by env): an image-only input, an image
    plus text input (one vector), a one-page PDF, and a two-input request
-   rejected as `bad_request` before the call. The model name and limits
+   rejected as `bad_request` before the call; each media case checks that
+   `Usage.EmbeddingTokens` is positive. A text-only `Parts` input on
+   `text-embedding-005` (predict route) checks the joined text gives the
+   same vector as the same string in `Text`. The model name and limits
    go in the test and this ADR's Verification section.
 8. Docs: spec "Embeddings API" (`Parts`, `ValidationEmbeddings`, the
    single-input rule), ADR-0006 and ADR-0009 status lines ("amended by

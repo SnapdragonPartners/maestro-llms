@@ -92,7 +92,7 @@ func TestRecommendedChatTimeoutIncludedWhenPositive(t *testing.T) {
 	}
 }
 
-func TestRecommendedEmbeddingsNoValidationButComposed(t *testing.T) {
+func TestRecommendedEmbeddingsComposed(t *testing.T) {
 	rec := &recorder{}
 	var calls int32
 	base := &testllm.FakeEmbeddingClient{
@@ -106,7 +106,7 @@ func TestRecommendedEmbeddingsNoValidationButComposed(t *testing.T) {
 	}
 	c := RecommendedEmbeddings(base, RecommendedConfig{Retry: new(fastRetry(3)), Observer: rec})
 
-	// Empty request is fine: embeddings have no structural validation.
+	// Empty request passes validation: the batch rules are the provider's.
 	resp, err := c.Embed(context.Background(), llms.EmbeddingRequest{})
 	if err != nil || len(resp.Vectors) != 1 {
 		t.Fatalf("recommended embeddings broken: %+v / %v", resp, err)
@@ -114,10 +114,24 @@ func TestRecommendedEmbeddingsNoValidationButComposed(t *testing.T) {
 	if got := len(rec.snapshot()); got != 2 {
 		t.Fatalf("want 2 metrics events (retry then success), got %d", got)
 	}
+
+	// A malformed input stops at validation (ADR-0045): no attempt reaches
+	// the client or the observer.
+	before := atomic.LoadInt32(&calls)
+	_, err = c.Embed(context.Background(), llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{
+		{Text: "x", Parts: []llms.ContentPart{llms.Text("y")}},
+	}})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *ValidationError, got %v", err)
+	}
+	if atomic.LoadInt32(&calls) != before || len(rec.snapshot()) != 2 {
+		t.Fatal("a rejected request must not reach retry, the client or metrics")
+	}
 }
 
 // builtRetry returns the retry policy the recommended chains were built
-// with. Chat: validation -> retry; embeddings: retry is outermost.
+// with. Both chains: validation -> retry.
 func builtRetry(t *testing.T, cfg RecommendedConfig) (chat, emb RetryConfig) {
 	t.Helper()
 	v, ok := RecommendedChat(&testllm.FakeChatClient{}, cfg).(*validationChat)
@@ -128,9 +142,13 @@ func builtRetry(t *testing.T, cfg RecommendedConfig) (chat, emb RetryConfig) {
 	if !ok {
 		t.Fatal("RecommendedChat: retry does not follow validation")
 	}
-	re, ok := RecommendedEmbeddings(&testllm.FakeEmbeddingClient{}, cfg).(*retryEmbedding)
+	ve, ok := RecommendedEmbeddings(&testllm.FakeEmbeddingClient{}, cfg).(*validationEmbedding)
 	if !ok {
-		t.Fatal("RecommendedEmbeddings: outermost layer is not retry")
+		t.Fatal("RecommendedEmbeddings: outermost layer is not validation")
+	}
+	re, ok := ve.next.(*retryEmbedding)
+	if !ok {
+		t.Fatal("RecommendedEmbeddings: retry does not follow validation")
 	}
 	return rc.cfg, re.cfg
 }

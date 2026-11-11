@@ -52,9 +52,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   OpenAI-compatible servers and gateways such as vLLM and LunaRoute
   (`openaicompat`, OpenAI Chat Completions via openai-go; ADR-0015,
   ADR-0027; `vllm` remains as an alias).
-- **Embeddings**: OpenAI and Gemini/Vertex (`gemini-embedding-001`),
-  order/ID-preserving, per-request dimension override, task-typed
-  (`EmbeddingTask`/`Title`, advisory).
+- **Embeddings**: OpenAI and Gemini/Vertex (`gemini-embedding-001`,
+  `gemini-embedding-2`), order/ID-preserving, per-request dimension
+  override, task-typed (`EmbeddingTask`/`Title`, advisory), image and
+  document inputs on Gemini (`EmbeddingInput.Parts`, ADR-0045).
 - **Vertex AI backend**: Claude via `anthropicvertex` (separate leaf
   package — base `anthropic` stays Google-dep-free), Gemini chat, and
   Gemini embeddings;
@@ -675,6 +676,29 @@ Task-typed embeddings are provider-neutral and advisory: `EmbeddingRequest.Task`
 optional `EmbeddingInput.Title` are honored where supported (Gemini) and
 ignored where not (OpenAI).
 
+Images and documents embed through `EmbeddingInput.Parts` instead of
+`Text` (the two are exclusive). One input gives one vector, whatever the
+number of parts, so an image with a caption is one embedding (ADR-0045):
+
+```go
+out, err := emb.Embed(ctx, llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{
+	{ID: "photo-1", Parts: []llms.ContentPart{
+		llms.Text("Product photo: red running shoe"),
+		llms.Image("image/jpeg", jpegBytes),
+	}},
+}})
+```
+
+On Gemini (a multimodal model such as `gemini-embedding-2`, on the Gemini
+API or Vertex) the parts go to the provider as one content, and the model
+decides which media types it accepts. OpenAI embeddings, and Vertex models
+served by the predict API (`text-embedding-005`, `gemini-embedding-001`),
+are text-only: text parts are joined by a blank line and an image or
+document is a `bad_request` before the call. `WithMaxInputBytes` limits
+the text as sent; media bytes don't count. On Vertex, Gemini embedding
+models other than `gemini-embedding-001` (by the SDK's routing, any name
+containing `gemini` or `maas`) take one input per call.
+
 ### Vertex AI (Anthropic, Gemini chat & Gemini embeddings)
 
 For Google Vertex AI (e.g. behind Private Service Connect), auth and the
@@ -744,8 +768,10 @@ Vertex global / `us`/`eu` multi-region / regional endpoint for the
 (divergence G6, as X6 for `OPENAI_*`), so a PSC or gateway host must be
 passed as `WithBaseURL`.
 
-`gemini-embedding-001` is single-input: a multi-input request is rejected with
-a typed `bad_request` (the toolkit never fans out — the app owns chunking).
+`gemini-embedding-001` is single-input, and so is every Vertex embedding model
+the SDK sends to `:embedContent` (ADR-0045): a multi-input request is rejected
+with a typed `bad_request` (the toolkit never fans out — the app owns
+chunking). On Vertex, embedding responses report `Usage.EmbeddingTokens`.
 `google.WithAPIKey` instead selects the direct Gemini API rather than Vertex;
 mixing the API key with `WithVertex`/`WithCredentials` fails closed.
 `google.New` (chat) and `NewEmbeddings` share one option type; an option a
@@ -762,7 +788,7 @@ just performance.**
 
 | Middleware | Purpose |
 |---|---|
-| `ValidationChat` | Reject structurally invalid requests (text-only `System`, well-formed image/document parts on user messages or in tool result `Parts` only, `Content` and `Parts` not both set, tool-call↔result pairing, valid roles). Chat only. |
+| `ValidationChat` / `ValidationEmbeddings` | Reject structurally invalid requests. Chat: text-only `System`, well-formed image/document parts on user messages or in tool result `Parts` only, `Content` and `Parts` not both set, tool-call↔result pairing, valid roles. Embeddings: `Text` and `Parts` not both set, and `Parts` holding only non-empty text and well-formed image/document parts (ADR-0045). |
 | `RetryChat` / `RetryEmbeddings` | Retry while `llms.Retryable`, honoring `RetryAfter`; exponential backoff + optional jitter. |
 | `TimeoutChat` / `TimeoutEmbeddings` | Per-attempt `context` deadline. |
 | `CircuitChat` / `CircuitEmbeddings` | Three-state breaker; fast-fails with a non-retryable `*CircuitOpenError`; single-flight HalfOpen probe. |

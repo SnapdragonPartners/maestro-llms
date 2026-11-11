@@ -40,10 +40,10 @@ Copy `0001`'s structure as the template.
 | [0003](0003-middleware-complete-only-defer-streaming.md) | Middleware wraps `Complete` only; defer streaming semantics | Accepted |
 | [0004](0004-retry-circuit-reuse-llms-retryable.md) | Retry/circuit middleware reuse `llms.Retryable`, not a ported classifier | Accepted; amended by 0033 |
 | [0005](0005-circuit-open-error.md) | Circuit breaker emits a distinct, non-retryable `CircuitOpenError` | Accepted; amended by 0033 |
-| [0006](0006-validation-error.md) | Validation middleware: distinct non-retryable `ValidationError`, structural scope only | Accepted |
+| [0006](0006-validation-error.md) | Validation middleware: distinct non-retryable `ValidationError`, structural scope only | Accepted; amended by 0045 |
 | [0007](0007-toolchoice-required.md) | `ToolChoiceRequired` — force a tool call without naming one | Accepted |
 | [0008](0008-prompt-cache-hint.md) | Provider-neutral prompt-cache hint (`ContentPart.CacheBreakpoint`) | Accepted; amended by 0040 |
-| [0009](0009-vertex-backend-psc-and-gemini-embeddings.md) | Vertex backend (Anthropic + Gemini embeddings), PSC injection, task-typed embeddings — design of record; v0.4 implementation | Accepted; amended by 0027, 0028, 0029 |
+| [0009](0009-vertex-backend-psc-and-gemini-embeddings.md) | Vertex backend (Anthropic + Gemini embeddings), PSC injection, task-typed embeddings — design of record; v0.4 implementation | Accepted; amended by 0027, 0028, 0029, 0045 |
 | [0010](0010-toolcall-provider-signature.md) | Round-trip opaque provider state via `ToolCall.ProviderSignature` (Gemini 3 thought_signature) | Accepted |
 | [0011](0011-toolloop-helper.md) | Tool loop helper — scope, API, and non-goals | Accepted; partially superseded by 0017; amended by 0019, 0020, 0026, 0030 |
 | [0012](0012-model-lister.md) | Model listing & per-family upgrade detection (`llms.ModelLister`, per-provider `LatestInFamily`) | Accepted; amended by 0037 |

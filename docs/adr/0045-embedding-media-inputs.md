@@ -121,11 +121,13 @@ batch limit").
     ADR-0040 figures, per-part overhead). `BoundEmbeddings` stays
     unbounded (ADR-0043).
 11. **Reported usage on Vertex.** When every returned embedding carries
-    `Statistics`, `google` sets `Usage.EmbeddingTokens` and
-    `Usage.TotalTokens` to the sum of their `TokenCount` (rounded up per
-    embedding), as `openai` does from `prompt_tokens`. If any embedding
-    lacks statistics (the Gemini API, or a partial response), `Usage`
-    stays zero rather than undercounting, and the limiter keeps the
+    a positive `Statistics.TokenCount`, `google` sets
+    `Usage.EmbeddingTokens` and `Usage.TotalTokens` to their sum (rounded
+    up per embedding), as `openai` does from `prompt_tokens`. If any
+    embedding lacks one (the Gemini API, a partial response, or an
+    `:embedContent` response without `usageMetadata`, for which genai
+    still sets empty statistics), `Usage` stays zero rather than
+    undercounting, and the limiter keeps the
     estimate (spec "Usage Metadata": leave fields zero when the provider
     does not report them).
 12. **`testllm`.** `FakeEmbeddingClient`'s deterministic vector hashes
@@ -136,11 +138,14 @@ batch limit").
 ## Consequences
 
 - Additive under the v1 contract: one field on `EmbeddingInput`, one new
-  middleware constructor, one new internal check. Two side effects the
+  middleware constructor, one new internal check. Three side effects the
   contract allows: `EmbeddingInput` stops being comparable with `==`
-  (comparability is promised only for `ModelRef` and `Usage`), and
-  `RecommendedEmbeddings` now rejects a malformed input before retry and
-  rate-limit work. Both go in the release notes.
+  (comparability is promised only for `ModelRef` and `Usage`);
+  `middleware.ValidationError` gains an unexported field, which breaks
+  only unkeyed literals such as `ValidationError{"reason"}` (the README
+  rules those out: "Don't use unkeyed struct literals for this package's
+  types"); and `RecommendedEmbeddings` now rejects a malformed input
+  before retry and rate-limit work. All three go in the release notes.
 - **Behavior change on Vertex:** a multi-input request to a `gemini*` or
   `maas` embedding model other than `gemini-embedding-001` now fails with
   a typed `bad_request` before the call instead of the SDK's untyped

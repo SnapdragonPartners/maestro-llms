@@ -176,6 +176,32 @@ func TestCheckToolResult(t *testing.T) {
 	}
 }
 
+func TestCheckEmbeddingInput(t *testing.T) {
+	ok := []llms.EmbeddingInput{
+		{Text: "plain"},
+		{},
+		{Title: "T", Parts: []llms.ContentPart{llms.Text("a"), llms.Image("image/png", []byte("x")), llms.Document("application/pdf", []byte("x"))}},
+	}
+	for i := range ok {
+		if err := CheckEmbeddingInput(&ok[i]); err != nil {
+			t.Errorf("input %d rejected: %v", i, err)
+		}
+	}
+	bad := map[string]llms.EmbeddingInput{
+		"both":       {Text: "x", Parts: []llms.ContentPart{llms.Text("y")}},
+		"empty text": {Parts: []llms.ContentPart{llms.Text("")}},
+		"bad media":  {Parts: []llms.ContentPart{llms.Image("application/pdf", []byte("x"))}},
+		"no bytes":   {Parts: []llms.ContentPart{llms.Image("image/png", nil)}},
+		"tool call":  {Parts: []llms.ContentPart{{Type: llms.ContentToolCall, ToolCall: &llms.ToolCall{ID: "1", Name: "f"}}}},
+		"unknown":    {Parts: []llms.ContentPart{{Type: "audio"}}},
+	}
+	for name, in := range bad {
+		if err := CheckEmbeddingInput(&in); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
 func TestJoinTextAndHasMedia(t *testing.T) {
 	parts := []llms.ContentPart{llms.Text("a"), llms.Image("image/png", []byte("x")), llms.Text("b")}
 	if got := JoinText(parts); got != "a\n\nb" {

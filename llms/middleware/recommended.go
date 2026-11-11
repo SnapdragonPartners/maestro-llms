@@ -63,6 +63,8 @@ type RecommendedConfig struct {
 // chain in its own decorator can therefore tie each attempt to its logical
 // call, and attribute the rest of the logical call's time to backoff and
 // limiter waits (ADR-0031).
+//
+//nolint:dupl // parallel typed chain; RecommendedEmbeddings keeps the same order
 func RecommendedChat(base llms.ChatClient, cfg RecommendedConfig) llms.ChatClient {
 	mws := []ChatMiddleware{ValidationChat(), RetryChat(retryOrDefault(cfg.Retry))}
 	if cfg.Timeout > 0 {
@@ -78,11 +80,13 @@ func RecommendedChat(base llms.ChatClient, cfg RecommendedConfig) llms.ChatClien
 	return ChainChat(base, mws...)
 }
 
-// RecommendedEmbeddings is the embedding-side counterpart. It omits validation
-// (there is no structural embedding validation — see ADR-0006); the order is
-// otherwise the same: retry -> timeout -> circuit -> rate limit -> metrics.
+// RecommendedEmbeddings is the embedding-side counterpart, in the same order:
+// validation -> retry -> timeout -> circuit -> rate limit -> metrics.
+// Validation was added in v1.4 (ADR-0045) for multimodal inputs.
+//
+//nolint:dupl // parallel typed chain; RecommendedChat keeps the same order
 func RecommendedEmbeddings(base llms.EmbeddingClient, cfg RecommendedConfig) llms.EmbeddingClient {
-	mws := []EmbeddingMiddleware{RetryEmbeddings(retryOrDefault(cfg.Retry))}
+	mws := []EmbeddingMiddleware{ValidationEmbeddings(), RetryEmbeddings(retryOrDefault(cfg.Retry))}
 	if cfg.Timeout > 0 {
 		mws = append(mws, TimeoutEmbeddings(cfg.Timeout))
 	}

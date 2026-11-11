@@ -133,3 +133,21 @@ func TestEstimateToolResultParts(t *testing.T) {
 		t.Fatalf("tool result parts estimate = %d, want %d", got, want)
 	}
 }
+
+// ADR-0045 item 10: an embedding input's Parts count like tool-result parts,
+// beside Text; there is still no output and no bound.
+func TestEstimateEmbeddingParts(t *testing.T) {
+	img := llms.Image("image/png", pngOf(t, 2000, 1500))
+	req := llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{
+		{Text: strings.Repeat("b", 30)},
+		{Parts: []llms.ContentPart{llms.Text(strings.Repeat("a", 400)), img}},
+	}}
+	got := DefaultEstimator{}.EstimateEmbeddings(req)
+	want := ceilDiv(30, charsPerToken) + 2*perPartOverhead + ceilDiv(400, charsPerToken) + 4000
+	if got.InputTokens != want || got.TotalTokensMax != want || got.OutputTokensMax != 0 || got.Requests != 1 {
+		t.Fatalf("embedding estimate = %+v, want input/total %d", got, want)
+	}
+	if _, ok, err := (DefaultEstimator{}).BoundEmbeddings(llms.ModelRef{}, req); ok || err != nil {
+		t.Fatalf("embeddings must stay unbounded (ADR-0043): ok=%v err=%v", ok, err)
+	}
+}

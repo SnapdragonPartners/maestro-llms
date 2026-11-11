@@ -2,10 +2,12 @@ package openai
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/openai/openai-go/v3"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/internal/media"
 )
 
 // maxBatchInputs caps inputs per request. OpenAI's embeddings endpoint accepts
@@ -70,7 +72,11 @@ func (c *EmbeddingClient) Embed(ctx context.Context, req llms.EmbeddingRequest) 
 
 	texts := make([]string, len(req.Inputs))
 	for i := range req.Inputs {
-		texts[i] = req.Inputs[i].Text
+		text, perr := c.inputText(i, &req.Inputs[i])
+		if perr != nil {
+			return llms.EmbeddingResponse{}, perr
+		}
+		texts[i] = text
 	}
 
 	params := openai.EmbeddingNewParams{
@@ -89,4 +95,26 @@ func (c *EmbeddingClient) Embed(ctx context.Context, req llms.EmbeddingRequest) 
 		return llms.EmbeddingResponse{}, classifyError(c.model, err)
 	}
 	return c.toResponse(req, resp)
+}
+
+// inputText returns the string to embed for one input: Text, or its text Parts
+// joined by a blank line. OpenAI embeddings are text-only, so an image or
+// document part is a bad_request before the call (ADR-0045).
+func (c *EmbeddingClient) inputText(i int, in *llms.EmbeddingInput) (string, *llms.ProviderError) {
+	if err := media.CheckEmbeddingInput(in); err != nil {
+		return "", &llms.ProviderError{
+			Provider: providerName, Model: c.model, Kind: llms.ErrorKindBadRequest,
+			Message: fmt.Sprintf("embedding input %d: %v", i, err),
+		}
+	}
+	if len(in.Parts) == 0 {
+		return in.Text, nil
+	}
+	if media.HasMedia(in.Parts) {
+		return "", &llms.ProviderError{
+			Provider: providerName, Model: c.model, Kind: llms.ErrorKindBadRequest,
+			Message: fmt.Sprintf("embedding input %d: OpenAI embeddings are text-only; image and document parts are not supported", i),
+		}
+	}
+	return media.JoinText(in.Parts), nil
 }

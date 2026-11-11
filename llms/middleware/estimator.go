@@ -105,8 +105,9 @@ func tokensForPart(p *llms.ContentPart) int {
 	return n
 }
 
-// tokensForResultParts estimates a tool result's Parts (ADR-0041): text and
-// media as in a message, each with the per-part overhead. It does not
+// tokensForResultParts estimates a tool result's Parts (ADR-0041), or an
+// embedding input's (ADR-0045): text and media as in a message, each with the
+// per-part overhead. It does not
 // recurse, since result parts never nest (and a malformed one must not loop).
 func tokensForResultParts(parts []llms.ContentPart) int {
 	total := 0
@@ -199,12 +200,14 @@ func (DefaultEstimator) EstimateChat(req llms.ChatRequest) ratelimit.UsageUnits 
 	}
 }
 
-// EstimateEmbeddings estimates input tokens from the concatenated inputs.
+// EstimateEmbeddings estimates input tokens from the concatenated inputs: Text
+// by bytes, and Parts as tool-result parts are counted (text by bytes, media
+// from the ADR-0040 figures, with the per-part overhead; ADR-0045).
 // Embeddings produce no output tokens.
 func (DefaultEstimator) EstimateEmbeddings(req llms.EmbeddingRequest) ratelimit.UsageUnits {
 	input := 0
 	for i := range req.Inputs {
-		input = sum(input, tokensForText(req.Inputs[i].Text))
+		input = sum(input, tokensForText(req.Inputs[i].Text), tokensForResultParts(req.Inputs[i].Parts))
 	}
 	return ratelimit.UsageUnits{
 		InputTokens:    input,

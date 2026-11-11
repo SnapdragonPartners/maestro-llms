@@ -98,19 +98,42 @@ func CheckToolResult(r *llms.ToolResult) error {
 	if r.Content != "" {
 		return errors.New("tool result sets both Content and Parts; set one")
 	}
-	for i := range r.Parts {
-		p := &r.Parts[i]
+	return checkParts("tool result", r.Parts)
+}
+
+// CheckEmbeddingInput validates the shape of an embedding input's Parts
+// (ADR-0045): Text and Parts are not both set, and each part is a non-empty
+// text part or a well-formed image or document part (Check). An input with
+// neither is not this check's concern (the provider decides, as before).
+// Which media a provider accepts is the adapter's decision. The validation
+// middleware and every embedding adapter call it.
+func CheckEmbeddingInput(in *llms.EmbeddingInput) error {
+	if len(in.Parts) == 0 {
+		return nil
+	}
+	if in.Text != "" {
+		return errors.New("embedding input sets both Text and Parts; set one")
+	}
+	return checkParts("embedding input", in.Parts)
+}
+
+// checkParts requires each part to be a non-empty text part or a well-formed
+// image or document part (Check); what names the owner in errors. It is the
+// shared rule behind CheckToolResult and CheckEmbeddingInput.
+func checkParts(what string, parts []llms.ContentPart) error {
+	for i := range parts {
+		p := &parts[i]
 		switch p.Type {
 		case llms.ContentText:
 			if p.Text == "" {
-				return fmt.Errorf("tool result part %d: empty text part", i)
+				return fmt.Errorf("%s part %d: empty text part", what, i)
 			}
 		case llms.ContentImage, llms.ContentDocument:
 			if _, err := Check(p); err != nil {
-				return fmt.Errorf("tool result part %d: %w", i, err)
+				return fmt.Errorf("%s part %d: %w", what, i, err)
 			}
 		default:
-			return fmt.Errorf("tool result part %d: %q part not allowed; tool result parts are text, image or document", i, p.Type)
+			return fmt.Errorf("%s part %d: %q part not allowed; %s parts are text, image or document", what, i, p.Type, what)
 		}
 	}
 	return nil
@@ -126,9 +149,9 @@ func HasMedia(parts []llms.ContentPart) bool {
 	return false
 }
 
-// JoinText joins the text parts of a tool result's Parts with a blank line,
-// for providers whose tool result is a single string (ADR-0041). It ignores
-// other parts; callers reject media first.
+// JoinText joins the text parts of a tool result's or embedding input's Parts
+// with a blank line, for providers that take a single string (ADR-0041,
+// ADR-0045). It ignores other parts; callers reject media first.
 func JoinText(parts []llms.ContentPart) string {
 	var b strings.Builder
 	for i := range parts {

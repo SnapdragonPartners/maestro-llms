@@ -2,6 +2,7 @@ package livetest
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -40,9 +41,9 @@ func TestCheckCap(t *testing.T) {
 		{name: "under the cap is retried and passes", responses: []llms.ChatResponse{
 			capResp("end_turn", 10, 0), capResp(stop, 64, 0),
 		}, calls: 2},
-		{name: "under the cap every time fails after capAttempts", wantErr: "in 3 attempts",
+		{name: "under the cap every time fails after capAttempts", wantErr: fmt.Sprintf("in %d attempts", capAttempts),
 			responses: []llms.ChatResponse{capResp("end_turn", 10, 0)}, calls: capAttempts},
-		{name: "no reasoning when required fails after capAttempts", wantErr: "in 3 attempts",
+		{name: "no reasoning when required fails after capAttempts", wantErr: fmt.Sprintf("in %d attempts", capAttempts),
 			responses: []llms.ChatResponse{capResp(stop, 64, 0)}, calls: capAttempts, wantReasoning: true},
 		{name: "reasoning on a retry passes", responses: []llms.ChatResponse{
 			capResp(stop, 64, 0), capResp(stop, 10, 54),

@@ -1368,7 +1368,7 @@ message is exported as `compact.SummaryMessage` / `SummaryText`, so an app
 can store a summary and put it back to keep it rolling, its format is fixed
 for v1, and `Summarize` rolls a leading summary in place — see
 [ADR-0039](docs/adr/0039-compact-summary-message-format.md); openai-go
-v3.90 and genai v1.77), and **v1.2.0** (image and document content: user
+v3.90 and genai v1.77), **v1.2.0** (image and document content: user
 messages take `ContentImage` / `ContentDocument` parts with inline bytes,
 mapped per provider and rejected before the call where a provider can't
 take them, and `DefaultEstimator` counts them; code that switches on
@@ -1382,6 +1382,21 @@ model, and on Vertex an older model ignores the media without an error) — see
 [ADR-0041](docs/adr/0041-tool-result-parts.md); `llms.ToolResult` and
 `toolloop.ToolResult` are no longer comparable with `==`,
 `toolloop.Outcome.TerminalResult` moved position (unkeyed literals only),
-and `ToolResult.Content` is empty for a result that uses `Parts`).
+and `ToolResult.Content` is empty for a result that uses `Parts`), and
+**v1.3.0** (hard per-run budgets: `ratelimit.All` composes a budget limiter
+with your rate limiter in the one `RecommendedConfig.Limiter` slot,
+all-or-nothing, and a reservation can implement the optional
+`ratelimit.Rollbacker` to tell "never sent" from "sent and failed" — see
+[ADR-0042](docs/adr/0042-limiter-composition-and-rollback.md); every
+reservation now carries `ReservationRequest.BoundUnits`, an upper bound on
+usage beside the estimate, when the estimator can establish one:
+`DefaultEstimator` bounds text requests on Anthropic, OpenAI and Gemini
+(and requests with tools on Anthropic) when `MaxTokens` is set, an estimator that embeds it inherits the bound, and an app
+supplies its own through `middleware.InputBounder` — see
+[ADR-0043](docs/adr/0043-input-bound.md); on Anthropic (including Vertex),
+OpenAI and Gemini (API and Vertex), `MaxTokens` caps billable output with
+reasoning included, verified by live tests — see
+[ADR-0044](docs/adr/0044-maxtokens-caps-billable-output.md); existing
+limiters ignore the new field).
 
 MIT — see [`LICENSE`](LICENSE).

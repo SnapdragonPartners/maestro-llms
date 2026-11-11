@@ -2,6 +2,7 @@ package livetest
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -50,35 +51,43 @@ func outputCap(t *testing.T, c llms.ChatClient, req llms.ChatRequest, lengthStop
 	if testing.Short() {
 		t.Skip("live output cap check skipped under -short")
 	}
-	rc := withRetry(c)
+	if err := checkCap(withRetry(c), req, lengthStop, wantReasoning, t.Logf); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// checkCap runs req until a run qualifies (stopped at the cap, and reasoned
+// when wantReasoning) or capAttempts runs don't. It returns an error on a
+// call failure, on billable output over MaxTokens or not reported (checked
+// before qualification, so a breach fails on any attempt), or when no run
+// qualifies. It is separate from outputCap so its rules are unit-tested.
+func checkCap(c llms.ChatClient, req llms.ChatRequest, lengthStop llms.StopReason, wantReasoning bool, logf func(string, ...any)) error {
 	for attempt := 1; ; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), scenarioTimeout)
-		resp, err := rc.Complete(ctx, req)
+		resp, err := c.Complete(ctx, req)
 		cancel()
 		if err != nil {
-			t.Fatalf("Complete: %v", err)
+			return fmt.Errorf("Complete: %w", err)
 		}
 		u := resp.Usage
-		t.Logf("attempt %d: stop=%q billable output %d (visible %d, reasoning %d) <= MaxTokens %d?",
+		logf("attempt %d: stop=%q billable output %d (visible %d, reasoning %d) <= MaxTokens %d?",
 			attempt, resp.StopReason, u.BillableOutputTokens, u.OutputTokens, u.ReasoningTokens, req.MaxTokens)
-		// The cap check comes first: a breach fails whether or not the
-		// run otherwise qualifies.
 		if u.BillableOutputTokens > req.MaxTokens {
-			t.Fatalf("billable output %d exceeds MaxTokens %d (visible %d, reasoning %d)",
+			return fmt.Errorf("billable output %d exceeds MaxTokens %d (visible %d, reasoning %d)",
 				u.BillableOutputTokens, req.MaxTokens, u.OutputTokens, u.ReasoningTokens)
 		}
 		if u.BillableOutputTokens <= 0 {
-			t.Fatalf("no billable output reported (%d), so the cap can't be checked", u.BillableOutputTokens)
+			return fmt.Errorf("no billable output reported (%d), so the cap can't be checked", u.BillableOutputTokens)
 		}
 		truncated := resp.StopReason == lengthStop
 		reasoned := !wantReasoning || u.ReasoningTokens > 0
 		if truncated && reasoned {
-			return
+			return nil
 		}
 		if attempt == capAttempts {
-			t.Fatalf("in %d attempts no run stopped at the cap (stop %q) with reasoning tokens when required (%v); last: stop=%q, reasoning %d",
+			return fmt.Errorf("in %d attempts no run stopped at the cap (stop %q) with reasoning tokens when required (%v); last: stop=%q, reasoning %d",
 				capAttempts, lengthStop, wantReasoning, resp.StopReason, u.ReasoningTokens)
 		}
-		t.Logf("attempt %d didn't qualify (truncated %v, reasoned %v); retrying", attempt, truncated, reasoned)
+		logf("attempt %d didn't qualify (truncated %v, reasoned %v); retrying", attempt, truncated, reasoned)
 	}
 }

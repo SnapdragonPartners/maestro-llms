@@ -20,9 +20,10 @@ verifying it live, per provider.
 
 ## Decision
 
-1. **On `anthropic`, `anthropicvertex`, `openai` and `google` (Gemini API
-   and Vertex), a positive `MaxTokens` caps `Usage.BillableOutputTokens`,
-   reasoning included.** The adapters send it as `max_tokens`,
+1. **On `anthropic` (direct or on Vertex, via `anthropicvertex`), `openai`
+   and `google` (Gemini API or Vertex), a positive `MaxTokens` caps
+   `Usage.BillableOutputTokens`, reasoning included.** The adapters send it
+   as `max_tokens`,
    `max_output_tokens` and `maxOutputTokens`, and each provider counts
    thinking against that limit. When the cap is hit, the response ends with
    the provider's length stop reason (`max_tokens`, `max_output_tokens`,

@@ -174,7 +174,8 @@ and versioning" below), plus its version table:
 
 **The database owns the limits.** Every acquire reads them from the row it
 already locks, so storing them costs nothing extra.
-- *Changing a limit* means calling `Ensure` with `overwrite=true`. It takes
+- *Changing a limit* means calling `Ensure` with `overwrite=true`, or
+  `EnsureTx` in the app's own transaction (ADR-0046). It takes
   effect on the next acquire everywhere. Lowering `max_concurrency` below
   the slots currently held preempts no one; new acquires wait until the
   count falls under the new limit. **Raw `UPDATE`s of the limit columns are
@@ -438,8 +439,8 @@ change.
   as above. The provider's own limit, such as a LunaRoute 429, remains the
   backstop.
 - **Limits are operational data** in the Postgres backend: they can change
-  with no redeploy, and `Ensure` is the only write path the package
-  provides. Apps that keep limits in config choose `overwrite` deliberately.
+  with no redeploy, and `Ensure` and `EnsureTx` (ADR-0046) are the only
+  write paths the package provides. Apps that keep limits in config choose `overwrite` deliberately.
 - **Alloy:** it speaks the Postgres protocol and SQL, so it's expected to
   work, but it's untested.
 - **No `MAESTRO_DIVERGENCES.md` row.** Maestro has no distributed limiter to

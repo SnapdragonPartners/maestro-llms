@@ -55,6 +55,13 @@ func TestEnsureTxValidatesFirst(t *testing.T) {
 	}
 }
 
+// sameLimits compares limits field by field, as a consumer must:
+// bucket.Limits is not promised to stay comparable, so this file never
+// uses == on it.
+func sameLimits(a, b bucket.Limits) bool {
+	return a.TokensPerMinute == b.TokensPerMinute && a.MaxConcurrency == b.MaxConcurrency && a.BufferFactor == b.BufferFactor
+}
+
 type bucketState struct {
 	lastRefill time.Time
 	limits     bucket.Limits
@@ -129,7 +136,7 @@ func TestEnsureTxMatchesEnsure(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, want := readBucket(t, db, b), readBucket(t, db, a)
-			if got.limits != want.limits {
+			if !sameLimits(got.limits, want.limits) {
 				t.Fatalf("EnsureTx limits = %+v, Ensure = %+v", got.limits, want.limits)
 			}
 			if math.Abs(got.balance-tc.wantBalance) > 2 || math.Abs(want.balance-tc.wantBalance) > 2 {
@@ -181,7 +188,7 @@ func TestEnsureTxRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := readBucket(t, db, existing)
-	if after.limits != before.limits || after.balance != before.balance || !after.lastRefill.Equal(before.lastRefill) {
+	if !sameLimits(after.limits, before.limits) || after.balance != before.balance || !after.lastRefill.Equal(before.lastRefill) {
 		t.Fatalf("row after rollback = %+v, want %+v", after, before)
 	}
 	if _, err := l.Limits(ctx, created); !errors.Is(err, bucket.ErrUnknownKey) {
@@ -220,12 +227,12 @@ func TestLimitsAndLockLimits(t *testing.T) {
 	ensure(t, l, name, bucket.Limits{TokensPerMinute: 1000, MaxConcurrency: 2})
 	want := bucket.Limits{TokensPerMinute: 1000, MaxConcurrency: 2, BufferFactor: bucket.DefaultBufferFactor}
 	got, err := l.Limits(ctx, name)
-	if err != nil || got != want {
+	if err != nil || !sameLimits(got, want) {
 		t.Fatalf("Limits = %+v, %v; want %+v", got, err, want)
 	}
 	tx := begin(t, db)
 	locked, err := l.LockLimits(ctx, SQLTx(tx), name)
-	if err != nil || locked != got {
+	if err != nil || !sameLimits(locked, got) {
 		t.Fatalf("LockLimits = %+v, %v; want Limits' %+v", locked, err, got)
 	}
 
@@ -298,9 +305,7 @@ func TestStaleSaveDetected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Field by field, as a consumer must: bucket.Limits is not promised
-	// comparable.
-	if cur.TokensPerMinute == drawn.TokensPerMinute && cur.MaxConcurrency == drawn.MaxConcurrency && cur.BufferFactor == drawn.BufferFactor {
+	if sameLimits(cur, drawn) {
 		t.Fatalf("locked limits %+v equal the drawn ones after a concurrent save", cur)
 	}
 }
@@ -352,7 +357,7 @@ func TestNativePgxTx(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := l.Limits(ctx, name)
-	if err != nil || got != locked || got.TokensPerMinute != 100 || got.MaxConcurrency != 3 {
+	if err != nil || !sameLimits(got, locked) || got.TokensPerMinute != 100 || got.MaxConcurrency != 3 {
 		t.Fatalf("Limits after a pgx save = %+v, %v; LockLimits saw %+v", got, err, locked)
 	}
 	if s := readBucket(t, db, name); s.balance != 90 {

@@ -1440,7 +1440,7 @@ supplies its own through `middleware.InputBounder` — see
 OpenAI and Gemini (API and Vertex), `MaxTokens` caps billable output with
 reasoning included, verified by live tests — see
 [ADR-0044](docs/adr/0044-maxtokens-caps-billable-output.md); existing
-limiters ignore the new field), and **v1.4.0** (image and document inputs for
+limiters ignore the new field), **v1.4.0** (image and document inputs for
 embeddings: `EmbeddingInput.Parts` takes text, image and document parts,
 exclusive with `Text`, one vector per input; Gemini API and Vertex
 `:embedContent` models (such as `gemini-embedding-2`, served on Vertex
@@ -1454,6 +1454,15 @@ now report usage, which a limiter commits — see
 [ADR-0045](docs/adr/0045-embedding-media-inputs.md); code that reads
 `EmbeddingInput.Text` must also read `Parts`, `EmbeddingInput` is no longer
 comparable with `==`, and unkeyed `middleware.ValidationError` literals no
-longer compile).
+longer compile), and **v1.5.0** (bucket limit changes in your own
+transaction: `postgres.Limiter` gains `EnsureTx`, `LockLimits` and an
+unlocked `Limits` read, so an admin page can lock a bucket's limits, compare
+them with the values its form was drawn from, write the change with
+`EnsureTx(..., overwrite=true)` and record its own audit event in one
+transaction; they take a driver-neutral `postgres.Tx` (`postgres.SQLTx` for
+a `*sql.Tx`, a two-method pgx adapter in the GoDoc); while that transaction
+holds the row lock the bucket's `Acquire` and `Adjust` wait, so commit
+quickly — see [ADR-0046](docs/adr/0046-bucket-caller-transactions.md); no
+schema change and no migration; nothing changes for existing callers).
 
 MIT — see [`LICENSE`](LICENSE).

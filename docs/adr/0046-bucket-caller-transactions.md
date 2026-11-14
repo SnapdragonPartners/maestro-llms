@@ -92,6 +92,13 @@ func (l *Limiter) EnsureTx(ctx context.Context, tx Tx, name string, limits bucke
   touch the bucket row and are unaffected. Callers lock last, write their
   audit record, commit, and don't wait on anything while holding the lock.
   The doc comments say so.
+- **The admin save is `EnsureTx(..., overwrite=true)`.** With
+  `overwrite=false` on an existing bucket it changes nothing and returns
+  nil, as `Ensure` does; the README, GoDoc and spec name the flag wherever
+  they give the recipe.
+- **`Tx` and `Row` are frozen for v1.** Apps implement them as adapters,
+  so they join the README's frozen-interface list: a third method would
+  break every adapter and needs `/v2`.
 - No schema change, so no `SchemaVersion` bump. Additive under the v1
   stability contract.
 - No `MAESTRO_DIVERGENCES.md` row: `bucket` has no Maestro counterpart.

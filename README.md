@@ -945,13 +945,15 @@ c := middleware.RecommendedChat(client, middleware.RecommendedConfig{Limiter: li
 
 - **Limits live in the database** (`bucket.bucket`), read on every acquire, so
   every instance agrees and a change applies at once. Change them only with
-  `Ensure(..., overwrite=true)`, or `EnsureTx` in your own transaction
-  (below); both settle refill under the old rate first; a raw `UPDATE` of the limit columns applies the new rate
+  `Ensure(..., overwrite=true)`, or `EnsureTx(..., overwrite=true)` in your
+  own transaction (below); both settle refill under the old rate first
+  (with `overwrite=false` they only create a missing bucket); a raw `UPDATE` of the limit columns applies the new rate
   retroactively. Deleting a bucket row cascades to its leases.
 - **Editing limits from an admin page** in one transaction with your own
   writes (a stale-save check, an audit record): `Limits` reads the stored
   limits to draw the form; in your transaction, `LockLimits` locks and
-  rereads them for the comparison and `EnsureTx` writes the change
+  rereads them for the comparison and `EnsureTx(..., overwrite=true)` writes
+  the change
   ([ADR-0046](docs/adr/0046-bucket-caller-transactions.md)). Both take a
   `postgres.Tx`: `postgres.SQLTx(tx)` for a `*sql.Tx`, or the two-method
   pgx adapter in its doc comment. Compare stored values with stored values,
@@ -1222,7 +1224,8 @@ of record for this list.
 break every implementation, including consumers' own fakes and wrappers.
 That applies to `ChatClient`, `EmbeddingClient`, `ModelLister`, `ratelimit.Limiter`, `Reservation`, `LimiterStats`, `Rollbacker`,
 `middleware.Observer`, `ContextObserver`, `TokenEstimator`, `InputBounder`,
-`bucket.Limiter` and `bucket.Lease`. So adding a method is a v2 change.
+`bucket.Limiter`, `bucket.Lease`, and `postgres.Tx` and `postgres.Row`
+(which apps implement as adapters). So adding a method is a v2 change.
 Capabilities grow through new optional interfaces, which callers detect with
 a type assertion, as `ModelLister` and `ContextObserver` already do.
 New fields on exported structs and new functional options are additive.

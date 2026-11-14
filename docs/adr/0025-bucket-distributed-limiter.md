@@ -175,7 +175,7 @@ and versioning" below), plus its version table:
 **The database owns the limits.** Every acquire reads them from the row it
 already locks, so storing them costs nothing extra.
 - *Changing a limit* means calling `Ensure` with `overwrite=true`, or
-  `EnsureTx` in the app's own transaction (ADR-0046). It takes
+  `EnsureTx` with `overwrite=true` in the app's own transaction (ADR-0046). It takes
   effect on the next acquire everywhere. Lowering `max_concurrency` below
   the slots currently held preempts no one; new acquires wait until the
   count falls under the new limit. **Raw `UPDATE`s of the limit columns are
@@ -237,7 +237,9 @@ reclaim it immediately while the admitted call runs, breaking the cap with
 no renewal failure to report it. This applies to refill, expiry checks,
 `expires_at` on insert, renewal and `Ensure`.
 
-**Lock scope.** Only acquire and `Ensure` take the bucket row lock.
+**Lock scope.** Only acquire, `Adjust` (by the bucket's id) and `Ensure`
+take the bucket row lock, plus `LockLimits` and `EnsureTx` in the caller's
+transaction (ADR-0046), which hold it until that transaction ends.
 Renewal and `Release` touch only their own lease row. Renewal changes
 `expires_at`, which is not a key column, so Postgres does not recheck the
 foreign key, and deleting a child row takes no lock on its parent. So
@@ -336,8 +338,11 @@ and set aside for now; see the alternatives.
   of `clock_timestamp() + LeaseTTL` and `acquired_at + MaxLeaseDuration`.
   The cap must exceed the longest legitimate call; the per-attempt Timeout
   middleware normally bounds that.
-- **Every database operation has an internal deadline.** That covers each
-  acquire attempt, `Adjust`, each renewal, `Release` and `Ensure`. The
+- **Every database operation the limiter runs on its own has an internal
+  deadline.** That covers each acquire attempt, `Adjust`, each renewal,
+  `Release`, `Ensure` and the `Limits` read. `EnsureTx` and `LockLimits` run
+  in the caller's transaction and have no internal deadline or
+  `lock_timeout`; the caller's context bounds them (ADR-0046). The
   deadline is `OpTimeout`, 5 seconds by default. Acquire attempts and
   `Ensure` also stop if the caller's context ends first. `Adjust`, renewal
   and `Release` ignore the caller's cancellation (see below). Inside each

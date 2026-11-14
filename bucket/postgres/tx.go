@@ -81,7 +81,8 @@ func (l *Limiter) Limits(ctx context.Context, name string) (bucket.Limits, error
 }
 
 // LockLimits locks name's bucket row in tx (SELECT ... FOR UPDATE) and
-// returns its limits as Limits does, for a compare-then-EnsureTx save: the
+// returns its limits as Limits does, for a compare-then-save with
+// EnsureTx(..., overwrite=true): the
 // lock holds until tx ends, so no other save, and no Acquire or Adjust on
 // the bucket, can interleave. A missing bucket returns an error wrapping
 // bucket.ErrUnknownKey.
@@ -99,7 +100,9 @@ func (l *Limiter) LockLimits(ctx context.Context, tx Tx, name string) (bucket.Li
 	return selectLimits(tx.QueryRow(ctx, limitsQuery+` FOR UPDATE`, name), name)
 }
 
-// EnsureTx is Ensure in a transaction the caller owns, with the same rules:
+// EnsureTx is Ensure in a transaction the caller owns, with the same rules
+// (an admin save of an existing bucket needs overwrite=true; without it,
+// EnsureTx only creates a missing bucket):
 // it validates first and touches tx only when name and limits are valid;
 // it creates a missing bucket full; with overwrite it locks the row, settles
 // the refill accrued under the old limits, installs the new ones and caps

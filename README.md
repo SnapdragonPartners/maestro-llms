@@ -945,8 +945,8 @@ c := middleware.RecommendedChat(client, middleware.RecommendedConfig{Limiter: li
 
 - **Limits live in the database** (`bucket.bucket`), read on every acquire, so
   every instance agrees and a change applies at once. Change them only with
-  `Ensure(..., overwrite=true)`, which settles refill under the old rate
-  first; a raw `UPDATE` of the limit columns applies the new rate
+  `Ensure(..., overwrite=true)`, or `EnsureTx` in your own transaction
+  (below); both settle refill under the old rate first; a raw `UPDATE` of the limit columns applies the new rate
   retroactively. Deleting a bucket row cascades to its leases.
 - **Editing limits from an admin page** in one transaction with your own
   writes (a stale-save check, an audit record): `Limits` reads the stored
@@ -954,8 +954,9 @@ c := middleware.RecommendedChat(client, middleware.RecommendedConfig{Limiter: li
   rereads them for the comparison and `EnsureTx` writes the change
   ([ADR-0046](docs/adr/0046-bucket-caller-transactions.md)). Both take a
   `postgres.Tx`: `postgres.SQLTx(tx)` for a `*sql.Tx`, or the two-method
-  pgx adapter in its doc comment. Compare stored values with stored values
-  (the stored `BufferFactor` is never 0), and commit quickly: the bucket's
+  pgx adapter in its doc comment. Compare stored values with stored values,
+  field by field (the stored `BufferFactor` is never 0; `bucket.Limits` is
+  not promised comparable), and commit quickly: the bucket's
   `Acquire` and `Adjust` wait behind the lock.
 - **Rates are tokens per minute.** Converting a per-second quota is the app's
   job, and the bucket holds a full minute's burst, so lower the rate or
@@ -963,8 +964,9 @@ c := middleware.RecommendedChat(client, middleware.RecommendedConfig{Limiter: li
 - **Concurrency slots are lease rows renewed in the background.** A crashed
   holder's slot frees within `LeaseTTL` (30s); `MaxLeaseDuration` (15m) caps
   a lease that is never released. A lease found expired closes `Lost()` and
-  makes `Release` return `bucket.ErrLeaseLost`. Every database operation is
-  bounded by `OpTimeout` (5s). If Postgres is unreachable, nothing is
+  makes `Release` return `bucket.ErrLeaseLost`. Every operation the limiter runs
+  on its own is bounded by `OpTimeout` (5s); `EnsureTx` and `LockLimits` run
+  in your transaction and are bounded by your context. If Postgres is unreachable, nothing is
   admitted (fail closed).
 - **A lease is one slot:** the adapter rejects reservations with
   `EstimatedUnits.Requests > 1`.

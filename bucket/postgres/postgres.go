@@ -42,8 +42,10 @@ type Config struct {
 	// never releases cannot keep a slot forever. It must exceed the longest
 	// legitimate call.
 	MaxLeaseDuration time.Duration
-	// OpTimeout bounds every database operation (each acquire attempt,
-	// Adjust, renewal, Release, Ensure), including lock waits.
+	// OpTimeout bounds every operation the limiter runs on its own (each
+	// acquire attempt, Adjust, renewal, Release, Ensure, Limits), including
+	// lock waits. EnsureTx and LockLimits run in the caller's transaction,
+	// so the caller bounds them.
 	OpTimeout time.Duration
 	// MaxWait bounds how long Acquire blocks; 0 waits until ctx is done.
 	MaxWait time.Duration

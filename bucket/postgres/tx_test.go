@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,17 +34,24 @@ func (f failTx) QueryRow(context.Context, string, ...any) Row {
 func TestEnsureTxValidatesFirst(t *testing.T) {
 	l := &Limiter{}
 	ctx := context.Background()
-	if err := l.EnsureTx(ctx, failTx{t}, "", bucket.Limits{MaxConcurrency: 1}, true); err == nil {
-		t.Fatal("empty name accepted")
+	// Errors name EnsureTx, not Ensure.
+	if err := l.EnsureTx(ctx, failTx{t}, "", bucket.Limits{MaxConcurrency: 1}, true); err == nil || !strings.Contains(err.Error(), "EnsureTx") {
+		t.Fatalf("empty name: %v, want an EnsureTx error", err)
 	}
-	if err := l.EnsureTx(ctx, failTx{t}, "k", bucket.Limits{TokensPerMinute: -1}, true); err == nil {
-		t.Fatal("invalid limits accepted")
+	if err := l.EnsureTx(ctx, failTx{t}, "k", bucket.Limits{TokensPerMinute: -1}, true); err == nil || !strings.Contains(err.Error(), "EnsureTx") {
+		t.Fatalf("invalid limits: %v, want an EnsureTx error", err)
 	}
-	if err := l.EnsureTx(ctx, nil, "k", bucket.Limits{MaxConcurrency: 1}, true); err == nil {
-		t.Fatal("nil Tx accepted")
+	if err := l.Ensure(ctx, "", bucket.Limits{MaxConcurrency: 1}, true); err == nil || strings.Contains(err.Error(), "EnsureTx") {
+		t.Fatalf("Ensure empty name: %v, want an Ensure error", err)
 	}
-	if _, err := l.LockLimits(ctx, nil, "k"); err == nil {
-		t.Fatal("LockLimits accepted a nil Tx")
+	// A nil Tx, including SQLTx(nil), is an error, not a panic.
+	for _, tx := range []Tx{nil, SQLTx(nil)} {
+		if err := l.EnsureTx(ctx, tx, "k", bucket.Limits{MaxConcurrency: 1}, true); err == nil {
+			t.Fatal("nil Tx accepted")
+		}
+		if _, err := l.LockLimits(ctx, tx, "k"); err == nil {
+			t.Fatal("LockLimits accepted a nil Tx")
+		}
 	}
 }
 
@@ -290,7 +298,9 @@ func TestStaleSaveDetected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cur == drawn {
+	// Field by field, as a consumer must: bucket.Limits is not promised
+	// comparable.
+	if cur.TokensPerMinute == drawn.TokensPerMinute && cur.MaxConcurrency == drawn.MaxConcurrency && cur.BufferFactor == drawn.BufferFactor {
 		t.Fatalf("locked limits %+v equal the drawn ones after a concurrent save", cur)
 	}
 }

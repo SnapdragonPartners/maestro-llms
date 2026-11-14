@@ -72,9 +72,10 @@ func (l *Limiter) EnsureTx(ctx context.Context, tx Tx, name string, limits bucke
 - **Reads return the stored limits.** `Ensure` stores the effective buffer
   factor, so a stored `BufferFactor` is never 0. `Limits` (unlocked, bounded
   by `OpTimeout`, for drawing the form) and `LockLimits` return the stored
-  values, and a stale check compares stored values with stored values
-  (`bucket.Limits` is comparable), never with the `Limits` the app passed to
-  `Ensure`. The row has no version column; comparing values is enough,
+  values, and a stale check compares stored values with stored values,
+  never with the `Limits` the app passed to `Ensure`. It compares the fields
+  one by one: `bucket.Limits` is not on the README's named comparability
+  list, so `==` on it is not promised to keep compiling. The row has no version column; comparing values is enough,
   because an A→B→A change leaves nothing to lose.
 - **Methods, not package functions.** None of the three needs a second
   database handle, but holding a `*Limiter` means `New` already ran

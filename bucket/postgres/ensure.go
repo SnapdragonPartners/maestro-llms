@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/SnapdragonPartners/maestro-llms/bucket"
@@ -11,8 +10,8 @@ import (
 
 // Ensure creates the bucket name with limits if it is missing; a new bucket
 // starts with a full token balance. With overwrite it also installs limits
-// on an existing bucket, and this is the only supported way to change
-// limits: in one transaction it settles the refill accrued so far under the
+// on an existing bucket; Ensure and EnsureTx are the only supported ways to
+// change limits. In one transaction it settles the refill accrued so far under the
 // OLD limits, installs the new ones, and caps the balance at the new
 // capacity (debt is kept). Leases are untouched; lowering MaxConcurrency
 // preempts no one.
@@ -25,7 +24,7 @@ import (
 // atomically with the app's own writes (a stale-save check, an audit
 // record), use LockLimits and EnsureTx in the app's transaction instead.
 func (l *Limiter) Ensure(ctx context.Context, name string, limits bucket.Limits, overwrite bool) error {
-	if err := checkEnsure(name, limits); err != nil {
+	if err := checkEnsure("Ensure", name, limits); err != nil {
 		return err
 	}
 	return l.inTx(ctx, func(ctx context.Context, tx Tx) error {
@@ -34,13 +33,13 @@ func (l *Limiter) Ensure(ctx context.Context, name string, limits bucket.Limits,
 }
 
 // checkEnsure validates Ensure's and EnsureTx's arguments before any
-// database work.
-func checkEnsure(name string, limits bucket.Limits) error {
+// database work; op names the method in the error.
+func checkEnsure(op, name string, limits bucket.Limits) error {
 	if err := limits.Validate(); err != nil {
-		return fmt.Errorf("postgres: Ensure %q: %w", name, err)
+		return fmt.Errorf("postgres: %s %q: %w", op, name, err)
 	}
 	if name == "" {
-		return errors.New("postgres: Ensure: empty bucket name")
+		return fmt.Errorf("postgres: %s: empty bucket name", op)
 	}
 	return nil
 }

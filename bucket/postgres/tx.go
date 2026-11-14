@@ -44,8 +44,14 @@ type Row interface {
 	Scan(dest ...any) error
 }
 
-// SQLTx adapts a *sql.Tx to Tx.
-func SQLTx(tx *sql.Tx) Tx { return sqlTx{tx} }
+// SQLTx adapts a *sql.Tx to Tx. SQLTx(nil) is a nil Tx, which EnsureTx and
+// LockLimits reject with an error.
+func SQLTx(tx *sql.Tx) Tx {
+	if tx == nil {
+		return nil
+	}
+	return sqlTx{tx}
+}
 
 type sqlTx struct{ tx *sql.Tx }
 
@@ -64,7 +70,8 @@ func (t sqlTx) QueryRow(ctx context.Context, query string, args ...any) Row {
 // Limits returns name's limits as stored, without a lock: what an admin page
 // draws its form from. BufferFactor is the effective factor Ensure stored, so
 // it is never 0; compare stored limits only with values read back (Limits or
-// LockLimits), not with the Limits the app passed to Ensure. A missing
+// LockLimits), not with the Limits the app passed to Ensure, and compare
+// them field by field: bucket.Limits is not promised to stay comparable. A missing
 // bucket returns an error wrapping bucket.ErrUnknownKey. It is bounded by
 // OpTimeout.
 func (l *Limiter) Limits(ctx context.Context, name string) (bucket.Limits, error) {
@@ -104,7 +111,7 @@ func (l *Limiter) LockLimits(ctx context.Context, tx Tx, name string) (bucket.Li
 // with a serialization error the caller retries; READ COMMITTED (the
 // default) waits for the lock instead.
 func (l *Limiter) EnsureTx(ctx context.Context, tx Tx, name string, limits bucket.Limits, overwrite bool) error {
-	if err := checkEnsure(name, limits); err != nil {
+	if err := checkEnsure("EnsureTx", name, limits); err != nil {
 		return err
 	}
 	if tx == nil {

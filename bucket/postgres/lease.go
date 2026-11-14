@@ -147,7 +147,7 @@ func (r *lease) Adjust(ctx context.Context, actualTokens int) error {
 		return nil
 	}
 	actualTokens = max(actualTokens, 0)
-	return r.l.inTx(context.WithoutCancel(ctx), func(ctx context.Context, tx *sql.Tx) error {
+	return r.l.inTx(context.WithoutCancel(ctx), func(ctx context.Context, tx Tx) error {
 		b, now, err := lockBucketByID(ctx, tx, r.key, r.bucketID)
 		if err != nil {
 			return err
@@ -157,7 +157,7 @@ func (r *lease) Adjust(ctx context.Context, actualTokens int) error {
 		}
 		balance := core.Settle(b.limits, b.balance, b.lastRefill, now)
 		balance = core.Adjusted(b.limits, balance, r.tokens, actualTokens)
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.Exec(ctx,
 			`UPDATE bucket.bucket SET token_balance = $1, last_refill = $2 WHERE id = $3`, balance, now, b.id); err != nil {
 			return fmt.Errorf("bucket %q: adjust: %w", r.key, schemaErr(err))
 		}

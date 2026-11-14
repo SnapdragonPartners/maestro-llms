@@ -99,6 +99,15 @@ func (l *Limiter) EnsureTx(ctx context.Context, tx Tx, name string, limits bucke
 - **`Tx` and `Row` are frozen for v1.** Apps implement them as adapters,
   so they join the README's frozen-interface list: a third method would
   break every adapter and needs `/v2`.
+- **The schema's column comments stay stale.** `000001_init.up.sql`'s
+  comments on the three limit columns say "Change only with
+  postgres.Ensure(overwrite=true)", and `EnsureTx` is now equally
+  supported. Applied migrations are immutable, and a comment-only
+  `000002` would bump `SchemaVersion` and put every `bucket/postgres`
+  adopter through a "Database migration required" upgrade for no change
+  in behavior. The comments are refreshed the next time the schema
+  changes for a real reason; until then, ADR-0025 and this ADR are the
+  authority.
 - No schema change, so no `SchemaVersion` bump. Additive under the v1
   stability contract.
 - No `MAESTRO_DIVERGENCES.md` row: `bucket` has no Maestro counterpart.

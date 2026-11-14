@@ -948,6 +948,15 @@ c := middleware.RecommendedChat(client, middleware.RecommendedConfig{Limiter: li
   `Ensure(..., overwrite=true)`, which settles refill under the old rate
   first; a raw `UPDATE` of the limit columns applies the new rate
   retroactively. Deleting a bucket row cascades to its leases.
+- **Editing limits from an admin page** in one transaction with your own
+  writes (a stale-save check, an audit record): `Limits` reads the stored
+  limits to draw the form; in your transaction, `LockLimits` locks and
+  rereads them for the comparison and `EnsureTx` writes the change
+  ([ADR-0046](docs/adr/0046-bucket-caller-transactions.md)). Both take a
+  `postgres.Tx`: `postgres.SQLTx(tx)` for a `*sql.Tx`, or the two-method
+  pgx adapter in its doc comment. Compare stored values with stored values
+  (the stored `BufferFactor` is never 0), and commit quickly: the bucket's
+  `Acquire` and `Adjust` wait behind the lock.
 - **Rates are tokens per minute.** Converting a per-second quota is the app's
   job, and the bucket holds a full minute's burst, so lower the rate or
   `BufferFactor` for per-second providers.

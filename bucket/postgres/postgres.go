@@ -115,7 +115,7 @@ func micros(d time.Duration) int64 { return d.Microseconds() }
 
 // inTx runs fn in a transaction bounded by OpTimeout, with lock waits
 // bounded the same way. fn's error rolls back; a nil error commits.
-func (l *Limiter) inTx(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+func (l *Limiter) inTx(ctx context.Context, fn func(context.Context, Tx) error) error {
 	opCtx, cancel := context.WithTimeout(ctx, l.cfg.OpTimeout)
 	defer cancel()
 	tx, err := l.db.BeginTx(opCtx, nil)
@@ -127,7 +127,7 @@ func (l *Limiter) inTx(ctx context.Context, fn func(context.Context, *sql.Tx) er
 	if _, err := tx.ExecContext(opCtx, fmt.Sprintf("SET LOCAL lock_timeout = %d", l.cfg.OpTimeout.Milliseconds())); err != nil {
 		return fmt.Errorf("bucket: set lock_timeout: %w", err)
 	}
-	if err := fn(opCtx, tx); err != nil {
+	if err := fn(opCtx, sqlTx{tx}); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -147,19 +147,19 @@ type row struct {
 // lockBucket locks key's row and returns it with the database time sampled
 // after the lock was granted (a separate statement, so a long lock wait can
 // never yield a stale timestamp). A missing row is an unknown-key error.
-func lockBucket(ctx context.Context, tx *sql.Tx, key string) (row, time.Time, error) {
+func lockBucket(ctx context.Context, tx Tx, key string) (row, time.Time, error) {
 	return lockRow(ctx, tx, key, `WHERE name = $1`, key)
 }
 
 // lockBucketByID is lockBucket for a lease's bucket, by its stable id, so a
 // renamed bucket keeps reconciling.
-func lockBucketByID(ctx context.Context, tx *sql.Tx, key string, id int64) (row, time.Time, error) {
+func lockBucketByID(ctx context.Context, tx Tx, key string, id int64) (row, time.Time, error) {
 	return lockRow(ctx, tx, key, `WHERE id = $1`, id)
 }
 
-func lockRow(ctx context.Context, tx *sql.Tx, key, where string, arg any) (row, time.Time, error) {
+func lockRow(ctx context.Context, tx Tx, key, where string, arg any) (row, time.Time, error) {
 	var r row
-	err := tx.QueryRowContext(ctx, `
+	err := tx.QueryRow(ctx, `
 SELECT id, tokens_per_minute, max_concurrency, buffer_factor, token_balance, last_refill
 FROM bucket.bucket `+where+` FOR UPDATE`, arg).Scan(
 		&r.id, &r.limits.TokensPerMinute, &r.limits.MaxConcurrency, &r.limits.BufferFactor, &r.balance, &r.lastRefill)
@@ -170,7 +170,7 @@ FROM bucket.bucket `+where+` FOR UPDATE`, arg).Scan(
 		return row{}, time.Time{}, fmt.Errorf("bucket %q: lock: %w", key, schemaErr(err))
 	}
 	var now time.Time
-	if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return row{}, time.Time{}, fmt.Errorf("bucket %q: clock: %w", key, err)
 	}
 	return r, now, nil
@@ -193,7 +193,7 @@ func (l *Limiter) tryAcquire(ctx context.Context, key string, tokens int) (core.
 	var leaseID string
 	var bucketID int64
 	var tokenCharged bool
-	err := l.inTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := l.inTx(ctx, func(ctx context.Context, tx Tx) error {
 		r, now, err := lockBucket(ctx, tx, key)
 		if err != nil {
 			return err
@@ -202,12 +202,12 @@ func (l *Limiter) tryAcquire(ctx context.Context, key string, tokens int) (core.
 			res.Impossible = reason
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.Exec(ctx,
 			`DELETE FROM bucket.lease WHERE bucket_id = $1 AND expires_at <= $2`, r.id, now); err != nil {
 			return fmt.Errorf("bucket %q: reap: %w", key, schemaErr(err))
 		}
 		var live int
-		if err := tx.QueryRowContext(ctx,
+		if err := tx.QueryRow(ctx,
 			`SELECT count(*) FROM bucket.lease WHERE bucket_id = $1`, r.id).Scan(&live); err != nil {
 			return fmt.Errorf("bucket %q: count: %w", key, schemaErr(err))
 		}
@@ -216,7 +216,7 @@ func (l *Limiter) tryAcquire(ctx context.Context, key string, tokens int) (core.
 		if fits && r.limits.TokenLimited() {
 			balance -= float64(tokens)
 		}
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.Exec(ctx,
 			`UPDATE bucket.bucket SET token_balance = $1, last_refill = $2 WHERE id = $3`, balance, now, r.id); err != nil {
 			return fmt.Errorf("bucket %q: refill: %w", key, schemaErr(err))
 		}
@@ -226,7 +226,7 @@ func (l *Limiter) tryAcquire(ctx context.Context, key string, tokens int) (core.
 		}
 		// Fresh database time for both stamps: the lease is live for a full
 		// TTL from the moment it is written.
-		if err := tx.QueryRowContext(ctx, `
+		if err := tx.QueryRow(ctx, `
 INSERT INTO bucket.lease (bucket_id, acquired_at, expires_at)
 VALUES ($1, clock_timestamp(), clock_timestamp() + $2::float8 * interval '1 microsecond')
 RETURNING id`, r.id, micros(l.cfg.LeaseTTL)).Scan(&leaseID); err != nil {

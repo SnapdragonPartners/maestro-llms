@@ -1,6 +1,6 @@
 # 0025. Generic `bucket` limiter with a Postgres backend (lease rows, renewal, FIFO queue planned)
 
-- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (`bucket.LimitError` gains `Permanent` and `Cause`; `FromBucket` maps both) and [ADR-0034](0034-limiter-config-and-charging.md) (`Limits.Validate` rejects non-finite and overflowing values; `InMemoryLimiter` sizes through `Limits`)
+- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (`bucket.LimitError` gains `Permanent` and `Cause`; `FromBucket` maps both) [ADR-0034](0034-limiter-config-and-charging.md) (`Limits.Validate` rejects non-finite and overflowing values; `InMemoryLimiter` sizes through `Limits`) and [ADR-0046](0046-bucket-caller-transactions.md) (`EnsureTx`, `LockLimits` and `Limits` let an app change limits in its own transaction)
 - **Date:** 2026-10-18
 
 ## Context

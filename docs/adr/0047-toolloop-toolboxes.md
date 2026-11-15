@@ -142,7 +142,11 @@ recent first. A box is marked used:
   A call to a shared non-core tool marks every loaded box that supplies it.
   This rule is conservative, accepted for now.
 
-Calls are stamped in turn order, then by position in the turn.
+Calls are stamped in turn order, then by position in the turn. Boxes
+stamped by the same call are equally recent, and ties go to `Boxes`
+order: the earlier box counts as less recent. Eviction and
+`Outcome.LoadedToolboxes` use the same order, so the order survives into
+the next run.
 
 Loading box B:
 
@@ -159,9 +163,14 @@ Loading box B:
 
 The result is deterministic plain text. It names the loaded box and lists
 the tools that became newly offered, each with its description. Tools that
-were already offered are listed by name. For each box put away, it says
-why (the cap) and which tools are actually **no longer offered**, and that
-the box can be requested again. It ends with the boxes now loaded.
+were already offered are listed by name. If any boxes were put away, one
+sentence names them, gives the reason (the cap), and lists the tools
+actually **no longer offered**: tools that core or a remaining box still
+supplies are left out. It also says the boxes can be loaded again. The
+lost tools are not split per box, because in a cascade a tool can
+disappear only once a second box goes. The list is never empty: eviction
+stops only once the count drops. The result ends with the boxes now
+loaded.
 
 **Over-cap `Loaded` at start.** `Loaded` is stored state, so the app may
 lower `MaxTools` after it was saved. If the starting set exceeds the cap,

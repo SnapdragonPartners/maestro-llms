@@ -2,7 +2,7 @@ package livetest
 
 import (
 	"context"
-	"slices"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -106,8 +106,11 @@ func historyCalls(msgs []llms.Message, name string) bool {
 // only reachable through read_secret, in the vault toolbox, which is not
 // loaded; two other boxes are, and the cap leaves room for only two. The
 // model must call get_toolbox("vault"), which puts away the least recently
-// used box (clock, unless the model used get_time first), then call
-// read_secret and answer.
+// used other box, then call read_secret, now offered, and answer.
+//
+// The scenario asserts the sequence, from the tool call events, not the
+// final loaded set: which boxes remain depends on what else the model calls
+// or loads (each changes recency), and the put-away rules are unit-tested.
 func ToolboxLoad(t *testing.T, c llms.ChatClient) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), scenarioTimeout)
@@ -126,6 +129,21 @@ func ToolboxLoad(t *testing.T, c llms.ChatClient) {
 		}
 	}
 	var tr trace
+	var vaultLoaded, advertisedSecret bool
+	onToolCall := func(ev toolloop.ToolCallEvent) {
+		tr.onToolCall(ev)
+		switch ev.Call.Name {
+		case "get_toolbox":
+			var args struct{ Name string }
+			if json.Unmarshal(ev.Call.Parameters, &args) == nil && args.Name == "vault" && !ev.Result.IsError {
+				vaultLoaded = true
+			}
+		case "read_secret":
+			// Offered only after the vault load; Unadvertised would mean the
+			// model called it without loading the box.
+			advertisedSecret = advertisedSecret || (vaultLoaded && !ev.Unadvertised)
+		}
+	}
 	out := toolloop.Run(ctx, toolloop.Config{
 		Client: withRetry(c),
 		Request: llms.ChatRequest{
@@ -151,11 +169,17 @@ func ToolboxLoad(t *testing.T, c llms.ChatClient) {
 		},
 		MaxIterations: 6,
 		OnIteration:   tr.onIteration,
-		OnToolCall:    tr.onToolCall,
+		OnToolCall:    onToolCall,
 	})
 	tr.dump(t)
 	if out.Kind != toolloop.OutcomeFinalAnswer {
 		t.Fatalf("kind = %q, want final_answer; iterations=%d err=%v", out.Kind, out.Iterations, out.Err)
+	}
+	if !vaultLoaded {
+		t.Fatalf("get_toolbox(\"vault\") never succeeded")
+	}
+	if !advertisedSecret {
+		t.Fatalf("read_secret was not called as an offered tool after the vault load")
 	}
 	if !readSecret {
 		t.Fatalf("read_secret was never executed")
@@ -163,15 +187,8 @@ func ToolboxLoad(t *testing.T, c llms.ChatClient) {
 	if !strings.Contains(strings.ToUpper(out.Response.Text), toolboxSecret) {
 		t.Errorf("answer %q does not contain the secret %q", out.Response.Text, toolboxSecret)
 	}
-	// Which of clock and notes is put away depends on whether the model
-	// called get_time or read_note before loading the vault (each call marks
-	// its box used), and a call after the vault load in the same turn marks
-	// that box newer than the vault, so assert only the invariant: the vault
-	// plus exactly one of the two boxes it started with, in either order.
-	if got := out.LoadedToolboxes; len(got) != 2 ||
-		!slices.Contains(got, "vault") ||
-		slices.Contains(got, "clock") == slices.Contains(got, "notes") {
-		t.Errorf("LoadedToolboxes = %v, want vault and exactly one of clock, notes", got)
+	if got := out.LoadedToolboxes; len(got) > 2 {
+		t.Errorf("LoadedToolboxes = %v, want at most 2 with MaxTools 3", got)
 	}
 	t.Logf("OK toolbox run in %d tool iteration(s), usage in=%d out=%d",
 		out.Iterations, out.TotalUsage.InputTokens, out.TotalUsage.OutputTokens)

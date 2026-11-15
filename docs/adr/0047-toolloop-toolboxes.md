@@ -253,8 +253,9 @@ GoDoc will say so.
   rule, and terminal and compaction interplay.
 - **Live (`llms/internal/livetest`, every chat adapter):**
   - *ToolboxLoad*: the model must call `get_toolbox`, then a box tool, then
-    answer; the loaded set must hold the new box and exactly one of the
-    two it started with.
+    answer. It asserts that sequence from the tool call events (a
+    successful load, then an advertised call), not the final loaded set,
+    which depends on what else the model calls or loads.
   - *ToolHistoryAfterRemoval*: a history holding a call and result for a
     tool absent from `Tools` must be accepted (§5), the state after a
     put-away. Unadvertised dispatch itself is loop logic, covered by the

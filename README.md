@@ -501,6 +501,10 @@ out := toolloop.Run(ctx, toolloop.Config{
 saved.LoadedToolboxes = out.LoadedToolboxes
 ```
 
+The app owns the toolbox catalog: if it removes or renames a toolbox, it
+must filter the stored names against the toolboxes it still declares,
+because an unknown name in `Loaded` makes `Run` reject the config.
+
 Each turn offers `get_toolbox`, the core tools and every loaded toolbox's
 tools, in `Config.Tools` order. Past the cap, loading a toolbox puts away
 the least recently used other one; a tool another loaded toolbox or core

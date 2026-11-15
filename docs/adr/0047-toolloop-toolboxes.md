@@ -253,10 +253,12 @@ GoDoc will say so.
   rule, and terminal and compaction interplay.
 - **Live (`llms/internal/livetest`, every chat adapter):**
   - *ToolboxLoad*: the model must call `get_toolbox`, then a box tool, then
-    answer.
-  - *ToolHistoryUnadvertised*: a deterministic replay whose history holds a
-    call and result for a tool absent from `Tools`, which must complete.
-    This is the put-away and unadvertised-call compatibility check.
+    answer; the loaded set must hold the new box and exactly one of the
+    two it started with.
+  - *ToolHistoryAfterRemoval*: a history holding a call and result for a
+    tool absent from `Tools` must be accepted (§5), the state after a
+    put-away. Unadvertised dispatch itself is loop logic, covered by the
+    unit tests; on the wire it produces the same history shape.
 
   Any provider that rejects the replay is recorded here before acceptance.
 

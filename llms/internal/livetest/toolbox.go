@@ -105,7 +105,8 @@ func historyCalls(msgs []llms.Message, name string) bool {
 // only reachable through read_secret, in the vault toolbox, which is not
 // loaded; two other boxes are, and the cap leaves room for only two. The
 // model must call get_toolbox("vault"), which puts away the least recently
-// used box (clock), then call read_secret and answer.
+// used box (clock, unless the model used get_time first), then call
+// read_secret and answer.
 func ToolboxLoad(t *testing.T, c llms.ChatClient) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), scenarioTimeout)
@@ -161,8 +162,12 @@ func ToolboxLoad(t *testing.T, c llms.ChatClient) {
 	if !strings.Contains(strings.ToUpper(out.Response.Text), toolboxSecret) {
 		t.Errorf("answer %q does not contain the secret %q", out.Response.Text, toolboxSecret)
 	}
-	if got := strings.Join(out.LoadedToolboxes, ","); got != "notes,vault" {
-		t.Errorf("LoadedToolboxes = %v, want [notes vault] (clock put away)", out.LoadedToolboxes)
+	// Which of clock and notes is put away depends on whether the model
+	// called get_time or read_note before loading the vault (each call marks
+	// its box used), so assert only the invariant: vault plus exactly one of
+	// the two, with vault the most recent.
+	if got := out.LoadedToolboxes; len(got) != 2 || got[1] != "vault" || (got[0] != "clock" && got[0] != "notes") {
+		t.Errorf("LoadedToolboxes = %v, want [clock vault] or [notes vault]", got)
 	}
 	t.Logf("OK toolbox run in %d tool iteration(s), usage in=%d out=%d",
 		out.Iterations, out.TotalUsage.InputTokens, out.TotalUsage.OutputTokens)

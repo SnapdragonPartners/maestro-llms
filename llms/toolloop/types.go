@@ -149,7 +149,9 @@ const NoToolLimit = -1
 // Loaded lists the toolboxes loaded when the run starts, least recently
 // used first, normally Outcome.LoadedToolboxes from the previous run. If
 // they exceed the cap (MaxTools was lowered), the least recently used are
-// put away until they fit. Unknown or repeated names are rejected.
+// put away until they fit. Unknown or repeated names are rejected, so an
+// app that removes or renames a toolbox must drop its old name from the
+// stored set before passing it back.
 //
 // Guidance, if set, is appended to get_toolbox's description, for example
 // to say where the model can read more about each toolbox.

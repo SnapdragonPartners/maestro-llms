@@ -53,11 +53,11 @@ func (e *ConfigError) Error() string { return "toolloop: " + e.Reason }
 func Run(ctx context.Context, cfg Config) (out Outcome) {
 	// Step 1: validate config. Failure returns OutcomeToolError with no
 	// provider work done.
-	tools, choice, err := validateConfig(cfg)
+	tools, choice, boxes, err := validateRun(&cfg)
 	if err != nil {
 		return Outcome{Kind: OutcomeToolError, Err: err}
 	}
-	toolByName := indexTools(cfg.Tools)
+	turn := turnTools{byName: indexTools(cfg.Tools), boxes: boxes}
 	maxIter := cfg.MaxIterations
 	if maxIter == 0 {
 		maxIter = defaultMaxIterations
@@ -87,6 +87,9 @@ func Run(ctx context.Context, cfg Config) (out Outcome) {
 	defer func() {
 		out.CompactionUsage = cp.usage.total
 		out.Compactions = cp.count
+		if boxes != nil {
+			out.LoadedToolboxes = boxes.loadedNames()
+		}
 	}()
 
 	for {
@@ -96,7 +99,7 @@ func Run(ctx context.Context, cfg Config) (out Outcome) {
 		// Temperature, Metadata) flow through unchanged.
 		req := cfg.Request
 		req.Messages = transcript
-		req.Tools = tools
+		req.Tools = turn.requestTools(tools)
 		req.ToolChoice = choice
 
 		// Step 4: call the provider. With a Compactor, the transcript may be
@@ -173,7 +176,7 @@ func Run(ctx context.Context, cfg Config) (out Outcome) {
 		// the pairing deterministic for validation middleware. A Stop
 		// result ends the turn like a return statement (ADR-0017); any
 		// later calls get synthesized not-executed results.
-		results, terminal, execOutcome := executeCalls(ctx, &cfg, resp, iterIdx, toolByName, transcript, usage.total)
+		results, terminal, execOutcome := executeCalls(ctx, &cfg, resp, iterIdx, &turn, transcript, usage.total)
 		if execOutcome != nil {
 			return *execOutcome
 		}
@@ -251,7 +254,7 @@ func executeCalls(
 	cfg *Config,
 	resp llms.ChatResponse,
 	iterIdx int,
-	toolByName map[string]Tool,
+	turn *turnTools,
 	transcript []llms.Message,
 	usage llms.Usage,
 ) ([]llms.ToolResult, *terminalStop, *Outcome) {
@@ -268,16 +271,17 @@ func executeCalls(
 		// guarantee, so we clone before dispatch and event emission.
 		call := cloneToolCall(resp.ToolCalls[i])
 		start := time.Now()
-		result, execErr := dispatch(ctx, call, toolByName)
+		result, unadvertised, execErr := turn.dispatch(ctx, call)
 		latency := time.Since(start)
 
 		if cfg.OnToolCall != nil {
 			cfg.OnToolCall(ToolCallEvent{
-				Iteration: iterIdx - 1,
-				Call:      call,
-				Result:    result,
-				Latency:   latency,
-				Err:       execErr,
+				Iteration:    iterIdx - 1,
+				Call:         call,
+				Result:       result,
+				Latency:      latency,
+				Err:          execErr,
+				Unadvertised: unadvertised,
 			})
 		}
 
@@ -332,21 +336,58 @@ func executeCalls(
 	return results, nil, nil
 }
 
+// turnTools is what dispatch needs for one turn: the declared tools and,
+// with toolboxes (ADR-0047), the toolbox state and the names the turn's
+// request advertised.
+type turnTools struct {
+	byName     map[string]Tool
+	boxes      *toolboxes
+	advertised map[string]bool
+}
+
+// requestTools returns the turn's tool definitions: the fixed set, or with
+// toolboxes the set rebuilt for this turn, recording what it advertises so
+// the turn's calls are dispatched against it (ADR-0047).
+func (tt *turnTools) requestTools(fixed []llms.ToolDefinition) []llms.ToolDefinition {
+	if tt.boxes == nil {
+		return fixed
+	}
+	defs, advertised := tt.boxes.definitions()
+	tt.advertised = advertised
+	return defs
+}
+
 // dispatch routes a single call to its registered tool, or synthesizes an
 // unknown-tool recovery result. Unknown-tool recovery is the documented
 // default: the loop appends an IsError tool result so the model can
 // self-correct when the provider cannot enforce tool_choice. The OnToolCall
 // event for an unknown tool has Err == nil because the loop continued
 // successfully.
-func dispatch(ctx context.Context, call llms.ToolCall, toolByName map[string]Tool) (ToolResult, error) {
-	tool, ok := toolByName[call.Name]
+//
+// With toolboxes (ADR-0047), get_toolbox goes to the loader, and a declared
+// tool executes whether or not the turn advertised it: advertising decides
+// what the model is shown, declaration what can execute. Only an advertised
+// call marks its toolboxes as used; unadvertised reports the other case.
+func (tt *turnTools) dispatch(ctx context.Context, call llms.ToolCall) (result ToolResult, unadvertised bool, err error) {
+	if tt.boxes != nil && call.Name == getToolboxName {
+		return tt.boxes.load(call), false, nil
+	}
+	tool, ok := tt.byName[call.Name]
 	if !ok {
 		return ToolResult{
 			Content: fmt.Sprintf("tool %q is not available", call.Name),
 			IsError: true,
-		}, nil
+		}, false, nil
 	}
-	return tool.Execute(ctx, call)
+	if tt.boxes != nil {
+		if !tt.advertised[call.Name] {
+			unadvertised = true
+		} else {
+			tt.boxes.used(call.Name)
+		}
+	}
+	result, err = tool.Execute(ctx, call)
+	return result, unadvertised, err
 }
 
 // cloneToolCall returns a value-copy of c with independent backing arrays
@@ -518,6 +559,17 @@ func addUsage(sum *usageSum, add llms.Usage) {
 	}
 }
 
+// validateRun is validateConfig plus, with Config.Toolboxes set, the
+// toolbox rules and the initial toolbox state (ADR-0047).
+func validateRun(cfg *Config) ([]llms.ToolDefinition, llms.ToolChoice, *toolboxes, error) {
+	tools, choice, err := validateConfig(*cfg)
+	if err != nil || cfg.Toolboxes == nil {
+		return tools, choice, nil, err
+	}
+	boxes, err := newToolboxes(cfg, choice)
+	return tools, choice, boxes, err
+}
+
 // validateConfig enforces the fail-closed rules from the proposal/ADR and
 // returns the effective tool definitions + ToolChoice on success. Errors
 // returned here are *ConfigError so callers can errors.As them.
@@ -589,7 +641,9 @@ func validateConfig(cfg Config) ([]llms.ToolDefinition, llms.ToolChoice, error) 
 		}
 	}
 	if effective.Type == llms.ToolChoiceTool {
-		if _, ok := seen[effective.Name]; !ok {
+		// With toolboxes the loader is a valid forced tool; newToolboxes
+		// checks the rest (ADR-0047).
+		if _, ok := seen[effective.Name]; !ok && (cfg.Toolboxes == nil || effective.Name != getToolboxName) {
 			return nil, llms.ToolChoice{}, &ConfigError{
 				Reason: fmt.Sprintf("ToolChoice names tool %q which is not in Config.Tools", effective.Name),
 			}

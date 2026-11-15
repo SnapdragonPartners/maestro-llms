@@ -110,6 +110,8 @@ func TestIntegrationLunaRoute(t *testing.T) {
 			t.Run("Reasoning", func(t *testing.T) { lunaRouteReasoning(t, c, lunaRouteIsReasoningModel(model)) })
 			t.Run("ToolLoopConvergence", func(t *testing.T) { livetest.ToolLoopConvergence(t, c) })
 			t.Run("ToolLoopNoTools", func(t *testing.T) { livetest.ToolLoopNoTools(t, c) })
+			t.Run("ToolHistoryAfterRemoval", func(t *testing.T) { livetest.ToolHistoryAfterRemoval(t, c) })
+			t.Run("ToolboxLoad", func(t *testing.T) { livetest.ToolboxLoad(t, c) })
 			t.Run("CompactSummarize", func(t *testing.T) { livetest.CompactSummarize(t, c, nil) })
 			if lunaRouteIsReasoningModel(model) {
 				t.Run("EmptyResponseOnBudget", func(t *testing.T) { lunaRouteEmptyResponse(t, c) })

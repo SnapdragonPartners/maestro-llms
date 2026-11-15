@@ -73,7 +73,8 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 - **Tool loop helper** (`llms/toolloop`): synchronous, app-neutral helper
   for multi-turn tool round trips over a `ChatClient`. Executes
   app-supplied tools, preserves provider signatures, returns a typed
-  `Outcome`. Deliberately a tool loop, not an agent loop — see
+  `Outcome`. Optional compaction and toolboxes (load named tool sets
+  mid-run). Deliberately a tool loop, not an agent loop — see
   [ADR-0011](docs/adr/0011-toolloop-helper.md).
 - **Model listing & upgrade detection** (`llms.ModelLister`): optional
   capability for surfacing "newer model available in your family"
@@ -473,6 +474,46 @@ compact now. To keep a summary between turns, store
 `compact.SummaryMessage(text)` in its place, after the first message or as
 the first message, so the next compaction rolls it
 ([ADR-0039](docs/adr/0039-compact-summary-message-format.md)).
+
+#### Toolboxes
+
+When a run offers many tools, set `Config.Toolboxes` so the model starts
+with a small core set and loads the rest by name with the loop's
+`get_toolbox` tool ([ADR-0047](docs/adr/0047-toolloop-toolboxes.md)).
+`Config.Tools` declares every tool once; `Core` and each toolbox refer to
+tools by name, and a tool may be in several toolboxes:
+
+```go
+out := toolloop.Run(ctx, toolloop.Config{
+	Client:  client,
+	Request: req,
+	Tools:   allTools, // every tool, declared once
+	Toolboxes: &toolloop.Toolboxes{
+		Core: []string{"help", "search"}, // always offered, never put away
+		Boxes: []toolloop.Toolbox{
+			{Name: "files", Description: "Upload, list and share files.", Tools: []string{"list_files", "share_file", "search"}},
+			{Name: "images", Description: "Crop, resize and caption images.", Tools: []string{"crop", "resize", "list_files"}},
+		},
+		Loaded:   saved.LoadedToolboxes, // from the previous run's Outcome
+		MaxTools: 0,                     // 0 = DefaultMaxTools (20); toolloop.NoToolLimit = no cap
+	},
+})
+saved.LoadedToolboxes = out.LoadedToolboxes
+```
+
+The app owns the toolbox catalog: if it removes or renames a toolbox, it
+must filter the stored names against the toolboxes it still declares,
+because an unknown name in `Loaded` makes `Run` reject the config.
+
+Each turn offers `get_toolbox`, the core tools and every loaded toolbox's
+tools, in `Config.Tools` order. Past the cap, loading a toolbox puts away
+the least recently used other one; a tool another loaded toolbox or core
+still supplies stays offered, and `get_toolbox`'s result tells the model
+what arrived and what went. Every toolbox must fit within the cap with the
+core tools, or `Run` rejects the config. Loading grants nothing: the loop
+also executes a call to a declared tool the turn did not offer (the
+`ToolCallEvent` has `Unadvertised` set), so executors validate their own
+arguments and check access as always.
 
 #### Unbounded runs
 

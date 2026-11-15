@@ -1,6 +1,6 @@
 # 0011. Tool loop helper — scope, API, and non-goals
 
-- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed); amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (`OutcomeDeadline`; negative `MaxIterations` is unlimited), [ADR-0020](0020-toolloop-empty-response.md) (`OutcomeEmptyResponse`), [ADR-0026](0026-context-length-error-kind.md) (`OutcomeContextExceeded`) and [ADR-0030](0030-toolloop-compaction.md) (compaction hook; lifts the "no context compaction" non-goal)
+- **Status:** Accepted; partially superseded by [ADR-0017](0017-toolloop-terminal-tools.md) (terminal tools; limit turn executed); amended by [ADR-0019](0019-toolloop-deadline-and-no-iteration-limit.md) (`OutcomeDeadline`; negative `MaxIterations` is unlimited), [ADR-0020](0020-toolloop-empty-response.md) (`OutcomeEmptyResponse`), [ADR-0026](0026-context-length-error-kind.md) (`OutcomeContextExceeded`), [ADR-0030](0030-toolloop-compaction.md) (compaction hook; lifts the "no context compaction" non-goal) and [ADR-0047](0047-toolloop-toolboxes.md) (toolboxes: with `Config.Toolboxes` the offered tools change between turns)
 - **Date:** 2026-05-19
 
 ## Context

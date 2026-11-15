@@ -14,6 +14,12 @@ import (
 // provider signature, etc.) so applications can do their own typed
 // unmarshalling, log the call ID, and preserve provider-owned metadata
 // without the loop interpreting it.
+//
+// The loop does not check Parameters against Definition.InputSchema, so
+// Execute must validate its arguments before acting. With toolboxes
+// (ADR-0047) this matters more: the loop also executes a call to a declared
+// tool the turn did not offer, whose arguments the model may have built
+// from an older view of the schema.
 type Tool struct {
 	Execute    func(context.Context, llms.ToolCall) (ToolResult, error)
 	Definition llms.ToolDefinition
@@ -77,6 +83,11 @@ type ToolResult struct {
 // Compactor for when it is called and what it must return. Nil means no
 // compaction, and Run behaves as if the hook did not exist.
 //
+// Toolboxes is optional (ADR-0047). Nil offers every Config.Tools entry on
+// every turn. Set, Config.Tools becomes the single declaration of every
+// tool, and each turn offers the core tools, the loaded toolboxes and the
+// loop's get_toolbox tool; see Toolboxes.
+//
 // OnIteration and OnToolCall are optional observation hooks. They must
 // never be required for correctness, but they ARE invoked synchronously on
 // the loop's goroutine — a slow callback will block the next provider
@@ -88,9 +99,78 @@ type Config struct {
 	Compact       Compactor
 	OnIteration   func(IterationEvent)
 	OnToolCall    func(ToolCallEvent)
+	Toolboxes     *Toolboxes
 	ToolChoice    llms.ToolChoice
 	Tools         []Tool
 	MaxIterations int
+}
+
+// DefaultMaxTools is the cap on offered tools when Toolboxes.MaxTools is
+// zero (ADR-0047). It is a starting point to test against real workflows,
+// not a measured limit.
+const DefaultMaxTools = 20
+
+// NoToolLimit is the Toolboxes.MaxTools value that turns the cap off: loaded
+// toolboxes accumulate and none is put away. Any negative value has the
+// same effect.
+const NoToolLimit = -1
+
+// Toolboxes lets the model load named sets of tools mid-run with the
+// loop's get_toolbox tool, so a run starts with a small core set (ADR-0047).
+// Loading a toolbox only changes what the model is shown; it grants
+// nothing. Each tool still checks its own access.
+//
+// Config.Tools declares every tool once. Core and Toolbox.Tools refer to
+// those tools by Definition.Name, so a tool in several toolboxes has one
+// definition and one executor. Every Config.Tools entry must be core or in
+// at least one toolbox, and no entry may be named get_toolbox.
+//
+// Each turn offers get_toolbox, the core tools, and every tool of every
+// loaded toolbox, deduplicated: get_toolbox first, then the others in
+// Config.Tools order. The order never depends on use, so the same set of
+// tools always produces the same request. A get_toolbox call takes effect
+// on the next turn.
+//
+// MaxTools caps the number of unique tools offered, get_toolbox included:
+// zero means DefaultMaxTools and a negative value (NoToolLimit) means no
+// cap. When loading a toolbox would exceed the cap, the least recently
+// used other loaded toolbox is put away, repeatedly, until the tools fit.
+// A toolbox counts as used when it is loaded and when the model calls one
+// of its tools that the turn offered and that is not core. Put-away
+// removes only the toolbox: a tool that core or another loaded toolbox
+// supplies stays offered. With a cap, every toolbox together with the core
+// tools must fit within it, or Run rejects the Config, so a toolbox always
+// loads whole.
+//
+// A call to a declared tool the turn did not offer is executed like any
+// other call; it loads nothing and marks nothing as used, and its
+// ToolCallEvent has Unadvertised set.
+//
+// Loaded lists the toolboxes loaded when the run starts, least recently
+// used first, normally Outcome.LoadedToolboxes from the previous run. If
+// they exceed the cap (MaxTools was lowered), the least recently used are
+// put away until they fit. Unknown or repeated names are rejected, so an
+// app that removes or renames a toolbox must drop its old name from the
+// stored set before passing it back.
+//
+// Guidance, if set, is appended to get_toolbox's description, for example
+// to say where the model can read more about each toolbox.
+type Toolboxes struct {
+	Guidance string
+	Core     []string
+	Boxes    []Toolbox
+	Loaded   []string
+	MaxTools int
+}
+
+// Toolbox is one named set of tools. Name is what the model passes to
+// get_toolbox; Description is the line get_toolbox's description shows for
+// it. Tools names Config.Tools entries; a tool may be in several toolboxes
+// and in Toolboxes.Core.
+type Toolbox struct {
+	Name        string
+	Description string
+	Tools       []string
 }
 
 // Compactor shortens a transcript so the loop can keep going (ADR-0030).
@@ -199,14 +279,17 @@ type IterationEvent struct {
 // attempts that returned an error and including unknown-tool recovery
 // (where Err is nil and Result is an IsError tool result the loop
 // synthesized so the model can self-correct). Iteration is the 0-based
-// IterationEvent.Index of the assistant turn that emitted Call. Same
-// neutrality rule as IterationEvent: no app-specific fields.
+// IterationEvent.Index of the assistant turn that emitted Call.
+// Unadvertised is set when Config.Toolboxes is in use and Call named a
+// declared tool the turn did not offer (ADR-0047). Same neutrality rule as
+// IterationEvent: no app-specific fields.
 type ToolCallEvent struct {
-	Err       error
-	Call      llms.ToolCall
-	Result    ToolResult
-	Latency   time.Duration
-	Iteration int
+	Err          error
+	Call         llms.ToolCall
+	Result       ToolResult
+	Latency      time.Duration
+	Iteration    int
+	Unadvertised bool
 }
 
 // OutcomeKind discriminates Outcome. New kinds may be added in minor
@@ -318,6 +401,11 @@ const (
 // TerminalCall and TerminalResult are set only for OutcomeTerminalTool and
 // are zero otherwise.
 //
+// LoadedToolboxes is the set of toolboxes loaded when the loop stopped,
+// least recently used first, to pass as Toolboxes.Loaded to the next run
+// (ADR-0047). It is set on every outcome once the Config is valid, and nil
+// when Config.Toolboxes is nil or the Config was rejected.
+//
 // Err is set by Kind:
 //   - OutcomeFinalAnswer:     nil
 //   - OutcomeEmptyResponse:   nil
@@ -337,6 +425,7 @@ type Outcome struct {
 	CompactionUsage llms.Usage
 	Kind            OutcomeKind
 	Messages        []llms.Message
+	LoadedToolboxes []string
 	TerminalResult  ToolResult
 	Iterations      int
 	Compactions     int

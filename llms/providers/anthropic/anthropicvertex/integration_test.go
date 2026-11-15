@@ -168,3 +168,13 @@ func TestIntegrationVertexAnthropicOutputCapReasoning(t *testing.T) {
 	t.Setenv("VERTEX_ANTHROPIC_MODEL", envOr("VERTEX_ANTHROPIC_REASONING_MODEL", "claude-opus-5-5"))
 	livetest.OutputCapReasoning(t, newVertexClient(t), "max_tokens", &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh})
 }
+
+// ADR-0047: history naming a tool absent from Tools (toolbox put-away).
+func TestIntegrationVertexToolHistoryAfterRemoval(t *testing.T) {
+	livetest.ToolHistoryAfterRemoval(t, newVertexClient(t))
+}
+
+// ADR-0047: load a toolbox mid-run, putting another away.
+func TestIntegrationVertexToolboxLoad(t *testing.T) {
+	livetest.ToolboxLoad(t, newVertexClient(t))
+}

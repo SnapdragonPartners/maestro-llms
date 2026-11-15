@@ -238,3 +238,13 @@ func TestIntegrationVertexGeminiOutputCapText(t *testing.T) {
 func TestIntegrationVertexGeminiOutputCapReasoning(t *testing.T) {
 	livetest.OutputCapReasoning(t, newVertexGemini(t, vertexLevelModel()), "MAX_TOKENS", &llms.ReasoningConfig{Effort: llms.ReasoningEffortHigh})
 }
+
+// ADR-0047: history naming a tool absent from Tools (toolbox put-away).
+func TestIntegrationVertexGeminiToolHistoryAfterRemoval(t *testing.T) {
+	livetest.ToolHistoryAfterRemoval(t, newVertexGemini(t, vertexModel()))
+}
+
+// ADR-0047: load a toolbox mid-run, putting another away.
+func TestIntegrationVertexGeminiToolboxLoad(t *testing.T) {
+	livetest.ToolboxLoad(t, newVertexGemini(t, vertexModel()))
+}

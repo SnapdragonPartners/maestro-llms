@@ -1514,7 +1514,9 @@ store `Outcome.LoadedToolboxes` and pass it back as `Toolboxes.Loaded`,
 dropping names of toolboxes you have since removed, which `Run` rejects; a
 call to a declared tool the turn did not offer is still executed and flagged
 `ToolCallEvent.Unadvertised`, so executors check their own arguments and
-access — see [ADR-0047](docs/adr/0047-toolloop-toolboxes.md); nothing
-changes when `Toolboxes` is nil).
+access — see [ADR-0047](docs/adr/0047-toolloop-toolboxes.md); `Config`,
+`Outcome` and `ToolCallEvent` each gain a field, so unkeyed literals of them
+no longer compile (use keyed literals; `Outcome`'s fields after `Messages`
+moved), and nothing changes when `Toolboxes` is nil).
 
 MIT — see [`LICENSE`](LICENSE).

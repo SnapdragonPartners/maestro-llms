@@ -1059,9 +1059,10 @@ life of v1 and in export parity with it ([ADR-0027](adr/0027-pre-v1-api-cleanup.
 
 The package accepts already-resolved configuration. Each provider package
 takes functional options. The one shared struct is `llms/providers.Options`:
-the provider-neutral constructor's settings common to every provider, each
-forwarded to that provider's own option. It adds no configuration of its
-own, and provider-specific settings stay on the provider packages
+the provider-neutral constructor's settings common to every provider. Each
+non-zero field is forwarded to that provider's own option (a zero field
+keeps the provider's default), and a field the provider can't use is a
+config error. It adds no configuration of its own, and provider-specific settings stay on the provider packages
 ([ADR-0048](adr/0048-provider-neutral-constructor.md)).
 
 ```go
@@ -1215,8 +1216,9 @@ Resolved by review:
 - Provider constructor shape is a functional options pattern
   (`New(WithAPIKey, WithModel, WithBaseURL, WithHTTPClient, ...)`, returning
   the client and an error). The provider-neutral `llms/providers.New(id,
-  Options)` takes one shared `Options` struct and forwards each field to the
-  provider's own option ([ADR-0048](adr/0048-provider-neutral-constructor.md)).
+  Options)` takes one shared `Options` struct, forwards each non-zero field to
+  the provider's own option and refuses a field the provider can't use
+  ([ADR-0048](adr/0048-provider-neutral-constructor.md)).
 - Provider error classification goes through one shared internal helper,
   not a classifier per adapter.
 - Model metadata is strictly optional/advisory.

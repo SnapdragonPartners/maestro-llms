@@ -93,7 +93,9 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
 - **Deterministic fakes** (`llms/testllm`) so downstream code tests without
   network.
 - **Provider packages are leaf imports.** The core `llms` package pulls no
-  provider SDKs; you import only the providers you use.
+  provider SDKs; you import only the providers you use. The opt-in
+  exception is `llms/providers`, which links them all so configuration can
+  pick one.
 
 ### Not in scope (by design)
 

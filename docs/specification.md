@@ -1214,7 +1214,9 @@ Resolved by review:
   servers are served by `openaicompat`.
 - Provider constructor shape is a functional options pattern
   (`New(WithAPIKey, WithModel, WithBaseURL, WithHTTPClient, ...)`, returning
-  the client and an error).
+  the client and an error). The provider-neutral `llms/providers.New(id,
+  Options)` takes one shared `Options` struct and forwards each field to the
+  provider's own option ([ADR-0048](adr/0048-provider-neutral-constructor.md)).
 - Provider error classification goes through one shared internal helper,
   not a classifier per adapter.
 - Model metadata is strictly optional/advisory.

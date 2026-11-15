@@ -2,6 +2,7 @@ package livetest
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -164,10 +165,13 @@ func ToolboxLoad(t *testing.T, c llms.ChatClient) {
 	}
 	// Which of clock and notes is put away depends on whether the model
 	// called get_time or read_note before loading the vault (each call marks
-	// its box used), so assert only the invariant: vault plus exactly one of
-	// the two, with vault the most recent.
-	if got := out.LoadedToolboxes; len(got) != 2 || got[1] != "vault" || (got[0] != "clock" && got[0] != "notes") {
-		t.Errorf("LoadedToolboxes = %v, want [clock vault] or [notes vault]", got)
+	// its box used), and a call after the vault load in the same turn marks
+	// that box newer than the vault, so assert only the invariant: the vault
+	// plus exactly one of the two boxes it started with, in either order.
+	if got := out.LoadedToolboxes; len(got) != 2 ||
+		!slices.Contains(got, "vault") ||
+		slices.Contains(got, "clock") == slices.Contains(got, "notes") {
+		t.Errorf("LoadedToolboxes = %v, want vault and exactly one of clock, notes", got)
 	}
 	t.Logf("OK toolbox run in %d tool iteration(s), usage in=%d out=%d",
 		out.Iterations, out.TotalUsage.InputTokens, out.TotalUsage.OutputTokens)

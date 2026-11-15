@@ -1059,10 +1059,10 @@ life of v1 and in export parity with it ([ADR-0027](adr/0027-pre-v1-api-cleanup.
 
 The package accepts already-resolved configuration. Each provider package
 takes functional options. The one shared struct is `llms/providers.Options`:
-the provider-neutral constructor's settings common to every provider. Each
-non-zero field is forwarded to that provider's own option (a zero field
-keeps the provider's default), and a field the provider can't use is a
-config error. It adds no configuration of its own, and provider-specific settings stay on the provider packages
+the provider-neutral constructor's settings for a provider. Each non-zero
+field is forwarded to that provider's own option, so a zero field leaves the
+provider's own default or its own missing-config error; a field the provider
+can't use is a config error. It adds no configuration of its own, and provider-specific settings stay on the provider packages
 ([ADR-0048](adr/0048-provider-neutral-constructor.md)).
 
 ```go

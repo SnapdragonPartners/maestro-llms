@@ -203,8 +203,9 @@ if errors.Is(err, providers.ErrUnknownProvider) { /* bad provider name */ }
 `ProviderAnthropic` through `anthropicvertex` and `ProviderGoogle` to Gemini
 on Vertex; other providers refuse it. `Options.HTTPClient` goes to every
 provider. An option a provider can't use is a config error matching
-`providers.ErrUnsupportedOption`, never silently ignored; zero fields keep
-the provider's defaults, and everything else is the provider package's own
+`providers.ErrUnsupportedOption`, never silently ignored; a zero field
+leaves the provider's default (or its own missing-config error, as for an
+empty `Model`), and everything else is the provider package's own
 validation. The provider is always explicit, never inferred from the model
 name. Importing `llms/providers` links every provider SDK; for
 provider-specific options (`WithMaxRetries`, `anthropic.WithRequestOptions`,

@@ -39,7 +39,8 @@ var (
 
 // Options are the settings common to the provider packages. Each field
 // means the same thing for every provider, or New refuses it. A zero field
-// is not passed on, so the provider package's default applies. Options
+// is not passed on, so the provider package decides: its default, or its
+// own config error for a required value (Model, openaicompat's BaseURL). Options
 // grows only by new fields; use keyed literals.
 type Options struct {
 	// HTTPClient is the HTTP client for every provider (a custom transport,
@@ -147,7 +148,7 @@ func newOpenAICompat(opts Options) (llms.ChatClient, error) {
 }
 
 // forward turns the non-zero common options into a provider's own options,
-// so a zero field leaves the provider's default in place. apiKey is nil for
+// so a zero field leaves the decision to the provider package. apiKey is nil for
 // a provider with no key option; refuse has already rejected a set APIKey
 // there.
 func forward[O any](opts Options, model, apiKey, baseURL func(string) O, httpClient func(*http.Client) O) []O {

@@ -121,7 +121,8 @@ maps a `ProviderID` plus common options to that provider's constructor, for
 applications whose configuration picks the provider. The provider is always
 explicit, never inferred from a model name; an option a provider can't use
 is a config error, and all other validation is the provider package's
-([ADR-0048](adr/0048-provider-neutral-constructor.md)).
+([ADR-0048](adr/0048-provider-neutral-constructor.md); see Configuration
+Boundary).
 
 ## Core Concepts
 
@@ -1056,8 +1057,12 @@ life of v1 and in export parity with it ([ADR-0027](adr/0027-pre-v1-api-cleanup.
 
 ## Configuration Boundary
 
-The package accepts already-resolved configuration. There is no shared
-config struct: each provider package takes functional options.
+The package accepts already-resolved configuration. Each provider package
+takes functional options. The one shared struct is `llms/providers.Options`:
+the provider-neutral constructor's settings common to every provider, each
+forwarded to that provider's own option. It adds no configuration of its
+own, and provider-specific settings stay on the provider packages
+([ADR-0048](adr/0048-provider-neutral-constructor.md)).
 
 ```go
 client, err := anthropic.New(

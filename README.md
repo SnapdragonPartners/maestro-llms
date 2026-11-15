@@ -1343,12 +1343,14 @@ its upgrades.
   `ProviderParams` keys and values pass through as the provider defines them
   ([ADR-0024](docs/adr/0024-provider-params.md)).
 - What a third-party type does: the public API exposes two types from
-  other modules, through three options, as deliberate escape hatches. `anthropic.WithRequestOptions`
-  takes anthropic-sdk-go's `option.RequestOption`, and `google.WithCredentials`
-  and `anthropicvertex.WithCredentials` take cloud.google.com/go/auth's
-  `*auth.Credentials`. The signatures are covered like any other. The
-  behavior of those types belongs to their own modules. Nothing else in the
-  public API exposes an SDK type.
+  other modules, through three options and one struct field, as deliberate
+  escape hatches. `anthropic.WithRequestOptions` takes anthropic-sdk-go's
+  `option.RequestOption`; `google.WithCredentials`,
+  `anthropicvertex.WithCredentials` and the `providers.Vertex.Credentials`
+  field ([ADR-0048](docs/adr/0048-provider-neutral-constructor.md)) take
+  cloud.google.com/go/auth's `*auth.Credentials`. The signatures are covered
+  like any other. The behavior of those types belongs to their own modules.
+  Nothing else in the public API exposes an SDK type.
 - Exact default tuning values that aren't part of a documented semantic:
   default backoff timings, the default `TokenEstimator`'s exact numbers
   (only its bias toward over-reserving is promised), its input bound's

@@ -38,3 +38,8 @@ func TestIntegrationVLLMCompactSummarize(t *testing.T) {
 func TestIntegrationVLLMToolHistoryAfterRemoval(t *testing.T) {
 	livetest.ToolHistoryAfterRemoval(t, newVLLMToolLoopClient(t))
 }
+
+// ADR-0047: load a toolbox mid-run, putting another away.
+func TestIntegrationVLLMToolboxLoad(t *testing.T) {
+	livetest.ToolboxLoad(t, newVLLMToolLoopClient(t))
+}

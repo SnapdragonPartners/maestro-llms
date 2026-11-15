@@ -100,3 +100,70 @@ func historyCalls(msgs []llms.Message, name string) bool {
 	}
 	return false
 }
+
+// ToolboxLoad runs the tool loop with toolboxes (ADR-0047). The secret is
+// only reachable through read_secret, in the vault toolbox, which is not
+// loaded; two other boxes are, and the cap leaves room for only two. The
+// model must call get_toolbox("vault"), which puts away the least recently
+// used box (clock), then call read_secret and answer.
+func ToolboxLoad(t *testing.T, c llms.ChatClient) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), scenarioTimeout)
+	defer cancel()
+
+	var readSecret bool
+	tool := func(name, desc, result string) toolloop.Tool {
+		return toolloop.Tool{
+			Definition: toolDef(name, desc, `{"type":"object","properties":{}}`),
+			Execute: func(_ context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
+				if call.Name == "read_secret" {
+					readSecret = true
+				}
+				return toolloop.ToolResult{Content: result}, nil
+			},
+		}
+	}
+	var tr trace
+	out := toolloop.Run(ctx, toolloop.Config{
+		Client: withRetry(c),
+		Request: llms.ChatRequest{
+			System: []llms.ContentPart{llms.Text(
+				"You answer questions using tools. Some tools live in toolboxes you load with get_toolbox. " +
+					"Once you know the answer, reply in plain text.")},
+			Messages:  []llms.Message{llms.UserText("What is the secret word in the vault? Reply with just the word.")},
+			MaxTokens: maxTokens,
+		},
+		Tools: []toolloop.Tool{
+			tool("get_time", "Return the current UTC time.", "2026-11-14T12:00:00Z"),
+			tool("read_note", "Read the shared note.", "Remember to water the plants."),
+			tool("read_secret", "Read the secret word from the vault.", "The secret word is "+toolboxSecret+"."),
+		},
+		Toolboxes: &toolloop.Toolboxes{
+			Boxes: []toolloop.Toolbox{
+				{Name: "clock", Description: "Time and date.", Tools: []string{"get_time"}},
+				{Name: "notes", Description: "Shared notes.", Tools: []string{"read_note"}},
+				{Name: "vault", Description: "The secret vault.", Tools: []string{"read_secret"}},
+			},
+			Loaded:   []string{"clock", "notes"},
+			MaxTools: 3, // get_toolbox + two boxes
+		},
+		MaxIterations: 6,
+		OnIteration:   tr.onIteration,
+		OnToolCall:    tr.onToolCall,
+	})
+	tr.dump(t)
+	if out.Kind != toolloop.OutcomeFinalAnswer {
+		t.Fatalf("kind = %q, want final_answer; iterations=%d err=%v", out.Kind, out.Iterations, out.Err)
+	}
+	if !readSecret {
+		t.Fatalf("read_secret was never executed")
+	}
+	if !strings.Contains(strings.ToUpper(out.Response.Text), toolboxSecret) {
+		t.Errorf("answer %q does not contain the secret %q", out.Response.Text, toolboxSecret)
+	}
+	if got := strings.Join(out.LoadedToolboxes, ","); got != "notes,vault" {
+		t.Errorf("LoadedToolboxes = %v, want [notes vault] (clock put away)", out.LoadedToolboxes)
+	}
+	t.Logf("OK toolbox run in %d tool iteration(s), usage in=%d out=%d",
+		out.Iterations, out.TotalUsage.InputTokens, out.TotalUsage.OutputTokens)
+}

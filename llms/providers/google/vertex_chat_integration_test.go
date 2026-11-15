@@ -243,3 +243,8 @@ func TestIntegrationVertexGeminiOutputCapReasoning(t *testing.T) {
 func TestIntegrationVertexGeminiToolHistoryAfterRemoval(t *testing.T) {
 	livetest.ToolHistoryAfterRemoval(t, newVertexGemini(t, vertexModel()))
 }
+
+// ADR-0047: load a toolbox mid-run, putting another away.
+func TestIntegrationVertexGeminiToolboxLoad(t *testing.T) {
+	livetest.ToolboxLoad(t, newVertexGemini(t, vertexModel()))
+}

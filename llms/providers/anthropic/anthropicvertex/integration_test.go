@@ -173,3 +173,8 @@ func TestIntegrationVertexAnthropicOutputCapReasoning(t *testing.T) {
 func TestIntegrationVertexToolHistoryAfterRemoval(t *testing.T) {
 	livetest.ToolHistoryAfterRemoval(t, newVertexClient(t))
 }
+
+// ADR-0047: load a toolbox mid-run, putting another away.
+func TestIntegrationVertexToolboxLoad(t *testing.T) {
+	livetest.ToolboxLoad(t, newVertexClient(t))
+}

@@ -43,3 +43,8 @@ func TestIntegrationOllamaCompactSummarize(t *testing.T) {
 func TestIntegrationOllamaToolHistoryAfterRemoval(t *testing.T) {
 	livetest.ToolHistoryAfterRemoval(t, newOllamaToolLoopClient(t))
 }
+
+// ADR-0047: load a toolbox mid-run, putting another away.
+func TestIntegrationOllamaToolboxLoad(t *testing.T) {
+	livetest.ToolboxLoad(t, newOllamaToolLoopClient(t))
+}

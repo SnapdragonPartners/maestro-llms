@@ -1,6 +1,6 @@
 # 0047. Tool loop toolboxes: `get_toolbox` loads named tool sets mid-run
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-14
 
 ## Context

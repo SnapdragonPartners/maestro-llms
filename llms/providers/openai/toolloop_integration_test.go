@@ -70,3 +70,8 @@ func TestIntegrationOpenAIInputBoundToolHistory(t *testing.T) {
 func TestIntegrationOpenAIToolHistoryAfterRemoval(t *testing.T) {
 	livetest.ToolHistoryAfterRemoval(t, newOpenAIToolLoopClient(t))
 }
+
+// ADR-0047: load a toolbox mid-run, putting another away.
+func TestIntegrationOpenAIToolboxLoad(t *testing.T) {
+	livetest.ToolboxLoad(t, newOpenAIToolLoopClient(t))
+}

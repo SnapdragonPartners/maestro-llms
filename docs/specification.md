@@ -1118,9 +1118,26 @@ proposal is [`toolloop-proposal.md`](toolloop-proposal.md)),
 [ADR-0038](adr/0038-compact-pins-in-flight-prompt.md) (the cut rule also
 keeps the in-flight prompt), and
 [ADR-0039](adr/0039-compact-summary-message-format.md) (the exported summary
-message). `OutcomeKind` may grow, each new kind by
+message), and [ADR-0047](adr/0047-toolloop-toolboxes.md) (toolboxes).
+`OutcomeKind` may grow, each new kind by
 its own ADR, so a switch over it needs a `default` case
 ([ADR-0032](adr/0032-enum-like-types-v1.md)).
+
+With `Config.Toolboxes` set, the offered tools change mid-run
+([ADR-0047](adr/0047-toolloop-toolboxes.md)). `Config.Tools` declares every
+tool once, and core tools and named toolboxes refer to them by name. Each
+turn offers the loop's `get_toolbox` tool, the core tools and every loaded
+toolbox's tools, deduplicated, in declaration order. A `get_toolbox` call
+takes effect on the next turn. Past a cap on unique offered tools (default
+20, configurable or off), the least recently used other toolbox is put
+away. Availability is then recomputed from what remains loaded, so a tool
+another loaded toolbox or core supplies stays offered. Every toolbox must
+fit within the cap together with the core tools, or the configuration is
+rejected. Advertising decides what the model is shown, and declaration
+decides what can execute: a call to a declared tool the turn did not offer
+executes like any other call, and loads nothing. The loaded set goes in
+through `Toolboxes.Loaded` and comes back in `Outcome.LoadedToolboxes`;
+the loop keeps no state between runs.
 
 ## Model Metadata
 

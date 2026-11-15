@@ -21,6 +21,12 @@
 // context-window overflow; what to keep stays app policy, and
 // llms/toolloop/compact ships two ready-made policies.
 //
+// The one tool-set hook is Config.Toolboxes (ADR-0047): the model starts
+// with a core set and loads named toolboxes mid-run with the loop's
+// get_toolbox tool. Which toolboxes exist, what a user may call, and the
+// loaded set between runs stay with the application; loading a toolbox
+// grants nothing.
+//
 // Streaming tool loops are deferred per ADR-0003 — Run is synchronous; a
 // streaming-aware tool loop requires a separate ADR before it can be added.
 package toolloop

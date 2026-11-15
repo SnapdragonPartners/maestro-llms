@@ -52,3 +52,8 @@ func TestIntegrationGoogleInputBoundToolHistory(t *testing.T) {
 func TestIntegrationGoogleToolHistoryAfterRemoval(t *testing.T) {
 	livetest.ToolHistoryAfterRemoval(t, newGoogleToolLoopClient(t))
 }
+
+// ADR-0047: load a toolbox mid-run, putting another away.
+func TestIntegrationGoogleToolboxLoad(t *testing.T) {
+	livetest.ToolboxLoad(t, newGoogleToolLoopClient(t))
+}

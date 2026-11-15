@@ -1541,7 +1541,7 @@ transaction; they take a driver-neutral `postgres.Tx` (`postgres.SQLTx` for
 a `*sql.Tx`, a two-method pgx adapter in the GoDoc); while that transaction
 holds the row lock the bucket's `Acquire` and `Adjust` wait, so commit
 quickly — see [ADR-0046](docs/adr/0046-bucket-caller-transactions.md); no
-schema change and no migration; nothing changes for existing callers), and
+schema change and no migration; nothing changes for existing callers),
 **v1.6.0** (toolloop toolboxes: set `Config.Toolboxes` and the model starts
 with a small core set of tools and loads named toolboxes with the loop's
 `get_toolbox` tool; `Config.Tools` still declares every tool once, toolboxes
@@ -1554,6 +1554,17 @@ call to a declared tool the turn did not offer is still executed and flagged
 access — see [ADR-0047](docs/adr/0047-toolloop-toolboxes.md); `Config`,
 `Outcome` and `ToolCallEvent` each gain a field, so unkeyed literals of them
 no longer compile (use keyed literals; `Outcome`'s fields after `Messages`
-moved), and nothing changes when `Toolboxes` is nil).
+moved), and nothing changes when `Toolboxes` is nil), and **v1.7.0**
+(provider-neutral chat constructor: `providers.New(id, providers.Options{...})`
+in the new `llms/providers` package builds the chat client for any
+`llms.ProviderID` from `Model`, `APIKey`, `BaseURL`, `HTTPClient` and, for
+anthropic and google, `Vertex` (credentials, project, location), so
+configuration can pick the provider without your own switch; only non-zero
+fields are passed on, an option the provider can't use is a config error
+matching `providers.ErrUnsupportedOption` and an unknown ID one matching
+`providers.ErrUnknownProvider`; on Vertex, `BaseURL` is the Private Service
+Connect root without `/v1`; importing `llms/providers` links every provider
+SDK — see [ADR-0048](docs/adr/0048-provider-neutral-constructor.md); purely
+additive, nothing changes for existing callers).
 
 MIT — see [`LICENSE`](LICENSE).

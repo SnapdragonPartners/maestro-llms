@@ -1,6 +1,6 @@
 # 0048. Provider-neutral chat constructor: `providers.New(id, Options)`
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-15
 
 ## Context
@@ -133,9 +133,11 @@ Unit tests, no network:
 - Each provider ID (and `ProviderVLLM`) builds a client whose `Model()`
   reports the expected `ProviderID` and model name; both Vertex routes build
   with a static-token `auth.Credentials`.
-- Options reach the provider: a `BaseURL` + `HTTPClient` pointed at an
-  `httptest` server receives the request for each provider (and `APIKey`
-  arrives where the provider sends it), so a dropped option is caught.
+- Options reach the provider: with an `HTTPClient` whose transport records
+  and fails each request, every provider's request goes to the `BaseURL`
+  host with `APIKey` (or the Vertex token) where the provider sends it, and
+  a Vertex request names the project and location, so a dropped option is
+  caught. A zero `BaseURL` keeps the provider's default (Ollama's).
 - Each refusal in §3 and the unknown/empty ID return a config
   `ProviderError` matching the right sentinel.
 - A provider's own validation error (missing model) passes through

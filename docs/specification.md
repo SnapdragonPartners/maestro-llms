@@ -98,7 +98,7 @@ github.com/SnapdragonPartners/maestro-llms
   llms/toolloop/            synchronous tool-loop helper
   llms/toolloop/compact/    ready-made compaction policies for the tool loop
   llms/testllm/             deterministic fakes
-  llms/providers/
+  llms/providers/           provider-neutral constructor: New(id, Options) (links every provider)
     anthropic/              Anthropic Messages API (chat)
     anthropic/anthropicvertex/  Anthropic on Vertex AI (chat)
     openai/                 OpenAI Responses API (chat) and embeddings
@@ -115,6 +115,13 @@ Provider packages are leaf imports: an application imports only the
 providers it uses, and the core `llms` package pulls in no provider SDK. A
 Vertex backend that would add a dependency lives in its own leaf package, as
 `anthropicvertex` does ([ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md)).
+
+`llms/providers` itself is the one package that imports every provider: it
+maps a `ProviderID` plus common options to that provider's constructor, for
+applications whose configuration picks the provider. The provider is always
+explicit, never inferred from a model name; an option a provider can't use
+is a config error, and all other validation is the provider package's
+([ADR-0048](adr/0048-provider-neutral-constructor.md)).
 
 ## Core Concepts
 

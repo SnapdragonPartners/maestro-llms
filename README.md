@@ -52,6 +52,9 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   OpenAI-compatible servers and gateways such as vLLM and LunaRoute
   (`openaicompat`, OpenAI Chat Completions via openai-go; ADR-0015,
   ADR-0027; `vllm` remains as an alias).
+- **Provider from configuration**: `providers.New(id, Options)` builds any
+  of them (Vertex included) from a provider ID and common options
+  (ADR-0048).
 - **Embeddings**: OpenAI and Gemini/Vertex (`gemini-embedding-001`,
   `gemini-embedding-2`), order/ID-preserving, per-request dimension
   override, task-typed (`EmbeddingTask`/`Title`, advisory), image and
@@ -176,6 +179,34 @@ as `WithDimensions` passed to `New` is a config error
 `WithMaxRetries` controls *SDK-level* retries; the toolkit defaults provider
 SDK retries to 0 and expects you to use the retry middleware (below) for one
 consistent policy.
+
+#### Choosing the provider from configuration (`llms/providers`)
+
+When configuration picks the provider, `providers.New` replaces the switch
+over the provider packages
+([ADR-0048](docs/adr/0048-provider-neutral-constructor.md)):
+
+```go
+import "github.com/SnapdragonPartners/maestro-llms/llms/providers"
+
+client, err := providers.New(llms.ProviderID(cfg.Provider), providers.Options{
+    Model:   cfg.Model,   // passed through unchecked
+    APIKey:  cfg.APIKey,  // refused by ollama and with Vertex
+    BaseURL: cfg.BaseURL, // optional; required by openaicompat (include /v1)
+})
+if errors.Is(err, providers.ErrUnknownProvider) { /* bad provider name */ }
+```
+
+`Options.Vertex` (`Credentials`, `Project`, `Location`) routes
+`ProviderAnthropic` through `anthropicvertex` and `ProviderGoogle` to Gemini
+on Vertex; other providers refuse it. `Options.HTTPClient` goes to every
+provider. An option a provider can't use is a config error matching
+`providers.ErrUnsupportedOption`, never silently ignored; zero fields keep
+the provider's defaults, and everything else is the provider package's own
+validation. The provider is always explicit, never inferred from the model
+name. Importing `llms/providers` links every provider SDK; for
+provider-specific options (`WithMaxRetries`, `anthropic.WithRequestOptions`,
+…) call the provider package directly.
 
 ### Images and documents
 
@@ -1210,6 +1241,7 @@ life of v1.
 | `llms/toolloop`, `llms/toolloop/compact` | Loop, outcomes, compaction hook and policies, toolboxes |
 | `llms/testllm` | Deterministic fakes |
 | `llms/providers/anthropic`, `.../anthropic/anthropicvertex`, `.../google`, `.../ollama`, `.../openai`, `.../openaicompat` | Constructors, options and client methods |
+| `llms/providers` | `New`, `Options`, `Vertex` and the two error sentinels; `Options` grows only by new fields ([ADR-0048](docs/adr/0048-provider-neutral-constructor.md)) |
 | `llms/providers/vllm` | Deprecated alias of `openaicompat`, kept permanently ([ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md)) |
 | `bucket`, `bucket/memory`, `bucket/postgres` | Limiter, lease, backends, `Ensure`, `EnsureTx`, `LockLimits`, `Limits`, `Tx`/`Row` (`SQLTx`), the schema-version API |
 

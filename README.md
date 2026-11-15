@@ -1170,7 +1170,7 @@ life of v1.
 | `llms/testllm` | Deterministic fakes |
 | `llms/providers/anthropic`, `.../anthropic/anthropicvertex`, `.../google`, `.../ollama`, `.../openai`, `.../openaicompat` | Constructors, options and client methods |
 | `llms/providers/vllm` | Deprecated alias of `openaicompat`, kept permanently ([ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md)) |
-| `bucket`, `bucket/memory`, `bucket/postgres` | Limiter, lease, backends, `Ensure`, the schema-version API |
+| `bucket`, `bucket/memory`, `bucket/postgres` | Limiter, lease, backends, `Ensure`, `EnsureTx`, `LockLimits`, `Limits`, `Tx`/`Row` (`SQLTx`), the schema-version API |
 
 **Covered: documented semantics, not just signatures.** This includes
 everything [`docs/specification.md`](docs/specification.md) and the accepted

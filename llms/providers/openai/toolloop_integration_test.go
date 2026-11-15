@@ -65,3 +65,8 @@ func TestIntegrationOpenAIInputBound(t *testing.T) {
 func TestIntegrationOpenAIInputBoundToolHistory(t *testing.T) {
 	livetest.InputBoundToolHistory(t, newOpenAIToolLoopClient(t))
 }
+
+// ADR-0047: history naming a tool absent from Tools (toolbox put-away).
+func TestIntegrationOpenAIToolHistoryAfterRemoval(t *testing.T) {
+	livetest.ToolHistoryAfterRemoval(t, newOpenAIToolLoopClient(t))
+}

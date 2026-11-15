@@ -106,3 +106,8 @@ func TestIntegrationAnthropicInputBoundToolLoop(t *testing.T) {
 func TestIntegrationAnthropicInputBoundReasoningLoop(t *testing.T) {
 	livetest.InputBoundToolLoop(t, newStrictReasoningClient(t), true)
 }
+
+// ADR-0047: history naming a tool absent from Tools (toolbox put-away).
+func TestIntegrationAnthropicToolHistoryAfterRemoval(t *testing.T) {
+	livetest.ToolHistoryAfterRemoval(t, newAnthropicToolLoopClient(t))
+}

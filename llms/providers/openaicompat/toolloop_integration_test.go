@@ -33,3 +33,8 @@ func TestIntegrationVLLMToolLoopNoTools(t *testing.T) {
 func TestIntegrationVLLMCompactSummarize(t *testing.T) {
 	livetest.CompactSummarize(t, newVLLMToolLoopClient(t), nil)
 }
+
+// ADR-0047: history naming a tool absent from Tools (toolbox put-away).
+func TestIntegrationVLLMToolHistoryAfterRemoval(t *testing.T) {
+	livetest.ToolHistoryAfterRemoval(t, newVLLMToolLoopClient(t))
+}

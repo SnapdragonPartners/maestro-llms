@@ -38,3 +38,8 @@ func TestIntegrationOllamaToolLoopNoTools(t *testing.T) {
 func TestIntegrationOllamaCompactSummarize(t *testing.T) {
 	livetest.CompactSummarize(t, newOllamaToolLoopClient(t), nil)
 }
+
+// ADR-0047: history naming a tool absent from Tools (toolbox put-away).
+func TestIntegrationOllamaToolHistoryAfterRemoval(t *testing.T) {
+	livetest.ToolHistoryAfterRemoval(t, newOllamaToolLoopClient(t))
+}

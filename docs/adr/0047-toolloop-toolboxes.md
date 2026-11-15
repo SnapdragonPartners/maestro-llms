@@ -198,6 +198,18 @@ caller as `OutcomeLLMError`. The same history exists after any put-away,
 whichever dispatch rule applies, so the live tests check it on every
 adapter (section 7).
 
+**Measured (2026-11-14, `livetest.ToolHistoryAfterRemoval`).** Every adapter
+accepts the history: Anthropic direct and on Vertex, OpenAI, Gemini (API
+and Vertex), Ollama, and `openaicompat` on LunaRoute. Model behavior varies.
+Older Claude models sometimes distrust the result of a tool that is no
+longer offered and answer that they lack the tool: Haiku 4.5 did in 1 to 2
+of 5 tries per variant, and Opus 4.6 on Vertex once. Sonnet 5.5 and
+Opus 5.5 used the result in 5 of 5 tries on every variant, although
+Opus 5.5 remarked that the tool was not among its tools. The adapters do
+not rewrite history to hide this. `get_toolbox`'s report of what was put
+away is the in-transcript explanation, and the scenario asserts only that
+the provider accepts the history.
+
 **The loop does not validate arguments against the schema** (ADR-0011:
 `Execute` gets the raw call). A call to an unadvertised tool may be built
 from a remembered, older idea of the schema. Executors must validate

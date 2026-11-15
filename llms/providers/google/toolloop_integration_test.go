@@ -47,3 +47,8 @@ func TestIntegrationGoogleInputBound(t *testing.T) {
 func TestIntegrationGoogleInputBoundToolHistory(t *testing.T) {
 	livetest.InputBoundToolHistory(t, newGoogleToolLoopClient(t))
 }
+
+// ADR-0047: history naming a tool absent from Tools (toolbox put-away).
+func TestIntegrationGoogleToolHistoryAfterRemoval(t *testing.T) {
+	livetest.ToolHistoryAfterRemoval(t, newGoogleToolLoopClient(t))
+}

@@ -98,7 +98,7 @@ github.com/SnapdragonPartners/maestro-llms
   llms/toolloop/            synchronous tool-loop helper
   llms/toolloop/compact/    ready-made compaction policies for the tool loop
   llms/testllm/             deterministic fakes
-  llms/providers/
+  llms/providers/           provider-neutral constructor: New(id, Options) (links every provider)
     anthropic/              Anthropic Messages API (chat)
     anthropic/anthropicvertex/  Anthropic on Vertex AI (chat)
     openai/                 OpenAI Responses API (chat) and embeddings
@@ -115,6 +115,14 @@ Provider packages are leaf imports: an application imports only the
 providers it uses, and the core `llms` package pulls in no provider SDK. A
 Vertex backend that would add a dependency lives in its own leaf package, as
 `anthropicvertex` does ([ADR-0009](adr/0009-vertex-backend-psc-and-gemini-embeddings.md)).
+
+`llms/providers` itself is the one package that imports every provider: it
+maps a `ProviderID` plus common options to that provider's constructor, for
+applications whose configuration picks the provider. The provider is always
+explicit, never inferred from a model name; an option a provider can't use
+is a config error, and all other validation is the provider package's
+([ADR-0048](adr/0048-provider-neutral-constructor.md); see Configuration
+Boundary).
 
 ## Core Concepts
 
@@ -1049,8 +1057,13 @@ life of v1 and in export parity with it ([ADR-0027](adr/0027-pre-v1-api-cleanup.
 
 ## Configuration Boundary
 
-The package accepts already-resolved configuration. There is no shared
-config struct: each provider package takes functional options.
+The package accepts already-resolved configuration. Each provider package
+takes functional options. The one shared struct is `llms/providers.Options`:
+the provider-neutral constructor's settings for a provider. Each non-zero
+field is forwarded to that provider's own option, so a zero field leaves the
+provider's own default or its own missing-config error; a field the provider
+can't use is a config error. It adds no configuration of its own, and provider-specific settings stay on the provider packages
+([ADR-0048](adr/0048-provider-neutral-constructor.md)).
 
 ```go
 client, err := anthropic.New(
@@ -1202,7 +1215,10 @@ Resolved by review:
   servers are served by `openaicompat`.
 - Provider constructor shape is a functional options pattern
   (`New(WithAPIKey, WithModel, WithBaseURL, WithHTTPClient, ...)`, returning
-  the client and an error).
+  the client and an error). The provider-neutral `llms/providers.New(id,
+  Options)` takes one shared `Options` struct, forwards each non-zero field to
+  the provider's own option and refuses a field the provider can't use
+  ([ADR-0048](adr/0048-provider-neutral-constructor.md)).
 - Provider error classification goes through one shared internal helper,
   not a classifier per adapter.
 - Model metadata is strictly optional/advisory.

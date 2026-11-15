@@ -30,6 +30,7 @@ llms/                core interfaces and shared types (ChatClient, EmbeddingClie
 llms/middleware/     provider-neutral middleware (timeout, retry, circuit, ratelimit, metrics, validation)
 llms/ratelimit/      Limiter/Reservation interfaces + optional in-memory limiter + FromBucket + All
 llms/toolloop/       synchronous tool loop; llms/toolloop/compact compaction policies
+llms/providers/      provider-neutral constructor New(id, Options) (ADR-0048); links every provider package
 llms/providers/{anthropic,anthropic/anthropicvertex,openai,google,ollama,openaicompat}/   one package per provider, imported only if used (vllm = deprecated alias of openaicompat)
 llms/testllm/        deterministic FakeChatClient / FakeEmbeddingClient
 bucket/              generic per-key token/concurrency limiter (no llms import); bucket/memory, bucket/postgres (ADR-0025)
@@ -37,7 +38,7 @@ bucket/              generic per-key token/concurrency limiter (no llms import);
 
 Load-bearing structural decisions:
 
-- **Provider packages are leaf imports.** The core `llms` package must not pull provider SDKs. Apps import only the provider packages they use.
+- **Provider packages are leaf imports.** The core `llms` package must not pull provider SDKs. Apps import only the provider packages they use; `llms/providers` is the one package that imports them all, for apps whose configuration picks the provider.
 - **One app-neutral conversation model.** `Message`/`ContentPart` is the single representation; each provider adapter translates it to/from that provider's wire shape at the provider boundary (e.g. Anthropic encodes `RoleTool` results as user-role content blocks; OpenAI uses tool-role messages). The Maestro implementation is the tested reference for the four ported providers (Anthropic, OpenAI Responses, Google, Ollama) — adapt it, don't reinvent provider behavior. vLLM (ADR-0015) is greenfield: no Maestro reference, designed fresh against the OpenAI Chat Completions wire shape via openai-go with a configurable base URL.
 - **Middleware is `func(Client) Client`, composed via `ChainChat`/`ChainEmbeddings`; first argument is outermost.** Composition order is semantically significant (see the spec's recommended order and the retry-vs-reservation tradeoff). Changing order changes correctness, not just performance.
 - **Rate limiting is a reservation protocol** (`Reserve` → `Commit` actuals → always `Release`), not a concrete limiter. The in-memory limiter ships here, and so does the shared one (ADR-0025, replacing the original plan for Morris to build its own first): the generic top-level `bucket` package (`bucket/memory`, `bucket/postgres`) adapted to `Limiter` by `ratelimit.FromBucket`. `Release` must run on a context that survives request cancellation (`context.WithoutCancel`).

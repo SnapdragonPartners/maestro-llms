@@ -40,7 +40,7 @@ var (
 // Options are the settings common to the provider packages. Each field
 // means the same thing for every provider, or New refuses it. A zero field
 // is not passed on, so the provider package decides: its default, or its
-// own config error for a required value (Model, openaicompat's BaseURL). Options
+// own config error for a value it requires. Options
 // grows only by new fields; use keyed literals.
 type Options struct {
 	// HTTPClient is the HTTP client for every provider (a custom transport,

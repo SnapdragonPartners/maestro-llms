@@ -79,6 +79,11 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   `Outcome`. Optional compaction and toolboxes (load named tool sets
   mid-run). Deliberately a tool loop, not an agent loop — see
   [ADR-0011](docs/adr/0011-toolloop-helper.md).
+- **MCP server tools** (`mcp/mcpclient`, a separate v0 module): connect to
+  an MCP server over stdio or Streamable HTTP and run its tools in the tool
+  loop as `toolloop.Tool` values. The MCP SDK stays out of the core module's
+  dependency graph. See
+  [ADR-0049](docs/adr/0049-mcp-module-and-client.md).
 - **Model listing & upgrade detection** (`llms.ModelLister`): optional
   capability for surfacing "newer model available in your family"
   prompts to users — applications decide whether to upgrade, the
@@ -609,6 +614,60 @@ persistence, audit taxonomy, authorization, tool registries, or built-in
 tool adapters. See [`docs/toolloop-proposal.md`](docs/toolloop-proposal.md)
 and [ADR-0011](docs/adr/0011-toolloop-helper.md) for the full design and
 binding non-goals.
+
+### MCP server tools (`mcp/mcpclient`)
+
+`mcpclient` turns an MCP server's tools into `toolloop.Tool` values. It
+lives in a separate Go module, `github.com/SnapdragonPartners/maestro-llms/mcp`
+(v0, tagged `mcp/vX.Y.Z`), so the MCP SDK reaches only the apps that import
+it, and it is outside the [stability contract](#stability-contract-v1) until
+its own v1 ([ADR-0049](docs/adr/0049-mcp-module-and-client.md)).
+
+```sh
+go get github.com/SnapdragonPartners/maestro-llms/mcp@latest
+```
+
+```go
+import "github.com/SnapdragonPartners/maestro-llms/mcp/mcpclient"
+
+cmd := exec.Command("my-mcp-server") // set cmd.Env for any secrets it needs
+sess, err := mcpclient.Connect(ctx, mcpclient.Command(cmd), mcpclient.Options{
+	// Optional: namespace the names the model sees. Execute still calls
+	// the server's own name.
+	Name: func(n string) string { return "files_" + n },
+})
+if err != nil { /* ... */ }
+defer sess.Close() // stops the server process
+
+mcpTools, err := sess.Tools(ctx)
+if err != nil { /* ... */ }
+out := toolloop.Run(ctx, toolloop.Config{
+	Client:  client,
+	Request: req,
+	Tools:   append(localTools, mcpTools...),
+})
+```
+
+For a remote server use `mcpclient.StreamableHTTP(url, httpClient)`; the
+`http.Client` carries any credentials, since the package sources none.
+
+- **Names.** A name the model sees must match `^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$`,
+  which every provider accepts. A tool that breaks it is reported, not
+  renamed: use `Options.Name` to map it, or `Options.Filter` to leave it out.
+  Collisions between servers are yours to avoid (the loop rejects duplicate
+  names).
+- **Fail closed.** If any listed tool is invalid (its name, a name collision,
+  or a schema with a recursive or remote `$ref`), `Tools` returns no tools
+  and an error with one `*mcpclient.InvalidToolError` per bad tool.
+- **Schemas.** Local `$ref`s are inlined, because Gemini doesn't accept
+  them. Nothing else is rewritten.
+- **Errors.** An MCP `isError` result comes back as `IsError: true`, which
+  the model sees and the loop continues. A transport or protocol failure is
+  an `Execute` error, which stops the loop with `OutcomeToolError`.
+- **Results.** Text, images and embedded documents map to `Content` or
+  `Parts`. Audio comes back as an `IsError` result.
+- **Snapshot.** `Tools` lists the tools once; call it again to pick up
+  changes. A `Session` is safe for concurrent use, and you own `Close`.
 
 ### Model listing & upgrade detection
 
@@ -1247,6 +1306,12 @@ life of v1.
 | `llms/providers` | `New`, `Options`, `Vertex` and the two error sentinels; `Options` grows only by new fields ([ADR-0048](docs/adr/0048-provider-neutral-constructor.md)) |
 | `llms/providers/vllm` | Deprecated alias of `openaicompat`, kept permanently ([ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md)) |
 | `bucket`, `bucket/memory`, `bucket/postgres` | Limiter, lease, backends, `Ensure`, `EnsureTx`, `LockLimits`, `Limits`, `Tx`/`Row` (`SQLTx`), the schema-version API |
+
+**Not covered: the `mcp` module.** `github.com/SnapdragonPartners/maestro-llms/mcp`
+is a separate Go module at v0 (tags `mcp/vX.Y.Z`), so its API may change in
+a minor release until its own v1
+([ADR-0049](docs/adr/0049-mcp-module-and-client.md)). It exposes no MCP SDK
+types.
 
 **Covered: documented semantics, not just signatures.** This includes
 everything [`docs/specification.md`](docs/specification.md) and the accepted

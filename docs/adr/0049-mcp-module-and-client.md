@@ -1,6 +1,6 @@
 # 0049. MCP module: a nested v0 module, and server tools as `toolloop.Tool`
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-17
 
 ## Context
@@ -176,11 +176,16 @@ its `title`, then `annotations.title`.
 #### 4.4 Input schemas
 
 The schema is sent as JSON, normalized in one way only: local references
-(`$ref` to `#/$defs/...` or `#/definitions/...`) are inlined and the
+(a `$ref` that is a `#/` JSON pointer into the schema, normally
+`#/$defs/...` or `#/definitions/...`) are inlined and the top-level
 definitions removed, because Gemini doesn't accept them and the Google
 adapter's schema conversion would otherwise drop the referenced structure
-without an error. A recursive reference, a remote reference, or a pointer
-that doesn't resolve is an `InvalidToolError`. A tool with no schema gets
+without an error. A recursive reference, a remote or anchor reference, or a
+pointer that doesn't resolve is an `InvalidToolError`, and so is a schema
+whose expansion nests references more than 32 deep or grows past 100,000
+nodes (references that fan out grow exponentially without being
+recursive). Keywords beside a `$ref` are kept and win over the target's. A
+schema with no references is sent unchanged. A tool with no schema gets
 `{"type":"object"}`. A top-level `type` other than `"object"` is an
 `InvalidToolError` (MCP requires an object schema, and so does every
 adapter). Nothing else is rewritten; any other keyword a provider can't use
@@ -235,8 +240,9 @@ A result with no content blocks and a `structuredContent` value gets that
 value as JSON text. When there are content blocks, `structuredContent` is
 not added (MCP asks servers to include a text form of it already).
 
-A block the SDK can't decode, or an image or blob with no data or no MIME
-type, makes the result malformed: an `Execute` error (§4.6), because it is a
+A block the SDK can't decode, an image or blob with no data or no MIME
+type, or an image block whose MIME type isn't `image/*`, makes the result
+malformed: an `Execute` error (§4.6), because it is a
 server bug the app should see rather than something the model can fix.
 
 #### 4.8 Credentials and OAuth

@@ -109,6 +109,10 @@ github.com/SnapdragonPartners/maestro-llms
   bucket/                   generic per-key token/concurrency limiter (no llms import)
   bucket/memory/            in-process backend
   bucket/postgres/          shared PostgreSQL backend
+
+github.com/SnapdragonPartners/maestro-llms/mcp   (separate module, v0)
+  mcp/mcpclient/            an MCP server's tools as toolloop.Tool values
+  mcp/internal/convert/     the shared MCP <-> llms/toolloop translation
 ```
 
 Provider packages are leaf imports: an application imports only the
@@ -123,6 +127,11 @@ explicit, never inferred from a model name; an option a provider can't use
 is a config error, and all other validation is the provider package's
 ([ADR-0048](adr/0048-provider-neutral-constructor.md); see Configuration
 Boundary).
+
+The `mcp` directory is its own Go module (ADR-0049), so the MCP SDK and its
+dependencies reach only applications that import it. It starts at v0,
+outside the v1 stability contract, and exposes no SDK types. It imports
+`llms` and `llms/toolloop`; nothing in the root module imports it.
 
 ## Core Concepts
 

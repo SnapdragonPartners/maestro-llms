@@ -103,3 +103,26 @@ jobs:
           BUCKET_POSTGRES_DSN: postgres://postgres:bucket@localhost:5432/postgres?sslmode=disable
           BUCKET_POSTGRES_REQUIRED: "1"
         run: go test -cover ./...
+
+      # The mcp module (ADR-0049) is a separate module that requires a
+      # released root version, with no replace directive, so this tests
+      # exactly what its consumers get.
+      - name: MCP module
+        working-directory: mcp
+        run: |
+          set -euo pipefail
+          go mod tidy -diff || { echo "::error::mcp/go.mod is out of sync; run 'make tidy' and commit"; exit 1; }
+          golangci-lint run
+          go build ./...
+          govulncheck ./...
+          go test -cover ./...
+
+      # The same module against the root at this commit, through a temporary
+      # (never committed) go.work, so a root change that breaks mcp fails
+      # this PR rather than the next mcp release.
+      - name: MCP module against root HEAD
+        run: |
+          set -euo pipefail
+          go work init . ./mcp
+          (cd mcp && go build ./... && go test ./...)
+          rm -f go.work go.work.sum

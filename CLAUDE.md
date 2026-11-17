@@ -34,6 +34,7 @@ llms/providers/      provider-neutral constructor New(id, Options) (ADR-0048); l
 llms/providers/{anthropic,anthropic/anthropicvertex,openai,google,ollama,openaicompat}/   one package per provider, imported only if used (vllm = deprecated alias of openaicompat)
 llms/testllm/        deterministic FakeChatClient / FakeEmbeddingClient
 bucket/              generic per-key token/concurrency limiter (no llms import); bucket/memory, bucket/postgres (ADR-0025)
+mcp/                 SEPARATE v0 module (own go.mod, tags mcp/vX.Y.Z, outside the v1 contract): mcpclient (MCP server tools as toolloop.Tool), internal/convert (shared translation); mcpserver planned (#181) (ADR-0049)
 ```
 
 Load-bearing structural decisions:
@@ -47,7 +48,7 @@ Load-bearing structural decisions:
 
 ## Build/test commands
 
-`make build` (lint + `go build ./...`), `make test` (unit tests w/ coverage; single: `make test TESTARGS='-run TestName ./llms/...'`), `make lint` (gofmt + golangci-lint — the lint gate is strict: `fieldalignment`, `gocritic rangeValCopy`, `revive` unused-params, modernize `min`/`max`/`WaitGroup.Go` all fail CI). Live provider tests: `make test-integration` (OS-aware; see README). CI requires `build-lint-test` + `CodeQL` (aggregate only — see memory).
+`make build` (lint + `go build ./...`), `make test` (unit tests w/ coverage, root + `mcp/`; single: `make test TESTARGS='-run TestName ./llms/...'`, root only; `make test-mcp` for the mcp module), `make lint` (gofmt + golangci-lint — the lint gate is strict: `fieldalignment`, `gocritic rangeValCopy`, `revive` unused-params, modernize `min`/`max`/`WaitGroup.Go` all fail CI). Live provider tests: `make test-integration` (OS-aware; see README). CI requires `build-lint-test` + `CodeQL` (aggregate only — see memory).
 
 ## Versioning
 

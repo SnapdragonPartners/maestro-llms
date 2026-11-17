@@ -26,7 +26,9 @@ const objectSchema = `{"type":"object"}`
 // map[string]any). The only rewrite is inlining local references
 // ("#/$defs/...", "#/definitions/..." or any other "#/" pointer into the
 // schema) and removing the top-level "$defs" and "definitions"; Gemini
-// doesn't accept references. A recursive, remote, anchor or dangling
+// doesn't accept references. Only subschemas are searched (see kindOf):
+// literal data such as a default, const, enum or examples value is kept as
+// it is, even if it contains a "$ref" member. A recursive, remote, anchor or dangling
 // reference is an error, and so is a top-level type other than "object". A
 // nil or JSON null schema becomes {"type":"object"}.
 func Schema(in any) (json.RawMessage, error) {
@@ -48,16 +50,16 @@ func Schema(in any) (json.RawMessage, error) {
 	if t, ok := root["type"].(string); !ok || t != "object" {
 		return nil, fmt.Errorf(`input schema type must be "object", got %v`, root["type"])
 	}
-	if !hasRef(root) {
-		// Nothing to inline: send the schema unchanged.
-		return raw, nil
-	}
 	r := resolver{root: root}
-	out, err := r.expand(root, nil)
+	out, err := r.schema(root, nil)
 	if err != nil {
 		return nil, err
 	}
-	m, _ := out.(map[string]any) // expand returns the same kind it was given
+	if r.inlined == 0 {
+		// Nothing to inline: send the schema unchanged.
+		return raw, nil
+	}
+	m, _ := out.(map[string]any) // schema returns a map for a map
 	delete(m, "$defs")
 	delete(m, "definitions")
 	b, err := json.Marshal(m)
@@ -84,71 +86,136 @@ func toRaw(in any) (json.RawMessage, error) {
 	}
 }
 
-// hasRef reports whether any object in v has a string "$ref".
-func hasRef(v any) bool {
-	switch n := v.(type) {
-	case map[string]any:
-		if _, ok := n["$ref"].(string); ok {
-			return true
-		}
-		for _, c := range n {
-			if hasRef(c) {
-				return true
-			}
-		}
-	case []any:
-		for _, c := range n {
-			if hasRef(c) {
-				return true
-			}
-		}
+// keywordKind says what a schema keyword's value holds, so that only
+// subschemas are searched for references. Every other keyword is literal
+// data (default, const, enum, examples, unknown keywords, and $defs /
+// definitions, which are reached only through a reference) and is kept as
+// it is, even when it contains an object with a "$ref" member.
+type keywordKind int
+
+const (
+	kindLiteral      keywordKind = iota
+	kindSchema                   // one schema
+	kindSchemaMap                // name -> schema
+	kindSchemaList               // array of schemas
+	kindSchemaOrList             // a schema, or an array of schemas (items before 2020-12)
+	kindDependencies             // name -> schema, or name -> array of property names (draft 7)
+)
+
+func kindOf(keyword string) keywordKind {
+	switch keyword {
+	case "additionalItems", "additionalProperties", "contains", "contentSchema",
+		"else", "if", "not", "propertyNames", "then",
+		"unevaluatedItems", "unevaluatedProperties":
+		return kindSchema
+	case "dependentSchemas", "patternProperties", "properties":
+		return kindSchemaMap
+	case "allOf", "anyOf", "oneOf", "prefixItems":
+		return kindSchemaList
+	case "items":
+		return kindSchemaOrList
+	case "dependencies":
+		return kindDependencies
+	default:
+		return kindLiteral
 	}
-	return false
 }
 
 type resolver struct {
-	root  map[string]any
-	nodes int
+	root    map[string]any
+	nodes   int
+	inlined int
 }
 
-// expand returns a copy of v with every reference replaced by a copy of its
-// target. stack holds the pointers being expanded, outermost first, to
-// detect recursion.
-func (r *resolver) expand(v any, stack []string) (any, error) {
+// schema returns a copy of the schema v with every reference in a subschema
+// replaced by a copy of its expanded target. stack holds the pointers being
+// expanded, outermost first, to detect recursion. A non-object schema (true
+// or false) is returned as it is.
+func (r *resolver) schema(v any, stack []string) (any, error) {
 	r.nodes++
 	if r.nodes > maxNodes {
 		return nil, fmt.Errorf("input schema: expands to more than %d nodes", maxNodes)
 	}
-	switch n := v.(type) {
-	case map[string]any:
-		if ref, ok := n["$ref"].(string); ok {
-			return r.inline(n, ref, stack)
-		}
-		out := make(map[string]any, len(n))
-		for k, c := range n {
-			e, err := r.expand(c, stack)
-			if err != nil {
-				return nil, err
-			}
-			out[k] = e
-		}
-		return out, nil
-	case []any:
-		out := make([]any, len(n))
-		for i, c := range n {
-			e, err := r.expand(c, stack)
-			if err != nil {
-				return nil, err
-			}
-			out[i] = e
-		}
-		return out, nil
-	default:
+	n, ok := v.(map[string]any)
+	if !ok {
 		return v, nil
+	}
+	if ref, ok := n["$ref"].(string); ok {
+		return r.inline(n, ref, stack)
+	}
+	out := make(map[string]any, len(n))
+	for k, c := range n {
+		e, err := r.keyword(k, c, stack)
+		if err != nil {
+			return nil, err
+		}
+		out[k] = e
+	}
+	return out, nil
+}
+
+// keyword expands the subschemas in the value c of keyword k and returns
+// literal values unchanged. A value of the wrong shape for its keyword is
+// kept as it is; the provider decides what to make of it.
+func (r *resolver) keyword(k string, c any, stack []string) (any, error) {
+	switch kindOf(k) {
+	case kindSchema:
+		return r.schema(c, stack)
+	case kindSchemaMap:
+		return r.schemaMap(c, stack, false)
+	case kindDependencies:
+		return r.schemaMap(c, stack, true)
+	case kindSchemaList:
+		return r.schemaList(c, stack)
+	case kindSchemaOrList:
+		if _, isList := c.([]any); isList {
+			return r.schemaList(c, stack)
+		}
+		return r.schema(c, stack)
+	default:
+		return c, nil
 	}
 }
 
-// inline replaces the object n, which has "$ref": ref, with its expanded
+// schemaMap expands each value of a name -> schema object. With
+// keepArrays, an array value (a draft-7 property dependency) is literal.
+func (r *resolver) schemaMap(c any, stack []string, keepArrays bool) (any, error) {
+	m, ok := c.(map[string]any)
+	if !ok {
+		return c, nil
+	}
+	out := make(map[string]any, len(m))
+	for name, v := range m {
+		if _, isList := v.([]any); keepArrays && isList {
+			out[name] = v
+			continue
+		}
+		e, err := r.schema(v, stack)
+		if err != nil {
+			return nil, err
+		}
+		out[name] = e
+	}
+	return out, nil
+}
+
+func (r *resolver) schemaList(c any, stack []string) (any, error) {
+	l, ok := c.([]any)
+	if !ok {
+		return c, nil
+	}
+	out := make([]any, len(l))
+	for i, v := range l {
+		e, err := r.schema(v, stack)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = e
+	}
+	return out, nil
+}
+
+// inline replaces the schema n, which has "$ref": ref, with its expanded
 // target. Keywords beside "$ref" (allowed since JSON Schema 2019-09, for
 // example a description) are kept and win over the target's.
 func (r *resolver) inline(n map[string]any, ref string, stack []string) (any, error) {
@@ -170,7 +237,8 @@ func (r *resolver) inline(n map[string]any, ref string, stack []string) (any, er
 	if err != nil {
 		return nil, err
 	}
-	expanded, err := r.expand(target, append(stack, ref))
+	r.inlined++
+	expanded, err := r.schema(target, append(stack, ref))
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +253,7 @@ func (r *resolver) inline(n map[string]any, ref string, stack []string) (any, er
 		if k == "$ref" {
 			continue
 		}
-		e, err := r.expand(c, stack)
+		e, err := r.keyword(k, c, stack)
 		if err != nil {
 			return nil, err
 		}

@@ -92,7 +92,9 @@ func embedded(b *mcp.EmbeddedResource) (llms.ContentPart, error) {
 	if res == nil {
 		return llms.ContentPart{}, errors.New("embedded resource has no contents")
 	}
-	if len(res.Blob) == 0 {
+	if res.Blob == nil {
+		// No blob member: a text resource. An explicit empty blob ("blob": "",
+		// decoded as a non-nil empty slice) is a malformed blob, below.
 		return llms.Text(res.Text), nil
 	}
 	if err := checkMedia(res.MIMEType, res.Blob); err != nil {

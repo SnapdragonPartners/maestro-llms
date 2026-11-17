@@ -124,6 +124,88 @@ func TestSchemaInlining(t *testing.T) {
 	}
 }
 
+// TestSchemaLiteralRefs: a "$ref" member inside literal data is data, not a
+// reference. With no real reference the schema is unchanged; beside a real
+// one, the literal survives the rewrite as it was.
+func TestSchemaLiteralRefs(t *testing.T) {
+	literals := []string{
+		`{"type":"object","properties":{"a":{"type":"object","default":{"$ref":"literal-id"}}}}`,
+		`{"type":"object","properties":{"a":{"const":{"$ref":"#/nowhere"}}}}`,
+		`{"type":"object","properties":{"a":{"enum":[{"$ref":"x"},{"$ref":"#"}]}}}`,
+		`{"type":"object","properties":{"a":{"type":"object","examples":[{"$ref":"https://e.test/s"}]}}}`,
+		`{"type":"object","x-vendor":{"$ref":"#/missing"}}`,
+		`{"type":"object","default":{"$ref":"#/properties"}}`,
+	}
+	for _, in := range literals {
+		got, err := Schema(json.RawMessage(in))
+		if err != nil {
+			t.Errorf("Schema(%s): %v", in, err)
+			continue
+		}
+		if string(got) != in {
+			t.Errorf("literal $ref rewritten:\n got %s\nwant %s", got, in)
+		}
+	}
+
+	in := `{"type":"object","properties":{
+		"a":{"$ref":"#/$defs/A"},
+		"b":{"type":"object","default":{"$ref":"#/$defs/A"},"const":{"$ref":"#/$defs/A"}}},
+		"$defs":{"A":{"type":"string","examples":[{"$ref":"#/$defs/A"}]}}}`
+	got, err := Schema(json.RawMessage(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	equalJSON(t, got, `{"type":"object","properties":{
+		"a":{"type":"string","examples":[{"$ref":"#/$defs/A"}]},
+		"b":{"type":"object","default":{"$ref":"#/$defs/A"},"const":{"$ref":"#/$defs/A"}}}}`)
+}
+
+// TestSchemaSubschemaKeywords: references are inlined under every keyword
+// that holds subschemas.
+func TestSchemaSubschemaKeywords(t *testing.T) {
+	const s = `{"type":"string"}`
+	cases := []struct{ name, in, want string }{
+		{"additionalProperties", `{"additionalProperties":@R}`, `{"additionalProperties":@S}`},
+		{"items schema", `{"properties":{"l":{"type":"array","items":@R}}}`, `{"properties":{"l":{"type":"array","items":@S}}}`},
+		{"items list", `{"properties":{"l":{"type":"array","items":[@R,@R]}}}`, `{"properties":{"l":{"type":"array","items":[@S,@S]}}}`},
+		{"prefixItems", `{"properties":{"l":{"prefixItems":[@R]}}}`, `{"properties":{"l":{"prefixItems":[@S]}}}`},
+		{"anyOf", `{"properties":{"u":{"anyOf":[@R,{"type":"null"}]}}}`, `{"properties":{"u":{"anyOf":[@S,{"type":"null"}]}}}`},
+		{"allOf oneOf not", `{"allOf":[@R],"oneOf":[@R],"not":@R}`, `{"allOf":[@S],"oneOf":[@S],"not":@S}`},
+		{"if then else", `{"if":@R,"then":@R,"else":@R}`, `{"if":@S,"then":@S,"else":@S}`},
+		{"patternProperties", `{"patternProperties":{"^x":@R}}`, `{"patternProperties":{"^x":@S}}`},
+		{"dependentSchemas", `{"dependentSchemas":{"a":@R}}`, `{"dependentSchemas":{"a":@S}}`},
+		{"dependencies", `{"dependencies":{"a":@R,"b":["c"]}}`, `{"dependencies":{"a":@S,"b":["c"]}}`},
+		{"contains propertyNames", `{"propertyNames":@R,"properties":{"l":{"contains":@R}}}`, `{"propertyNames":@S,"properties":{"l":{"contains":@S}}}`},
+		{"unevaluated", `{"unevaluatedProperties":@R,"unevaluatedItems":@R}`, `{"unevaluatedProperties":@S,"unevaluatedItems":@S}`},
+		{"boolean schemas kept", `{"additionalProperties":false,"properties":{"a":true,"b":@R}}`, `{"additionalProperties":false,"properties":{"a":true,"b":@S}}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			wrap := func(body string) string {
+				return `{"type":"object",` + body[1:len(body)-1] + `,"$defs":{"S":` + s + `}}`
+			}
+			in := wrap(strings.ReplaceAll(c.in, "@R", `{"$ref":"#/$defs/S"}`))
+			want := `{"type":"object",` + strings.ReplaceAll(c.want, "@S", s)[1:]
+			got, err := Schema(json.RawMessage(in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			equalJSON(t, got, want)
+		})
+	}
+}
+
+func TestSchemaUnusedRecursiveDefOK(t *testing.T) {
+	// Definitions are reached only through references, so an unused
+	// recursive one is not an error.
+	in := `{"type":"object","properties":{"a":{"$ref":"#/$defs/A"}},"$defs":{"A":{"type":"string"},"Node":{"type":"object","properties":{"next":{"$ref":"#/$defs/Node"}}}}}`
+	got, err := Schema(json.RawMessage(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	equalJSON(t, got, `{"type":"object","properties":{"a":{"type":"string"}}}`)
+}
+
 func TestSchemaErrors(t *testing.T) {
 	cases := []struct {
 		name, in, want string

@@ -173,6 +173,39 @@ func TestResultMalformed(t *testing.T) {
 	}
 }
 
+// TestResultWireBlob decodes results from the wire, where an explicit empty
+// blob and an absent one differ.
+func TestResultWireBlob(t *testing.T) {
+	decode := func(t *testing.T, js string) *mcp.CallToolResult {
+		t.Helper()
+		var r mcp.CallToolResult
+		if err := json.Unmarshal([]byte(js), &r); err != nil {
+			t.Fatalf("decode %s: %v", js, err)
+		}
+		return &r
+	}
+	t.Run("explicit empty blob is malformed", func(t *testing.T) {
+		r := decode(t, `{"content":[{"type":"resource","resource":{"uri":"file:///r.pdf","mimeType":"application/pdf","blob":""}}]}`)
+		if _, err := Result(r); err == nil || !strings.Contains(err.Error(), "no data") {
+			t.Fatalf("Result error = %v, want a malformed-blob error", err)
+		}
+	})
+	t.Run("absent blob is a text resource", func(t *testing.T) {
+		r := decode(t, `{"content":[{"type":"resource","resource":{"uri":"file:///a.txt","text":"body"}}]}`)
+		got, err := Result(r)
+		if err != nil || got.Content != "body" {
+			t.Fatalf("Result = %+v, %v", got, err)
+		}
+	})
+	t.Run("blob document from the wire", func(t *testing.T) {
+		r := decode(t, `{"content":[{"type":"resource","resource":{"uri":"file:///r.pdf","mimeType":"application/pdf","blob":"JVBERg=="}}]}`)
+		got, err := Result(r)
+		if err != nil || len(got.Parts) != 1 || got.Parts[0].Type != llms.ContentDocument || string(got.Parts[0].Media.Data) != "%PDF" {
+			t.Fatalf("Result = %+v, %v", got, err)
+		}
+	})
+}
+
 // assertLoopAccepts runs r through toolloop.Run, so a result the loop's
 // ToolResult check (ADR-0041) rejects fails here rather than in a consumer.
 func assertLoopAccepts(t *testing.T, r toolloop.ToolResult) {

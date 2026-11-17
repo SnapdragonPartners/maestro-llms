@@ -184,7 +184,13 @@ without an error. A recursive reference, a remote or anchor reference, or a
 pointer that doesn't resolve is an `InvalidToolError`, and so is a schema
 whose expansion nests references more than 32 deep or grows past 100,000
 nodes (references that fan out grow exponentially without being
-recursive). Keywords beside a `$ref` are kept and win over the target's. A
+recursive). Only subschemas are searched: the keywords that hold schemas
+(`properties`, `items`, `anyOf`, `additionalProperties` and the rest of
+JSON Schema's applicators). A `"$ref"` member inside literal data
+(`default`, `const`, `enum`, `examples`, unknown keywords) is data and is
+kept as it is. Definitions are reached only through references, so an
+unused recursive definition is not an error. Keywords beside a `$ref` are
+kept and win over the target's. A
 schema with no references is sent unchanged. A tool with no schema gets
 `{"type":"object"}`. A top-level `type` other than `"object"` is an
 `InvalidToolError` (MCP requires an object schema, and so does every
@@ -240,8 +246,8 @@ A result with no content blocks and a `structuredContent` value gets that
 value as JSON text. When there are content blocks, `structuredContent` is
 not added (MCP asks servers to include a text form of it already).
 
-A block the SDK can't decode, an image or blob with no data or no MIME
-type, or an image block whose MIME type isn't `image/*`, makes the result
+A block the SDK can't decode, an image or blob with no data (including an
+explicit empty `"blob": ""`) or no MIME type, or an image block whose MIME type isn't `image/*`, makes the result
 malformed: an `Execute` error (§4.6), because it is a
 server bug the app should see rather than something the model can fix.
 

@@ -177,7 +177,8 @@ its `title`, then `annotations.title`.
 
 The schema is sent as JSON, normalized in one way only: local references
 (a `$ref` that is a `#/` JSON pointer into the schema, normally
-`#/$defs/...` or `#/definitions/...`) are inlined and the top-level
+`#/$defs/...` or `#/definitions/...`; the fragment is percent-decoded
+before it is read as a pointer, RFC 6901 §6) are inlined and the top-level
 definitions removed, because Gemini doesn't accept them and the Google
 adapter's schema conversion would otherwise drop the referenced structure
 without an error. A recursive reference, a remote or anchor reference, or a

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -128,9 +129,9 @@ type resolver struct {
 }
 
 // schema returns a copy of the schema v with every reference in a subschema
-// replaced by a copy of its expanded target. stack holds the pointers being
-// expanded, outermost first, to detect recursion. A non-object schema (true
-// or false) is returned as it is.
+// replaced by a copy of its expanded target. stack holds the decoded
+// pointers being expanded, outermost first, to detect recursion. A
+// non-object schema (true or false) is returned as it is.
 func (r *resolver) schema(v any, stack []string) (any, error) {
 	r.nodes++
 	if r.nodes > maxNodes {
@@ -225,20 +226,28 @@ func (r *resolver) inline(n map[string]any, ref string, stack []string) (any, er
 		}
 		return nil, fmt.Errorf("input schema: unsupported reference %q (only local JSON pointers like \"#/$defs/name\" are inlined)", ref)
 	}
+	// The fragment is a URI fragment, so it is percent-decoded and then read
+	// as a JSON pointer (RFC 6901 §6): "#/$defs/a%20b" names "a b". The
+	// decoded pointer is what recursion is checked on, so two spellings of
+	// one target are one reference.
+	pointer, err := url.PathUnescape(ref[1:])
+	if err != nil {
+		return nil, fmt.Errorf("input schema: reference %q is not a valid URI fragment: %w", ref, err)
+	}
 	for _, s := range stack {
-		if s == ref {
+		if s == pointer {
 			return nil, fmt.Errorf("input schema: recursive reference %q", ref)
 		}
 	}
 	if len(stack) >= maxRefDepth {
 		return nil, fmt.Errorf("input schema: references nested deeper than %d", maxRefDepth)
 	}
-	target, err := r.lookup(ref)
+	target, err := r.lookup(ref, pointer)
 	if err != nil {
 		return nil, err
 	}
 	r.inlined++
-	expanded, err := r.schema(target, append(stack, ref))
+	expanded, err := r.schema(target, append(stack, pointer))
 	if err != nil {
 		return nil, err
 	}
@@ -262,10 +271,14 @@ func (r *resolver) inline(n map[string]any, ref string, stack []string) (any, er
 	return m, nil
 }
 
-// lookup resolves a "#/..." JSON pointer (RFC 6901) against the root.
-func (r *resolver) lookup(ref string) (any, error) {
+// lookup resolves the decoded JSON pointer of reference ref (used in
+// errors) against the root.
+func (r *resolver) lookup(ref, pointer string) (any, error) {
+	if !strings.HasPrefix(pointer, "/") {
+		return nil, fmt.Errorf("input schema: reference %q does not resolve", ref)
+	}
 	var cur any = r.root
-	for _, tok := range strings.Split(ref[2:], "/") {
+	for _, tok := range strings.Split(pointer[1:], "/") {
 		tok = strings.ReplaceAll(strings.ReplaceAll(tok, "~1", "/"), "~0", "~")
 		switch c := cur.(type) {
 		case map[string]any:

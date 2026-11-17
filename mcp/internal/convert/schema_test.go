@@ -98,6 +98,16 @@ func TestSchemaInlining(t *testing.T) {
 			want: `{"type":"object","properties":{"a":{"type":"boolean"}}}`,
 		},
 		{
+			name: "percent-encoded fragment",
+			in:   `{"type":"object","properties":{"a":{"$ref":"#/$defs/a%20b"},"b":{"$ref":"#/$defs/caf%C3%A9"},"c":{"$ref":"#/$defs/p%25"}},"$defs":{"a b":{"type":"string"},"café":{"type":"number"},"p%":{"type":"boolean"}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"number"},"c":{"type":"boolean"}}}`,
+		},
+		{
+			name: "percent-encoded tilde escape",
+			in:   `{"type":"object","properties":{"a":{"$ref":"#/$defs/x%7E1y"}},"$defs":{"x/y":{"type":"string"}}}`,
+			want: `{"type":"object","properties":{"a":{"type":"string"}}}`,
+		},
+		{
 			name: "pointer into properties",
 			in:   `{"type":"object","properties":{"a":{"type":"string"},"b":{"$ref":"#/properties/a"}}}`,
 			want: `{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"string"}}}`,
@@ -212,10 +222,13 @@ func TestSchemaErrors(t *testing.T) {
 	}{
 		{"recursive", `{"type":"object","properties":{"n":{"$ref":"#/$defs/Node"}},"$defs":{"Node":{"type":"object","properties":{"next":{"$ref":"#/$defs/Node"}}}}}`, "recursive"},
 		{"mutually recursive", `{"type":"object","properties":{"a":{"$ref":"#/$defs/A"}},"$defs":{"A":{"type":"object","properties":{"b":{"$ref":"#/$defs/B"}}},"B":{"type":"object","properties":{"a":{"$ref":"#/$defs/A"}}}}}`, "recursive"},
+		{"recursive through two spellings", `{"type":"object","properties":{"n":{"$ref":"#/$defs/N"}},"$defs":{"N":{"type":"object","properties":{"next":{"$ref":"#/$defs/%4E"}}}}}`, "recursive"},
 		{"root reference", `{"type":"object","properties":{"self":{"$ref":"#"}}}`, "recursive"},
 		{"remote", `{"type":"object","properties":{"a":{"$ref":"https://example.com/s.json"}}}`, "unsupported reference"},
 		{"relative file", `{"type":"object","properties":{"a":{"$ref":"other.json#/A"}}}`, "unsupported reference"},
 		{"anchor", `{"type":"object","properties":{"a":{"$ref":"#thing"}}}`, "unsupported reference"},
+		{"bad percent escape", `{"type":"object","properties":{"a":{"$ref":"#/$defs/a%zz"}},"$defs":{"a%zz":{"type":"string"}}}`, "not a valid URI fragment"},
+		{"percent-encoded name not decoded twice", `{"type":"object","properties":{"a":{"$ref":"#/$defs/a%2520b"}},"$defs":{"a b":{"type":"string"}}}`, "does not resolve"},
 		{"dangling", `{"type":"object","properties":{"a":{"$ref":"#/$defs/Missing"}}}`, "does not resolve"},
 		{"bad index", `{"type":"object","properties":{"a":{"anyOf":[{"type":"string"}]},"b":{"$ref":"#/properties/a/anyOf/3"}}}`, "does not resolve"},
 		{"sibling on non-object target", `{"type":"object","properties":{"a":{"$ref":"#/$defs/T","description":"x"}},"$defs":{"T":true}}`, "not an object"},

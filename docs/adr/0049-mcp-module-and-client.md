@@ -222,10 +222,13 @@ The result's content blocks map in order:
 | resource link | a text line naming the link (`name`, `uri`, MIME type if given) |
 | audio | not supported: the whole result is `IsError: true` with a message saying the tool returned audio |
 
-If every block maps to text, the result is `Content`: the texts joined with
-a newline. If any block is an image or document, the result is `Parts` in
-block order (ADR-0041), and the loop's and adapters' existing media checks
-apply. A provider that doesn't take that media in tool results rejects it
+Empty text is dropped first: a text block or embedded text resource whose
+text is empty contributes nothing. MCP permits empty text, but ADR-0041
+rejects an empty text part, so keeping it would turn a successful call into
+`OutcomeToolError`. Then, if every remaining block is text, the result is
+`Content`: the texts joined with a newline (`""` if none remain). If any
+block is an image or document, the result is `Parts` in block order
+(ADR-0041), and the loop's and adapters' existing media checks apply. A provider that doesn't take that media in tool results rejects it
 pre-call as today (ADR-0041); the client doesn't predict per provider.
 
 A result with no content blocks and a `structuredContent` value gets that
@@ -280,7 +283,9 @@ Unit tests, no network and no keys:
   mapping, duplicates after mapping), schema normalization (inlining
   nested and repeated refs, `definitions`, recursion, remote and dangling
   refs, missing schema, non-object type) and every row of §4.7, plus
-  `structuredContent` and malformed blocks.
+  `structuredContent`, malformed blocks, and empty text (alone, between
+  texts, and beside an image or document, where the built `Parts` must
+  pass toolloop's `ToolResult.Parts` check).
 - `mcpclient` end to end over the go-sdk's in-memory transport against a
   real go-sdk server: listing across pages, `Filter`, `Name`, the
   fail-closed error, a call's arguments and result, `isError`, a JSON-RPC

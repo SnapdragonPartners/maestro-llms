@@ -13,8 +13,9 @@ logic, no pricing tables, and the minimum of third-party dependencies.
 
 It is shared by several consumers with deliberately different needs — Maestro
 (desktop/local), Morris (cloud, multi-instance), maestro-cms (content
-service, budget-aware chunking), and maestro-agents (agent foundation
-library) — so nothing in the package may import
+service, budget-aware chunking), maestro-agents (agent foundation
+library), and Dot (a ChatGPT plugin, through the separate `mcp` module's
+`mcpserver`) — so nothing in the package may import
 product-specific assumptions from any of them. When a feature needs app
 context, the answer is an interface the app implements, not a concrete
 implementation here.

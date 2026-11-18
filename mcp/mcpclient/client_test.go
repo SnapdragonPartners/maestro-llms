@@ -413,8 +413,8 @@ func TestZeroTransport(t *testing.T) {
 
 // rawServer answers initialize and tools/list over the in-memory transport
 // with hand-written JSON, for listings the go-sdk's own server refuses to
-// produce. pages are tools/list results; page i's nextCursor is "c<i+1>".
-func rawServer(ctx context.Context, t *testing.T, pages ...string) Transport {
+// produce. list returns the tools/list result for a cursor.
+func rawServer(ctx context.Context, t *testing.T, list func(cursor string) string) Transport {
 	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
@@ -450,14 +450,7 @@ func rawServer(ctx context.Context, t *testing.T, pages ...string) Transport {
 			case "initialize":
 				result = `{"protocolVersion":"` + req.Params.ProtocolVersion + `","capabilities":{"tools":{}},"serverInfo":{"name":"raw","version":"v0"}}`
 			case "tools/list":
-				i := 0
-				if req.Params.Cursor != "" {
-					i, _ = strconv.Atoi(strings.TrimPrefix(req.Params.Cursor, "c"))
-				}
-				result = pages[i]
-				if i+1 < len(pages) {
-					result = result[:len(result)-1] + fmt.Sprintf(`,"nextCursor":"c%d"}`, i+1)
-				}
+				result = list(req.Params.Cursor)
 			default:
 				result = `{}`
 			}
@@ -470,6 +463,22 @@ func rawServer(ctx context.Context, t *testing.T, pages ...string) Transport {
 	return Transport{t: ct}
 }
 
+// pagesOf serves pages as tools/list results; page i's nextCursor is
+// "c<i+1>".
+func pagesOf(pages ...string) func(string) string {
+	return func(cursor string) string {
+		i := 0
+		if cursor != "" {
+			i, _ = strconv.Atoi(strings.TrimPrefix(cursor, "c"))
+		}
+		result := pages[i]
+		if i+1 < len(pages) {
+			result = result[:len(result)-1] + fmt.Sprintf(`,"nextCursor":"c%d"}`, i+1)
+		}
+		return result
+	}
+}
+
 const badHeaderTool = `{"name":"bad_header","inputSchema":{"type":"object","properties":{"a":{"type":"object","x-mcp-header":"X-A"}}}}`
 
 // TestSDKExcludedToolFailsClosed: the go-sdk drops a tool with an invalid
@@ -479,7 +488,7 @@ func TestSDKExcludedToolFailsClosed(t *testing.T) {
 	ctx := context.Background()
 	open := func(t *testing.T, opts Options, pages ...string) *Session {
 		t.Helper()
-		sess, err := Connect(ctx, rawServer(ctx, t, pages...), opts)
+		sess, err := Connect(ctx, rawServer(ctx, t, pagesOf(pages...)), opts)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -628,4 +637,55 @@ func toolResultText(msgs []llms.Message) string {
 		}
 	}
 	return ""
+}
+
+// TestConcurrentListingsStayAssociated: concurrent Tools calls that get
+// different listings for the same cursor each judge their own listing. The
+// server alternates between a listing with an SDK-excluded tool (must fail)
+// and one without it (must succeed).
+func TestConcurrentListingsStayAssociated(t *testing.T) {
+	ctx := context.Background()
+	var served sync.Mutex
+	withBad, withoutBad := 0, 0
+	list := func(string) string {
+		served.Lock()
+		defer served.Unlock()
+		if (withBad+withoutBad)%2 == 0 {
+			withBad++
+			return `{"tools":[{"name":"good","inputSchema":{"type":"object"}},` + badHeaderTool + `]}`
+		}
+		withoutBad++
+		return `{"tools":[{"name":"good","inputSchema":{"type":"object"}}]}`
+	}
+	sess, err := Connect(ctx, rawServer(ctx, t, list), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	const calls = 40
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	ok, failed := 0, 0
+	for range calls {
+		wg.Go(func() {
+			_, err := sess.Tools(ctx)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failed++
+			} else {
+				ok++
+			}
+		})
+	}
+	wg.Wait()
+	served.Lock()
+	defer served.Unlock()
+	if withBad+withoutBad != calls {
+		t.Fatalf("server answered %d listings for %d calls", withBad+withoutBad, calls)
+	}
+	if ok != withoutBad || failed != withBad {
+		t.Errorf("%d succeeded and %d failed; want %d and %d (one per listing served)", ok, failed, withoutBad, withBad)
+	}
 }

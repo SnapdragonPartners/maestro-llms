@@ -72,12 +72,17 @@ type Options struct {
 
 // Session is one connection to an MCP server. It is safe for concurrent use:
 // tools from one session may run at once, and Tools may be called while they
-// do. The caller owns Close.
+// do (concurrent Tools calls run one at a time). The caller owns Close.
 type Session struct {
-	cs     *mcp.ClientSession
-	pages  map[string]rawPage // tools/list pages as the server sent them, by cursor
-	opts   Options
-	mu     sync.Mutex // guards pages
+	cs    *mcp.ClientSession
+	pages map[string]rawPage // tools/list pages as the server sent them, by cursor
+	opts  Options
+	mu    sync.Mutex // guards pages
+	// listMu serializes Tools calls, so each page's recorded raw listing is
+	// the one ListTools just returned (or, for a page the go-sdk serves from
+	// its cache, the fetch that filled that cache entry). Tool calls don't
+	// take it.
+	listMu sync.Mutex
 	closed atomic.Bool
 }
 
@@ -213,6 +218,8 @@ func (s *Session) Tools(ctx context.Context) ([]toolloop.Tool, error) {
 		servers []string // server name of tools[i]
 		errs    []error
 	)
+	s.listMu.Lock()
+	defer s.listMu.Unlock()
 	keep := func(name string) bool { return s.opts.Filter == nil || s.opts.Filter(name) }
 	seen := map[string]bool{}
 	for cursor := ""; ; {

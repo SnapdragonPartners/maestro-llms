@@ -142,7 +142,9 @@ type InvalidToolError struct {
 A `Session` is one connection. `toolloop.Tool` has no lifecycle, so the
 tools close over their session, and the caller owns `Close` (maestro-agents'
 registry will). A `Session` is safe for concurrent use: tools from one
-session may run at once, and `Tools` may be called again while they do. A
+session may run at once, and `Tools` may be called again while they do.
+Concurrent `Tools` calls on one session run one at a time, so each listing
+is checked against the raw page it came from (§4.5). A
 server that dies (process exit, dropped connection) makes later calls fail;
 reconnecting is the caller's job (the go-sdk's Streamable transport retries
 a dropped stream itself first).

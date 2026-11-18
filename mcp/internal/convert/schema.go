@@ -18,7 +18,8 @@ import (
 const maxRefDepth = 32
 
 // maxNodes and maxBytes bound what inlining copies into a schema: the JSON
-// values, and the bytes of their strings (object keys included), of every
+// values, and the bytes of their strings and numbers (object keys
+// included), of every
 // copy of a reference's target, nested copies included. References that fan
 // out (a target referenced twice, whose own target is referenced twice, ...)
 // grow exponentially without being recursive, and a large literal (an enum,

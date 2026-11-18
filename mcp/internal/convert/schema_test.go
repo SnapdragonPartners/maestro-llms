@@ -407,6 +407,15 @@ func TestSchemaNumbersExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The rewrite must have happened, or the numbers below would be the
+	// input's own bytes: no reference or definitions left, and the enum
+	// copied into property a.
+	if strings.Contains(string(got), "$ref") || strings.Contains(string(got), "$defs") {
+		t.Fatalf("schema was not inlined: %.200s", got)
+	}
+	if !strings.Contains(string(got), `"a":{"enum":[12345678901234567890,0.10000000000000000001,1e400]}`) {
+		t.Errorf("enum not inlined into a, exactly: %.300s", got)
+	}
 	for _, want := range []string{"12345678901234567890", "0.10000000000000000001", "1e400", "9007199254740993", huge} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("number %.30s… not kept exactly in %.200s", want, got)

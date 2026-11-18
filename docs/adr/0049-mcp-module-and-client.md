@@ -205,9 +205,11 @@ references is sent unchanged.
   nested schema resource (a subschema with its own `$id`, against which the
   reference would resolve), rather than resolving it against the wrong
   document; and an expansion that nests references more than 32 deep or
-  copies more than 100,000 JSON values or 4 MiB of string bytes.
+  copies more than 100,000 JSON values or 4 MiB of string and number
+  bytes (object keys included).
 - **What the size bound counts.** Only what inlining copies: every copy of
-  a reference's target, nested copies included, with any literal it holds
+  a reference's target, nested copies included, with any literal it holds,
+  counting each value once and the bytes of its strings, numbers and keys
   (references that fan out grow exponentially without being recursive, and
   a large enum is copied once per reference). The schema as the server
   wrote it isn't counted. The count is checked as copies are made, so

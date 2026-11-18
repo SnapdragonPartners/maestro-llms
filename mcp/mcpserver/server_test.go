@@ -461,8 +461,11 @@ func TestHugeArgumentsOverHTTP(t *testing.T) {
 	if v := cs.InitializeResult().ProtocolVersion; v != "2026-07-28" {
 		t.Skipf("negotiated %s; the limit is specific to 2026-07-28", v)
 	}
-	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "rec", Arguments: raw(`{"n":1e1000}`)}); err == nil {
-		t.Fatal("go-sdk now accepts out-of-range numbers over HTTP; update ADR-0050 §3 and the README")
+	// The client's own error, not the server's ("failed to extract name"),
+	// so this pins the client half specifically.
+	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "rec", Arguments: raw(`{"n":1e1000}`)}); err == nil ||
+		!strings.Contains(err.Error(), "missing required Mcp-Name header") {
+		t.Fatalf("go-sdk client behavior changed for out-of-range numbers under 2026-07-28 (err %v); update ADR-0050 §3 and the README", err)
 	}
 	// Integers beyond 2^53 reach Execute exactly as sent, not re-encoded.
 	const big = `{"n":12345678901234567890}`

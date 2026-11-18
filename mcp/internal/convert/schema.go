@@ -1,9 +1,11 @@
 package convert
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -36,8 +38,12 @@ const objectSchema = `{"type":"object"}`
 // in is anything that marshals to JSON (the go-sdk hands clients a
 // map[string]any). The only rewrite is inlining local references
 // ("#/$defs/...", "#/definitions/..." or any other "#/" pointer into the
-// schema) and removing the top-level "$defs" and "definitions"; Gemini
-// doesn't accept references. Only subschemas are searched (see kindOf):
+// schema), after which "$defs" and "definitions" are dropped at every depth,
+// since nothing references them any more; Gemini doesn't accept references.
+// A schema with no references is returned unchanged. Numbers are kept as
+// written (decoded as json.Number), so JSON input round-trips exactly; a
+// map from the go-sdk already holds float64 values. Only subschemas are
+// searched (see kindOf):
 // literal data such as a default, const, enum or examples value is kept as
 // it is, even if it contains a "$ref" member. A recursive, remote, anchor or
 // dangling reference is an error, and so is a reference inside a nested
@@ -53,9 +59,9 @@ func Schema(in any) (json.RawMessage, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return json.RawMessage(objectSchema), nil
 	}
-	var doc any
-	if uerr := json.Unmarshal(raw, &doc); uerr != nil {
-		return nil, fmt.Errorf("input schema is not valid JSON: %w", uerr)
+	doc, err := decodeJSON(raw)
+	if err != nil {
+		return nil, err
 	}
 	root, ok := doc.(map[string]any)
 	if !ok {
@@ -78,6 +84,22 @@ func Schema(in any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("input schema: %w", err)
 	}
 	return b, nil
+}
+
+// decodeJSON decodes one JSON value, keeping numbers as json.Number so that
+// a re-marshaled number is byte-for-byte what was written (no float64
+// rounding past 2^53, and no failure for a number out of float64 range).
+func decodeJSON(raw []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var doc any
+	if err := dec.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("input schema is not valid JSON: %w", err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("input schema is not valid JSON: data after the top-level value")
+	}
+	return doc, nil
 }
 
 func toRaw(in any) (json.RawMessage, error) {
@@ -197,6 +219,8 @@ func (r *resolver) literal(v any) error {
 		}
 		return nil
 	case string:
+		return r.charge(len(n))
+	case json.Number:
 		return r.charge(len(n))
 	default:
 		return r.charge(0)

@@ -237,6 +237,7 @@ func TestSchemaErrors(t *testing.T) {
 		{"type array", `{"type":["object","null"]}`, `must be "object"`},
 		{"not an object", `[1,2]`, "not a JSON object"},
 		{"invalid JSON", `{"type":`, "not valid JSON"},
+		{"trailing data", `{"type":"object"} {}`, "data after"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -395,4 +396,20 @@ func TestSchemaNestedDefinitionsDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	equalJSON(t, got, `{"type":"object","properties":{"$defs":{"type":"string"}}}`)
+}
+
+// TestSchemaNumbersExact: numbers in an inlined schema are re-emitted as
+// written, not rounded through float64 or rejected when out of its range.
+func TestSchemaNumbersExact(t *testing.T) {
+	huge := "1" + strings.Repeat("0", 400)
+	in := `{"type":"object","properties":{"a":{"$ref":"#/$defs/A"},"b":{"type":"integer","maximum":9007199254740993,"multipleOf":` + huge + `}},"$defs":{"A":{"enum":[12345678901234567890,0.10000000000000000001,1e400]}}}`
+	got, err := Schema(json.RawMessage(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"12345678901234567890", "0.10000000000000000001", "1e400", "9007199254740993", huge} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("number %.30s… not kept exactly in %.200s", want, got)
+		}
+	}
 }

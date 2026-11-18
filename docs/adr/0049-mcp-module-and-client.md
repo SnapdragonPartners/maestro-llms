@@ -214,6 +214,15 @@ references is sent unchanged.
   expansion stops at the bound, and the result doesn't depend on the order
   in which object keys are walked.
 
+- **Numbers.** The schema is decoded with numbers kept as written
+  (`json.Number`), so an inlined schema re-emits every number exactly as
+  it arrived. On the client this can't undo what the go-sdk has already
+  done: it decodes each listed `inputSchema` into a `map[string]any` of
+  float64 values, so integers beyond 2^53 are rounded before `mcpclient`
+  sees them, and a number outside float64's range fails the SDK's
+  decoding of the whole listing. That's an upstream limit; JSON input
+  (the server direction, ADR-0050) round-trips exactly.
+
 A tool with no schema gets `{"type":"object"}`. A top-level `type` other
 than `"object"` is an `InvalidToolError` (MCP requires an object schema,
 and so does every adapter). Nothing else is rewritten; any other keyword a

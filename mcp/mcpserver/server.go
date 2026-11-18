@@ -13,6 +13,7 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -229,21 +230,18 @@ func (s *Server) handler(t *toolloop.Tool) mcp.ToolHandler {
 // arguments returns a call's arguments as a JSON object: {} when absent or
 // null, an error when they are anything but an object.
 func arguments(raw json.RawMessage) (json.RawMessage, error) {
-	if len(raw) == 0 {
+	trimmed := bytes.TrimSpace(raw)
+	switch {
+	case len(trimmed) == 0 || string(trimmed) == "null":
 		return json.RawMessage("{}"), nil
-	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil, fmt.Errorf("arguments are not valid JSON: %w", err)
-	}
-	switch v.(type) {
-	case nil:
-		return json.RawMessage("{}"), nil
-	case map[string]any:
-		return raw, nil
-	default:
+	case !json.Valid(trimmed):
+		return nil, errors.New("arguments are not valid JSON")
+	case trimmed[0] != '{':
 		return nil, errors.New("arguments must be a JSON object")
 	}
+	// Checked by shape only: decoding would turn numbers into float64 and
+	// reject valid ones beyond its range (1e1000). Execute gets the bytes.
+	return raw, nil
 }
 
 // failed reports err to OnError and returns the fixed-message JSON-RPC error

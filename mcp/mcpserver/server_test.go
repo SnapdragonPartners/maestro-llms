@@ -250,6 +250,7 @@ func TestCallArguments(t *testing.T) {
 		{nil, "{}"},
 		{map[string]any{"x": 1}, `{"x":1}`},
 		{raw(`{"n":12345678901234567890}`), `{"n":12345678901234567890}`},
+		{raw(`{"n":1e1000,"m":-1e-1000}`), `{"n":1e1000,"m":-1e-1000}`},
 	} {
 		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "a", Arguments: c.args})
 		if err != nil {
@@ -368,4 +369,27 @@ func TestStdio(t *testing.T) {
 		}
 	}
 	t.Fatal("no whoami tool")
+}
+
+func TestArgumentsShape(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                 "{}",
+		" null ":           "{}",
+		`{"n":1e1000}`:     `{"n":1e1000}`,
+		" {\"a\":[1,{}]} ": " {\"a\":[1,{}]} ",
+		"[1]":              "error",
+		`"x"`:              "error",
+		"1e1000":           "error",
+		"true":             "error",
+		"{":                "error",
+		`{"a":1} {}`:       "error",
+	} {
+		got, err := arguments(raw(in))
+		switch {
+		case want == "error" && err == nil:
+			t.Errorf("arguments(%q) = %s, want an error", in, got)
+		case want != "error" && (err != nil || string(got) != want):
+			t.Errorf("arguments(%q) = %s, %v; want %s", in, got, err, want)
+		}
+	}
 }

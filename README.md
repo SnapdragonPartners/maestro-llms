@@ -13,8 +13,9 @@ logic, no pricing tables, and the minimum of third-party dependencies.
 
 It is shared by several consumers with deliberately different needs — Maestro
 (desktop/local), Morris (cloud, multi-instance), maestro-cms (content
-service, budget-aware chunking), and maestro-agents (agent foundation
-library) — so nothing in the package may import
+service, budget-aware chunking), maestro-agents (agent foundation
+library), and Dot (a ChatGPT plugin, through the separate `mcp` module's
+`mcpserver`) — so nothing in the package may import
 product-specific assumptions from any of them. When a feature needs app
 context, the answer is an interface the app implements, not a concrete
 implementation here.
@@ -1704,5 +1705,17 @@ matching `providers.ErrUnsupportedOption` and an unknown ID one matching
 Connect root without `/v1`; importing `llms/providers` links every provider
 SDK — see [ADR-0048](docs/adr/0048-provider-neutral-constructor.md); purely
 additive, nothing changes for existing callers).
+
+The separate `mcp` module has its own v0 line, tagged `mcp/vX.Y.Z` and outside
+the stability contract: **mcp/v0.1.0** (`mcpclient` runs an MCP server's
+tools in the tool loop as `toolloop.Tool` values over stdio or Streamable
+HTTP, with names checked never rewritten, local `$ref`s inlined and a
+fail-closed listing — see [ADR-0049](docs/adr/0049-mcp-module-and-client.md);
+`mcpserver` serves `toolloop.Tool` values to MCP clients such as ChatGPT over
+stateless Streamable HTTP or stdio, optionally as an OAuth resource server
+with package-enforced audience, expiry and scope checks and RFC 9728
+metadata, and the authorization server left to the app — see
+[ADR-0050](docs/adr/0050-mcp-server.md); built on go-sdk v1.8.0 and
+requires the root module at v1.7.0; nothing changes for root-module users).
 
 MIT — see [`LICENSE`](LICENSE).

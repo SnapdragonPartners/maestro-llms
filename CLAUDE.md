@@ -34,7 +34,7 @@ llms/providers/      provider-neutral constructor New(id, Options) (ADR-0048); l
 llms/providers/{anthropic,anthropic/anthropicvertex,openai,google,ollama,openaicompat}/   one package per provider, imported only if used (vllm = deprecated alias of openaicompat)
 llms/testllm/        deterministic FakeChatClient / FakeEmbeddingClient
 bucket/              generic per-key token/concurrency limiter (no llms import); bucket/memory, bucket/postgres (ADR-0025)
-mcp/                 SEPARATE v0 module (own go.mod, tags mcp/vX.Y.Z, outside the v1 contract): mcpclient (MCP server tools as toolloop.Tool), internal/convert (shared translation); mcpserver planned (#181) (ADR-0049)
+mcp/                 SEPARATE v0 module (own go.mod, tags mcp/vX.Y.Z, outside the v1 contract): mcpclient (MCP server tools as toolloop.Tool), mcpserver (toolloop.Tool served over Streamable HTTP/stdio, OAuth resource server, ADR-0050), internal/convert (shared translation, both directions) (ADR-0049)
 ```
 
 Load-bearing structural decisions:

@@ -1,6 +1,6 @@
 # 0050. `mcpserver`: serve `toolloop.Tool` over MCP, as an OAuth resource server
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-17
 
 ## Context
@@ -182,15 +182,16 @@ on a schema it dislikes. A tool is invalid when:
   `mcpclient` reports as invalid, ADR-0049 §4.5. Rejecting them here keeps
   the two halves consistent.)
 
-The schema is otherwise served byte for byte (`json.RawMessage`), with its
-numbers as written. `$ref`s are not inlined here: that is the client's
+The schema is otherwise served as given (`json.RawMessage`; the JSON
+encoder may compact whitespace), with its numbers as written. `$ref`s are not inlined here: that is the client's
 normalization for its providers (ADR-0049 §4.4), and an MCP client may
 handle references itself. The description is `Definition.Description`.
 `Annotations` maps to the tool's MCP annotations (`readOnlyHint`,
 `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`). ChatGPT,
 for example, uses `readOnlyHint` to decide whether to ask the user before a
 call. A name in `Annotations` that isn't a tool is an error. The tool list
-is fixed at `New`: there is no `list_changed`.
+is fixed at `New`: there is no `list_changed`. Tools are listed in name
+order (the go-sdk sorts them).
 
 `get_toolbox` gets no special treatment. Toolboxes (ADR-0047) are a loop
 concept; the server serves a flat list, and an app that wants a subset
@@ -208,9 +209,13 @@ the schema; `Execute` validates them (ADR-0011).
 
 `Execute` runs under the go-sdk's handler context for the call, which the
 SDK cancels on `notifications/cancelled` and when the session closes. The
-SDK detaches that context from the HTTP request's, so whether a dropped
-connection cancels an in-flight call is the SDK's behavior; a test pins
-what it does for v1.8.0, and the package adds no cancellation of its own.
+SDK detaches that context from the HTTP request's, so a dropped HTTP
+connection does **not** cancel an in-flight call in v1.8.0: `Execute` runs
+on to completion and its result is discarded. A test pins this. The
+package adds no cancellation of its own (it would need a side channel from
+the HTTP request to the detached handler), so a tool that can run long
+bounds its own work, for example with `context.WithTimeout`. Propagating
+the request's cancellation can be added later without an API change.
 With `Auth`, the context carries the verified `TokenInfo`, which reaches
 the handler through the SDK's per-request `RequestExtra`, not through
 context values that the detached context may or may not keep.
@@ -415,7 +420,7 @@ Unit tests, no network and no keys:
   token in the client's `http.Client`: listing, a call's arguments and
   each result kind, `IsError`, non-object arguments, an `Execute` error
   (fixed message; `OnError` gets the original), client cancellation
-  reaching `Execute`'s context, and what a dropped connection does (§3).
+  reaching `Execute`'s context, and that a dropped connection doesn't (§3).
 - stdio: the test binary re-executes itself as a `ServeStdio` server (the
   `TestMain` helper pattern from `mcpclient`), driven by `mcpclient.Command`.
 

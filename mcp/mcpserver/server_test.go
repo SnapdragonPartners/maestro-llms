@@ -1,0 +1,371 @@
+package mcpserver
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/SnapdragonPartners/maestro-llms/llms"
+	"github.com/SnapdragonPartners/maestro-llms/llms/toolloop"
+	"github.com/SnapdragonPartners/maestro-llms/mcp/mcpclient"
+)
+
+// stdioServerEnv makes the test binary act as a stdio server (see TestMain).
+const stdioServerEnv = "MCPSERVER_TEST_STDIO_SERVER"
+
+func TestMain(m *testing.M) {
+	if os.Getenv(stdioServerEnv) == "1" {
+		s, err := New(testTools(), Options{})
+		if err == nil {
+			err = s.ServeStdio(context.Background())
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdio server:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+var png = []byte("\x89PNG\r\n\x1a\nx")
+
+func raw(s string) json.RawMessage { return json.RawMessage(s) }
+
+func tool(name, schema string, exec func(context.Context, llms.ToolCall) (toolloop.ToolResult, error)) toolloop.Tool {
+	return toolloop.Tool{
+		Definition: llms.ToolDefinition{Name: name, Description: name + " tool", InputSchema: raw(schema)},
+		Execute:    exec,
+	}
+}
+
+func text(s string) (toolloop.ToolResult, error) { return toolloop.ToolResult{Content: s}, nil }
+
+// testTools covers each result kind and failure.
+func testTools() []toolloop.Tool {
+	return []toolloop.Tool{
+		tool("echo", `{"type":"object","properties":{"msg":{"type":"string"}}}`, func(_ context.Context, c llms.ToolCall) (toolloop.ToolResult, error) {
+			return text("args: " + string(c.Parameters))
+		}),
+		tool("whoami", "", func(ctx context.Context, _ llms.ToolCall) (toolloop.ToolResult, error) {
+			info, ok := TokenInfoFromContext(ctx)
+			if !ok {
+				return text("anonymous")
+			}
+			return text(info.Subject + " " + strings.Join(info.Scopes, ",") + " " + fmt.Sprint(info.Extra["tenant"]))
+		}),
+		tool("media", "", func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
+			return toolloop.ToolResult{Parts: []llms.ContentPart{
+				llms.Text("look"), llms.Image("image/png", png), llms.Document("application/pdf", []byte("%PDF")),
+			}}, nil
+		}),
+		tool("refuse", "", func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
+			return toolloop.ToolResult{Content: "not allowed", IsError: true}, nil
+		}),
+		tool("boom", "", func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
+			return toolloop.ToolResult{}, errors.New("db at 10.0.0.7:5432 refused")
+		}),
+		tool("bad_result", "", func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
+			return toolloop.ToolResult{Parts: []llms.ContentPart{llms.Document("image/png", png)}}, nil
+		}),
+	}
+}
+
+func TestNewInvalidTools(t *testing.T) {
+	ok := func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) { return text("") }
+	cases := map[string]struct {
+		tools []toolloop.Tool
+		bad   []string // tools reported, in order
+		want  string
+	}{
+		"bad name":         {[]toolloop.Tool{tool("1st", "", ok)}, []string{"1st"}, "does not match"},
+		"long name":        {[]toolloop.Tool{tool(strings.Repeat("a", 65), "", ok)}, []string{strings.Repeat("a", 65)}, "does not match"},
+		"dotted name":      {[]toolloop.Tool{tool("a.b", "", ok)}, []string{"a.b"}, "does not match"},
+		"duplicate":        {[]toolloop.Tool{tool("a", "", ok), tool("a", "", ok)}, []string{"a", "a"}, "shared by 2"},
+		"nil execute":      {[]toolloop.Tool{tool("a", "", nil)}, []string{"a"}, "nil Execute"},
+		"array schema":     {[]toolloop.Tool{tool("a", `{"type":"array"}`, ok)}, []string{"a"}, `"array"`},
+		"untyped schema":   {[]toolloop.Tool{tool("a", `{"properties":{}}`, ok)}, []string{"a"}, `no top-level "type"`},
+		"not json":         {[]toolloop.Tool{tool("a", `{`, ok)}, []string{"a"}, "not valid JSON"},
+		"sdk: huge number": {[]toolloop.Tool{tool("a", `{"type":"object","default":1e1000}`, ok)}, []string{"a"}, "MCP SDK rejects"},
+		"sdk: header on object": {[]toolloop.Tool{tool("a",
+			`{"type":"object","properties":{"o":{"type":"object","x-mcp-header":"X-O"}}}`, ok)}, []string{"a"}, "MCP SDK rejects"},
+		"sdk: empty header": {[]toolloop.Tool{tool("a",
+			`{"type":"object","properties":{"s":{"type":"string","x-mcp-header":""}}}`, ok)}, []string{"a"}, "MCP SDK rejects"},
+		"sdk: invalid header name": {[]toolloop.Tool{tool("a",
+			`{"type":"object","properties":{"s":{"type":"string","x-mcp-header":"bad header"}}}`, ok)}, []string{"a"}, "MCP SDK rejects"},
+		"sdk: duplicate header": {[]toolloop.Tool{tool("a",
+			`{"type":"object","properties":{"s":{"type":"string","x-mcp-header":"X-A"},"t":{"type":"string","x-mcp-header":"x-a"}}}`, ok)}, []string{"a"}, "MCP SDK rejects"},
+		"several": {[]toolloop.Tool{tool("good", "", ok), tool("9", "", ok), tool("b", "", nil)}, []string{"9", "b"}, ""},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, err := New(c.tools, Options{})
+			if err == nil {
+				t.Fatalf("New = %v, nil; want an error", s)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error %q doesn't contain %q", err, c.want)
+			}
+			var got []string
+			joined, ok := errors.Unwrap(err).(interface{ Unwrap() []error })
+			if !ok {
+				t.Fatalf("%v doesn't wrap a joined error", err)
+			}
+			for _, e := range joined.Unwrap() {
+				var ite *InvalidToolError
+				if !errors.As(e, &ite) {
+					t.Fatalf("%v is not an InvalidToolError", e)
+				}
+				got = append(got, ite.Tool)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(c.bad) {
+				t.Fatalf("reported tools %v, want %v", got, c.bad)
+			}
+		})
+	}
+}
+
+func TestNewValid(t *testing.T) {
+	// A valid header annotation passes the SDK probe.
+	tools := append(testTools(), tool("hdr",
+		`{"type":"object","properties":{"s":{"type":"string","x-mcp-header":"X-Region"}}}`,
+		func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) { return text("") }))
+	if _, err := New(tools, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(nil, Options{}); err != nil {
+		t.Fatalf("New with no tools: %v", err)
+	}
+}
+
+func TestAnnotationsUnknownTool(t *testing.T) {
+	_, err := New(testTools(), Options{Annotations: map[string]Annotations{"nope": {}}})
+	if err == nil || !strings.Contains(err.Error(), `"nope"`) {
+		t.Fatalf("New error = %v, want one naming nope", err)
+	}
+}
+
+// sdkSession runs s over the in-memory transport and connects a go-sdk
+// client, for checks below mcpclient's level.
+func sdkSession(t *testing.T, s *Server) *mcp.ClientSession {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	st, ct := mcp.NewInMemoryTransports()
+	done := make(chan struct{})
+	go func() { defer close(done); _ = s.serve(ctx, st) }()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "v0"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close(); cancel(); <-done })
+	return cs
+}
+
+func TestListing(t *testing.T) {
+	yes, no := true, false
+	s, err := New(testTools(), Options{
+		Name: "dot", Version: "v9", Instructions: "be nice",
+		Annotations: map[string]Annotations{
+			"echo":   {ReadOnly: &yes, Idempotent: &yes, Destructive: &no, OpenWorld: &no, Title: "Echo"},
+			"whoami": {},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := sdkSession(t, s)
+	init := cs.InitializeResult()
+	if init.ServerInfo.Name != "dot" || init.ServerInfo.Version != "v9" || init.Instructions != "be nice" {
+		t.Fatalf("initialize = %+v", init)
+	}
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]*mcp.Tool{}
+	var order []string
+	for _, tl := range res.Tools {
+		by[tl.Name] = tl
+		order = append(order, tl.Name)
+	}
+	if got := strings.Join(order, ","); got != "bad_result,boom,echo,media,refuse,whoami" {
+		t.Fatalf("order %s; the go-sdk lists tools by name", got)
+	}
+	echo := by["echo"]
+	if echo.Description != "echo tool" {
+		t.Fatalf("description %q", echo.Description)
+	}
+	b, _ := json.Marshal(echo.InputSchema)
+	if string(b) != `{"properties":{"msg":{"type":"string"}},"type":"object"}` {
+		t.Fatalf("schema %s", b)
+	}
+	a := echo.Annotations
+	if a == nil || !a.ReadOnlyHint || !a.IdempotentHint || *a.DestructiveHint || *a.OpenWorldHint || a.Title != "Echo" {
+		t.Fatalf("annotations %+v", a)
+	}
+	if w := by["whoami"]; w.Annotations == nil || w.Annotations.ReadOnlyHint || w.Annotations.DestructiveHint != nil {
+		t.Fatalf("zero annotations %+v", w.Annotations)
+	}
+	if by["media"].Annotations != nil {
+		t.Fatal("unannotated tool has annotations")
+	}
+	b, _ = json.Marshal(by["whoami"].InputSchema)
+	if string(b) != `{"type":"object"}` {
+		t.Fatalf("empty schema served as %s", b)
+	}
+}
+
+func TestCallArguments(t *testing.T) {
+	var calls int
+	var mu sync.Mutex
+	tools := []toolloop.Tool{tool("a", "", func(_ context.Context, c llms.ToolCall) (toolloop.ToolResult, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		if c.ID != "" || c.Name != "a" {
+			return toolloop.ToolResult{}, fmt.Errorf("call %+v", c)
+		}
+		return text(string(c.Parameters))
+	})}
+	s, err := New(tools, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := sdkSession(t, s)
+	ctx := context.Background()
+	for _, c := range []struct {
+		args any
+		want string
+	}{
+		{nil, "{}"},
+		{map[string]any{"x": 1}, `{"x":1}`},
+		{raw(`{"n":12345678901234567890}`), `{"n":12345678901234567890}`},
+	} {
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "a", Arguments: c.args})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tc, _ := res.Content[0].(*mcp.TextContent)
+		if got := tc.Text; got != c.want {
+			t.Errorf("args %v reached Execute as %s, want %s", c.args, got, c.want)
+		}
+	}
+	mu.Lock()
+	before := calls
+	mu.Unlock()
+	for _, args := range []any{[]int{1}, "str", 3} {
+		_, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "a", Arguments: args})
+		var je *jsonrpc.Error
+		if !errors.As(err, &je) || je.Code != jsonrpc.CodeInvalidParams {
+			t.Errorf("args %v: error %v, want invalid params", args, err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != before {
+		t.Fatal("Execute was called with non-object arguments")
+	}
+}
+
+func TestExecuteErrors(t *testing.T) {
+	var mu sync.Mutex
+	var reported []error
+	s, err := New(testTools(), Options{OnError: func(_ context.Context, err error) {
+		mu.Lock()
+		reported = append(reported, err)
+		mu.Unlock()
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := sdkSession(t, s)
+	for _, c := range []struct{ tool, original string }{
+		{"boom", "10.0.0.7"},
+		{"bad_result", "document part has image media type"},
+	} {
+		_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: c.tool})
+		var je *jsonrpc.Error
+		if !errors.As(err, &je) || je.Code != jsonrpc.CodeInternalError || je.Message != fmt.Sprintf("tool %q failed", c.tool) {
+			t.Fatalf("%s: error %#v, want the fixed internal error", c.tool, err)
+		}
+		if strings.Contains(err.Error(), c.original) {
+			t.Fatalf("%s: client saw the original error: %v", c.tool, err)
+		}
+		mu.Lock()
+		last := reported[len(reported)-1]
+		mu.Unlock()
+		if !strings.Contains(last.Error(), c.original) {
+			t.Fatalf("%s: OnError got %v", c.tool, last)
+		}
+	}
+}
+
+func TestCancellationReachesExecute(t *testing.T) {
+	started, canceled := make(chan struct{}), make(chan struct{})
+	s, err := New([]toolloop.Tool{tool("slow", "", func(ctx context.Context, _ llms.ToolCall) (toolloop.ToolResult, error) {
+		close(started)
+		select {
+		case <-ctx.Done():
+			close(canceled)
+			return toolloop.ToolResult{}, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return text("late")
+		}
+	})}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := sdkSession(t, s)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-started; cancel() }()
+	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "slow"}); err == nil {
+		t.Fatal("canceled call succeeded")
+	}
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Execute's context was not canceled")
+	}
+}
+
+func TestStdio(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-test.run=^$")
+	cmd.Env = append(os.Environ(), stdioServerEnv+"=1")
+	ctx := context.Background()
+	sess, err := mcpclient.Connect(ctx, mcpclient.Command(cmd), mcpclient.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sess.Close() }()
+	tools, err := sess.Tools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != len(testTools()) {
+		t.Fatalf("got %d tools", len(tools))
+	}
+	for _, tl := range tools {
+		if tl.Definition.Name == "whoami" {
+			res, err := tl.Execute(ctx, llms.ToolCall{Name: "whoami"})
+			if err != nil || res.Content != "anonymous" {
+				t.Fatalf("whoami over stdio = %+v, %v", res, err)
+			}
+			return
+		}
+	}
+	t.Fatal("no whoami tool")
+}

@@ -84,6 +84,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   loop as `toolloop.Tool` values. The MCP SDK stays out of the core module's
   dependency graph. See
   [ADR-0049](docs/adr/0049-mcp-module-and-client.md).
+- **MCP server** (`mcp/mcpserver`, same module): serve your `toolloop.Tool`
+  values to ChatGPT and other MCP clients over Streamable HTTP (optionally
+  as an OAuth resource server) or stdio. See
+  [ADR-0050](docs/adr/0050-mcp-server.md).
 - **Model listing & upgrade detection** (`llms.ModelLister`): optional
   capability for surfacing "newer model available in your family"
   prompts to users — applications decide whether to upgrade, the
@@ -671,6 +675,67 @@ For a remote server use `mcpclient.StreamableHTTP(url, httpClient)`; the
   `Parts`. Audio comes back as an `IsError` result.
 - **Snapshot.** `Tools` lists the tools once; call it again to pick up
   changes. A `Session` is safe for concurrent use, and you own `Close`.
+
+### MCP server (`mcp/mcpserver`)
+
+`mcpserver` serves `toolloop.Tool` values (the same ones `toolloop.Run`
+takes) to MCP clients such as ChatGPT. It is in the same v0 module as
+`mcpclient` and shares its translation rules, so whatever it serves
+`mcpclient` can consume ([ADR-0050](docs/adr/0050-mcp-server.md)).
+
+```go
+import "github.com/SnapdragonPartners/maestro-llms/mcp/mcpserver"
+
+yes := true
+srv, err := mcpserver.New(tools, mcpserver.Options{
+	Annotations: map[string]mcpserver.Annotations{
+		"vault_get": {ReadOnly: &yes}, // clients may skip the confirmation prompt
+	},
+	Auth: &mcpserver.Auth{
+		Resource:             "https://dot.example.com/mcp",
+		AuthorizationServers: []string{"https://auth.example.com"},
+		Scopes:               []string{"vault"},
+		Verifier:             verifyJWT, // yours: signature, issuer, expiry
+	},
+	OnError: func(ctx context.Context, err error) { log.Print(err) },
+})
+if err != nil { /* one *mcpserver.InvalidToolError per bad tool */ }
+
+mux := http.NewServeMux()
+mux.Handle("/mcp", srv.Handler())
+mux.Handle(srv.MetadataPath(), srv.MetadataHandler())
+```
+
+Inside a tool, `mcpserver.TokenInfoFromContext(ctx)` returns the verified
+user (`Subject`, `Scopes`, `Extra`). For a local server, `srv.ServeStdio(ctx)`
+serves over stdin/stdout without auth.
+
+- **Resource server only.** The package checks tokens and publishes
+  protected resource metadata (RFC 9728). Your `TokenVerifier` checks the
+  token's signature, issuer and expiry; the package then requires a
+  non-empty `Subject`, an `Audience` containing `Resource` (or
+  `Auth.Audience`), an unexpired `Expiration` and every scope in `Scopes`,
+  and answers with the RFC 6750 challenges MCP clients expect. A
+  verifier's error text never reaches the client.
+- **The authorization server is yours** (or your identity provider's). For
+  ChatGPT it needs RFC 8414 or OIDC discovery, PKCE with `S256`, client
+  registration by Client ID Metadata Documents and/or dynamic client
+  registration, the RFC 9207 `iss` parameter in authorization responses,
+  and the RFC 8707 `resource` copied into the token's `aud`.
+- **Errors.** `IsError` results reach the model. An `Execute` error, or a
+  `ToolResult` the loop would reject, reaches the client as a fixed
+  `tool "<name>" failed` JSON-RPC error; the real error goes to `OnError`.
+- **Validation.** `New` rejects, with one `InvalidToolError` each, a name
+  that breaks the portable rule, a duplicate name, a nil `Execute`, and a
+  schema that isn't an object schema the MCP SDK accepts. Schemas are
+  served as given; `$ref`s are left for the client.
+- **Transport.** Stateless Streamable HTTP with JSON responses, so it runs
+  on several instances behind a load balancer. CORS, rate limits and
+  ChatGPT's optional mTLS are your middleware around `Handler`. A client
+  that disconnects doesn't cancel a running tool, so a tool that can run
+  long should bound its own work.
+- **Not yet:** per-tool scopes (ChatGPT's `securitySchemes`), resources,
+  prompts, `structuredContent`.
 
 ### Model listing & upgrade detection
 

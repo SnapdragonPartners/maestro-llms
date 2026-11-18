@@ -341,3 +341,58 @@ func TestSchemaNestedResources(t *testing.T) {
 		equalJSON(t, got, `{"type":"object","properties":{"a":{"$id":"https://x.test/r","type":"string"}}}`)
 	})
 }
+
+// TestSchemaUnusedLargeDefsStable: a large definitions block that nothing
+// references isn't counted against the bound (only what inlining copies
+// is), so a schema with one small reference is accepted on every run,
+// whatever order map keys are walked in.
+func TestSchemaUnusedLargeDefsStable(t *testing.T) {
+	enum := make([]string, 150)
+	for i := range enum {
+		enum[i] = fmt.Sprintf("%q", strings.Repeat("x", 30_000)) // 4.5 MB in all, over maxBytes
+	}
+	in := `{"type":"object","properties":{"a":{"$ref":"#/$defs/Small"}},"$defs":{"Small":{"type":"string"},"Huge":{"enum":[` + strings.Join(enum, ",") + `]}}}`
+	// The root's keys are walked in random order; before the fix, $defs
+	// walked ahead of properties failed about half the time.
+	for range 8 {
+		got, err := Schema(json.RawMessage(in))
+		if err != nil {
+			t.Fatalf("Schema: %v", err)
+		}
+		equalJSON(t, got, `{"type":"object","properties":{"a":{"type":"string"}}}`)
+	}
+	// Referenced, the same literal is a copy and trips the bound.
+	ref := strings.Replace(in, `#/$defs/Small`, `#/$defs/Huge`, 1)
+	if _, err := Schema(json.RawMessage(ref)); err == nil || !strings.Contains(err.Error(), "bytes") {
+		t.Fatalf("Schema error = %v, want the size bound", err)
+	}
+}
+
+// TestSchemaNestedDefinitionsDropped: once anything is inlined, no
+// definition is used any more, so nested $defs / definitions are dropped
+// too and no reference inside them reaches the provider.
+func TestSchemaNestedDefinitionsDropped(t *testing.T) {
+	in := `{"type":"object","properties":{
+		"a":{"$ref":"#/$defs/A"},
+		"b":{"type":"object","$defs":{"Z":{"$ref":"#/$defs/A"},"Loop":{"properties":{"n":{"$ref":"#/properties/b/$defs/Loop"}}}},"properties":{"z":{"$ref":"#/properties/b/$defs/Z"}}},
+		"c":{"type":"object","definitions":{"Y":{"type":"integer"}},"properties":{"y":{"$ref":"#/properties/c/definitions/Y"}}}},
+		"$defs":{"A":{"type":"string"}}}`
+	got, err := Schema(json.RawMessage(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	equalJSON(t, got, `{"type":"object","properties":{
+		"a":{"type":"string"},
+		"b":{"type":"object","properties":{"z":{"type":"string"}}},
+		"c":{"type":"object","properties":{"y":{"type":"integer"}}}}}`)
+	if strings.Contains(string(got), "$ref") || strings.Contains(string(got), "$defs") || strings.Contains(string(got), "definitions") {
+		t.Errorf("reference or definitions left in %s", got)
+	}
+
+	// A property literally named "$defs" is a property, not definitions.
+	got, err = Schema(json.RawMessage(`{"type":"object","properties":{"$defs":{"$ref":"#/$defs/A"}},"$defs":{"A":{"type":"string"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	equalJSON(t, got, `{"type":"object","properties":{"$defs":{"type":"string"}}}`)
+}

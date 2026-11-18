@@ -15,13 +15,15 @@ import (
 // schema is rejected rather than expanded without limit.
 const maxRefDepth = 32
 
-// maxNodes and maxBytes bound the size of an expanded schema: its JSON
-// values, and the bytes of its strings (object keys included). References
-// that fan out (a target referenced twice, whose own target is referenced
-// twice, ...) grow exponentially without being recursive, and a large
-// literal (an enum, a default) is copied once per reference. The bounds
-// apply only once something is inlined; a schema with no references is
-// sent unchanged whatever its size.
+// maxNodes and maxBytes bound what inlining copies into a schema: the JSON
+// values, and the bytes of their strings (object keys included), of every
+// copy of a reference's target, nested copies included. References that fan
+// out (a target referenced twice, whose own target is referenced twice, ...)
+// grow exponentially without being recursive, and a large literal (an enum,
+// a default) is copied once per reference. The schema as the server wrote it
+// is not counted: one with no references is sent unchanged whatever its
+// size. The count is checked as copies are made, so expansion stops at the
+// bound, and doesn't depend on the order of map keys.
 const (
 	maxNodes = 100_000
 	maxBytes = 4 << 20
@@ -71,10 +73,7 @@ func Schema(in any) (json.RawMessage, error) {
 		// Nothing to inline: send the schema unchanged.
 		return raw, nil
 	}
-	m, _ := out.(map[string]any) // schema returns a map for a map
-	delete(m, "$defs")
-	delete(m, "definitions")
-	b, err := json.Marshal(m)
+	b, err := json.Marshal(out)
 	if err != nil {
 		return nil, fmt.Errorf("input schema: %w", err)
 	}
@@ -100,9 +99,14 @@ func toRaw(in any) (json.RawMessage, error) {
 
 // keywordKind says what a schema keyword's value holds, so that only
 // subschemas are searched for references. Every other keyword is literal
-// data (default, const, enum, examples, unknown keywords, and $defs /
-// definitions, which are reached only through a reference) and is kept as
-// it is, even when it contains an object with a "$ref" member.
+// data (default, const, enum, examples, unknown keywords) and is kept as it
+// is, even when it contains an object with a "$ref" member.
+//
+// Definitions ($defs, definitions) are reached only through references.
+// The expanded schema is used only when something was inlined, and then
+// every reference has been resolved against the original document, so no
+// definition is used any more: they are dropped wherever they appear, not
+// walked, and not counted.
 type keywordKind int
 
 const (
@@ -112,6 +116,7 @@ const (
 	kindSchemaList               // array of schemas
 	kindSchemaOrList             // a schema, or an array of schemas (items before 2020-12)
 	kindDependencies             // name -> schema, or name -> array of property names (draft 7)
+	kindDefinitions              // $defs / definitions: dropped from the expansion
 )
 
 func kindOf(keyword string) keywordKind {
@@ -128,6 +133,8 @@ func kindOf(keyword string) keywordKind {
 		return kindSchemaOrList
 	case "dependencies":
 		return kindDependencies
+	case "$defs", "definitions":
+		return kindDefinitions
 	default:
 		return kindLiteral
 	}
@@ -138,18 +145,30 @@ type resolver struct {
 	nodes      int
 	bytes      int
 	inlined    int
+	copying    int // depth of reference expansions around the current value
 	inResource int // depth of nested "$id" resources around the current schema
 }
 
-// charge adds one JSON value of n string bytes to the expansion's size and
-// fails once the size is over a bound, after the first inlining.
+// charge counts one JSON value with n string bytes when it is part of a copy
+// made by inlining, and fails once the copies are over a bound.
 func (r *resolver) charge(n int) error {
+	if r.copying == 0 {
+		return nil
+	}
 	r.nodes++
 	r.bytes += n
-	if r.inlined > 0 && (r.nodes > maxNodes || r.bytes > maxBytes) {
-		return fmt.Errorf("input schema: expands to more than %d values or %d bytes", maxNodes, maxBytes)
+	if r.nodes > maxNodes || r.bytes > maxBytes {
+		return fmt.Errorf("input schema: inlining copies more than %d values or %d bytes", maxNodes, maxBytes)
 	}
 	return nil
+}
+
+// key counts an object key's bytes when it is part of a copy; the next
+// charge checks the bound.
+func (r *resolver) key(k string) {
+	if r.copying > 0 {
+		r.bytes += len(k)
+	}
 }
 
 // literal charges every value in the literal v, which is copied into the
@@ -161,7 +180,7 @@ func (r *resolver) literal(v any) error {
 			return err
 		}
 		for k, c := range n {
-			r.bytes += len(k)
+			r.key(k)
 			if err := r.literal(c); err != nil {
 				return err
 			}
@@ -208,7 +227,10 @@ func (r *resolver) schema(v any, stack []string) (any, error) {
 	}
 	out := make(map[string]any, len(n))
 	for k, c := range n {
-		r.bytes += len(k)
+		if kindOf(k) == kindDefinitions {
+			continue
+		}
+		r.key(k)
 		e, err := r.keyword(k, c, stack)
 		if err != nil {
 			return nil, err
@@ -258,7 +280,7 @@ func (r *resolver) schemaMap(c any, stack []string, keepArrays bool) (any, error
 	}
 	out := make(map[string]any, len(m))
 	for name, v := range m {
-		r.bytes += len(name)
+		r.key(name)
 		if _, isList := v.([]any); keepArrays && isList {
 			out[name] = v
 			if err := r.literal(v); err != nil {
@@ -313,7 +335,9 @@ func (r *resolver) inline(n map[string]any, ref string, stack []string) (any, er
 		defer func() { r.inResource-- }()
 	}
 	r.inlined++
+	r.copying++
 	expanded, err := r.schema(target, append(stack, pointer))
+	r.copying--
 	if err != nil {
 		return nil, err
 	}
@@ -325,10 +349,10 @@ func (r *resolver) inline(n map[string]any, ref string, stack []string) (any, er
 		return nil, fmt.Errorf("input schema: reference %q has sibling keywords but its target is not an object", ref)
 	}
 	for k, c := range n {
-		if k == "$ref" {
+		if k == "$ref" || kindOf(k) == kindDefinitions {
 			continue
 		}
-		r.bytes += len(k)
+		r.key(k)
 		e, err := r.keyword(k, c, stack)
 		if err != nil {
 			return nil, err

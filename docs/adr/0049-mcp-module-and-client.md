@@ -184,29 +184,41 @@ its `title`, then `annotations.title`.
 The schema is sent as JSON, normalized in one way only: local references
 (a `$ref` that is a `#/` JSON pointer into the schema, normally
 `#/$defs/...` or `#/definitions/...`; the fragment is percent-decoded
-before it is read as a pointer, RFC 6901 §6) are inlined and the top-level
-definitions removed, because Gemini doesn't accept them and the Google
-adapter's schema conversion would otherwise drop the referenced structure
-without an error. A recursive reference, a remote or anchor reference, or a
-pointer that doesn't resolve is an `InvalidToolError`, and so is a schema
-whose expansion nests references more than 32 deep or grows past 100,000
-JSON values or 4 MiB of string bytes, counting each copy of a literal
-(references that fan out grow exponentially without being recursive, and
-a large enum is copied once per reference). A reference inside a nested
-schema resource (a subschema with its own `$id`, against which the
-reference would resolve) is an `InvalidToolError` too, rather than being
-resolved against the wrong document. Only subschemas are searched: the keywords that hold schemas
-(`properties`, `items`, `anyOf`, `additionalProperties` and the rest of
-JSON Schema's applicators). A `"$ref"` member inside literal data
-(`default`, `const`, `enum`, `examples`, unknown keywords) is data and is
-kept as it is. Definitions are reached only through references, so an
-unused recursive definition is not an error. Keywords beside a `$ref` are
-kept and win over the target's. A
-schema with no references is sent unchanged. A tool with no schema gets
-`{"type":"object"}`. A top-level `type` other than `"object"` is an
-`InvalidToolError` (MCP requires an object schema, and so does every
-adapter). Nothing else is rewritten; any other keyword a provider can't use
-is that adapter's concern, as it is for in-process tools.
+before it is read as a pointer, RFC 6901 §6) are inlined, because Gemini
+doesn't accept them and the Google adapter's schema conversion would
+otherwise drop the referenced structure without an error. A schema with no
+references is sent unchanged.
+
+- **Where references are found.** Only subschemas are searched: the
+  keywords that hold schemas (`properties`, `items`, `anyOf`,
+  `additionalProperties` and the rest of JSON Schema's applicators). A
+  `"$ref"` member inside literal data (`default`, `const`, `enum`,
+  `examples`, unknown keywords) is data and is kept as it is. Keywords
+  beside a `$ref` are kept and win over the target's.
+- **Definitions.** `$defs` and `definitions` are reached only through
+  references. Once anything is inlined, every reference has been resolved
+  against the original document and no definition is used any more, so
+  they are dropped wherever they appear (nested ones too) and are not
+  walked: an unused recursive definition is not an error.
+- **Rejected, as an `InvalidToolError`:** a recursive reference; a remote or
+  anchor reference; a pointer that doesn't resolve; a reference inside a
+  nested schema resource (a subschema with its own `$id`, against which the
+  reference would resolve), rather than resolving it against the wrong
+  document; and an expansion that nests references more than 32 deep or
+  copies more than 100,000 JSON values or 4 MiB of string bytes.
+- **What the size bound counts.** Only what inlining copies: every copy of
+  a reference's target, nested copies included, with any literal it holds
+  (references that fan out grow exponentially without being recursive, and
+  a large enum is copied once per reference). The schema as the server
+  wrote it isn't counted. The count is checked as copies are made, so
+  expansion stops at the bound, and the result doesn't depend on the order
+  in which object keys are walked.
+
+A tool with no schema gets `{"type":"object"}`. A top-level `type` other
+than `"object"` is an `InvalidToolError` (MCP requires an object schema,
+and so does every adapter). Nothing else is rewritten; any other keyword a
+provider can't use is that adapter's concern, as it is for in-process
+tools.
 
 #### 4.5 Fail closed, filter to recover
 

@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) and other coding age
 - **Maestro** — desktop/local, in-process rate limiting.
 - **Morris** — cloud (Cloud Run, multi-instance), needs shared/distributed rate limiting, audit, content classification, image inputs for Gemini embeddings on Vertex (#164, shipped in v1.4), and transactional edits of bucket limits from its admin page (#170, shipped in v1.5).
 - **maestro-cms** — content service that does budget-aware text chunking for embeddings (requester of ADR-0013's `EstimateTextTokens`).
-- **maestro-agents** — agent foundation library built on `llms`/`toolloop`, compiled into Morris and other apps; its multimodal input (#147, #148) shipped in v1.2 and its hard per-run budget seams (#149) in v1.3; it still needs MCP-served tools (#150), to be designed against the v1.6 toolbox API; its standalone host can build clients with `providers.New` (v1.7).
+- **maestro-agents** — agent foundation library built on `llms`/`toolloop`, compiled into Morris and other apps; its multimodal input (#147, #148) shipped in v1.2 and its hard per-run budget seams (#149) in v1.3; its MCP-served tools (#150) are the separate `mcp` module's `mcpclient` (v0, ADR-0049), adoptable once `mcp/v0.1.0` is tagged with the #181 server; its standalone host can build clients with `providers.New` (v1.7).
 
 The core design tension to keep in mind on every change: **nothing in this package may import product-specific assumptions from any consumer.** Config resolution, secret sourcing, audit taxonomy, distributed limiter storage, content rules, and chunking policy all belong to the applications, not here. When a feature seems to need app context, the answer is almost always an interface the app implements or a callback hook — not a concrete implementation in this package.
 
@@ -34,6 +34,7 @@ llms/providers/      provider-neutral constructor New(id, Options) (ADR-0048); l
 llms/providers/{anthropic,anthropic/anthropicvertex,openai,google,ollama,openaicompat}/   one package per provider, imported only if used (vllm = deprecated alias of openaicompat)
 llms/testllm/        deterministic FakeChatClient / FakeEmbeddingClient
 bucket/              generic per-key token/concurrency limiter (no llms import); bucket/memory, bucket/postgres (ADR-0025)
+mcp/                 SEPARATE v0 module (own go.mod, tags mcp/vX.Y.Z, outside the v1 contract): mcpclient (MCP server tools as toolloop.Tool), internal/convert (shared translation); mcpserver planned (#181) (ADR-0049)
 ```
 
 Load-bearing structural decisions:
@@ -47,7 +48,7 @@ Load-bearing structural decisions:
 
 ## Build/test commands
 
-`make build` (lint + `go build ./...`), `make test` (unit tests w/ coverage; single: `make test TESTARGS='-run TestName ./llms/...'`), `make lint` (gofmt + golangci-lint — the lint gate is strict: `fieldalignment`, `gocritic rangeValCopy`, `revive` unused-params, modernize `min`/`max`/`WaitGroup.Go` all fail CI). Live provider tests: `make test-integration` (OS-aware; see README). CI requires `build-lint-test` + `CodeQL` (aggregate only — see memory).
+`make build` (lint + `go build ./...`), `make test` (unit tests w/ coverage, root + `mcp/`; single: `make test TESTARGS='-run TestName ./llms/...'`, root only; `make test-mcp` for the mcp module), `make lint` (gofmt + golangci-lint — the lint gate is strict: `fieldalignment`, `gocritic rangeValCopy`, `revive` unused-params, modernize `min`/`max`/`WaitGroup.Go` all fail CI). Live provider tests: `make test-integration` (OS-aware; see README). CI requires `build-lint-test` + `CodeQL` (aggregate only — see memory).
 
 ## Versioning
 

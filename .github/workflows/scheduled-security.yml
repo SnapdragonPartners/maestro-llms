@@ -45,3 +45,9 @@ jobs:
 
       - name: Run govulncheck
         run: govulncheck ./...
+
+      # The mcp module (ADR-0049) has its own dependency graph (the MCP SDK,
+      # its JWT and OAuth dependencies), none of it reachable from the root.
+      - name: Run govulncheck (mcp module)
+        working-directory: mcp
+        run: govulncheck ./...

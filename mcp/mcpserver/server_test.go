@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
@@ -391,5 +392,56 @@ func TestArgumentsShape(t *testing.T) {
 		case want != "error" && (err != nil || string(got) != want):
 			t.Errorf("arguments(%q) = %s, %v; want %s", in, got, err, want)
 		}
+	}
+}
+
+// TestToolsSnapshot checks that New keeps its own copy of each tool, so the
+// caller can reuse or clear its slice.
+func TestToolsSnapshot(t *testing.T) {
+	tools := []toolloop.Tool{tool("a", "", func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) { return text("original") })}
+	s, err := New(tools, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools[0].Execute = nil
+	tools[0] = tool("a", "", func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) { return text("replaced") })
+	res, err := sdkSession(t, s).CallTool(context.Background(), &mcp.CallToolParams{Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc, _ := res.Content[0].(*mcp.TextContent); tc == nil || tc.Text != "original" {
+		t.Fatalf("result %#v, want the original executor's", res.Content)
+	}
+}
+
+// TestHugeArgumentsOverHTTP pins a go-sdk v1.8.0 limit (ADR-0050 §3): under
+// protocol 2026-07-28 the SDK's Mcp-Name header handling decodes the whole
+// tools/call params, arguments included, into float64 values, so a number
+// beyond float64's range fails before Execute (on the go-sdk client, which
+// can't set the header, and on the server's check). Over stdio, in memory,
+// or an older protocol the arguments pass through unchanged
+// (TestCallArguments). If this starts passing, update the ADR and README.
+func TestHugeArgumentsOverHTTP(t *testing.T) {
+	s, err := New(testTools(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	ctx := context.Background()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "v0"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cs.Close() }()
+	if v := cs.InitializeResult().ProtocolVersion; v != "2026-07-28" {
+		t.Skipf("negotiated %s; the limit is specific to 2026-07-28", v)
+	}
+	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "echo", Arguments: raw(`{"n":1e1000}`)}); err == nil {
+		t.Fatal("go-sdk now accepts out-of-range numbers over HTTP; update ADR-0050 §3 and the README")
+	}
+	// Ordinary numbers are fine.
+	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "echo", Arguments: raw(`{"n":12345678901234567890}`)}); err != nil {
+		t.Fatal(err)
 	}
 }

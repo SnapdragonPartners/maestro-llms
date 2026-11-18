@@ -56,8 +56,12 @@ func DocumentURI(i int) string { return "part:" + strconv.Itoa(i) }
 
 // ToMCP maps a tool's result to an MCP call result (ADR-0050 §4), the
 // reverse of Result. An error means the result is one the loop would reject
-// (ADR-0041); the server treats it like an Execute error. Stop is dropped.
+// (Stop with IsError, or the ADR-0041 part rules); the server treats it like
+// an Execute error. Stop is otherwise dropped.
 func ToMCP(r *toolloop.ToolResult) (*mcp.CallToolResult, error) {
+	if r.Stop && r.IsError {
+		return nil, errors.New("invalid tool result: both Stop and IsError are set")
+	}
 	if len(r.Parts) == 0 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: r.Content}},

@@ -158,8 +158,8 @@ names every one. A bad tool never reaches the SDK, whose `AddTool` panics
 on a schema it dislikes. A tool is invalid when:
 
 - its name fails the portable rule `^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$`
-  (`convert.CheckName`, the rule the client applies). Anything this
-  server serves, `mcpclient` can consume, and any provider can call. Names
+  (`convert.CheckName`, the rule the client applies), so every served
+  name passes `mcpclient`'s name check and any provider can call it. Names
   are never rewritten;
 - two tools have the same name;
 - `Execute` is nil;
@@ -216,6 +216,16 @@ package adds no cancellation of its own (it would need a side channel from
 the HTTP request to the detached handler), so a tool that can run long
 bounds its own work, for example with `context.WithTimeout`. Propagating
 the request's cancellation can be added later without an API change.
+
+Arguments are checked by shape only and reach `Execute` as the bytes the
+client sent, numbers included. One go-sdk v1.8.0 limit applies over HTTP:
+under protocol 2026-07-28 the SDK's `Mcp-Name` header handling (on the
+go-sdk client and in the server transport) decodes the whole `tools/call`
+params, arguments included, into float64 values, so a number outside
+float64's range (`1e1000`) fails the call before `Execute` runs. Integers
+beyond 2^53 still pass through unchanged, as do all numbers over stdio and
+older protocol versions. That's upstream, like the client-side limit in
+ADR-0049 §4.4; a test pins it.
 With `Auth`, the context carries the verified `TokenInfo`, which reaches
 the handler through the SDK's per-request `RequestExtra`, not through
 context values that the detached context may or may not keep.
@@ -240,8 +250,10 @@ other:
 `structuredContent` is never set: a `ToolResult` has no structured form.
 
 A `ToolResult` the loop would reject is an invalid executor result here
-too (ADR-0041). The rules are the structural checks of
-`llms/internal/media.Check`, in full:
+too. The rules are the loop's own: `Stop` and `IsError` both set (a
+contract violation in `toolloop`, even though `Stop` is otherwise dropped
+here), and the structural checks of `llms/internal/media.Check`
+(ADR-0041), in full:
 
 - `Content` and `Parts` both set;
 - a part that isn't text, image or document, or an empty text part;
@@ -259,8 +271,11 @@ is sent as given; only the check uses the parsed base type. Per-provider
 media support is not checked: these are provider-neutral structural rules,
 and the remote client's model is unknown.
 
-The client maps these blocks back to the same `ToolResult` (with `Stop`
-false), and a test round-trips each row through both directions.
+The client maps these blocks back to the same `ToolResult`, with `Stop`
+false, with one exception: `Parts` that are all text come back as
+`Content`, the texts joined by newlines, since MCP can't say the text
+blocks were parts (ADR-0049 §4.7). A test round-trips each shape through
+both directions, that one included.
 
 ### 5. Errors
 
@@ -377,9 +392,13 @@ absolute URI. `Verifier` must be non-nil. Any failure is an error from
   ChatGPT and other MCP clients with `New`, `Handler`, a `TokenVerifier`
   for its identity provider, and the metadata handler mounted at
   `MetadataPath`.
-- `mcpserver` and `mcpclient` share every translation rule, and a test
-  runs the client against the server over the go-sdk in-memory transport.
-  So the module's two halves keep each other honest.
+- `mcpserver` and `mcpclient` share their name and result rules, and tests
+  run the client against the server over HTTP (with OAuth) and stdio, so
+  the module's two halves keep each other honest. Schemas are the one
+  asymmetry: the server serves any object schema as given, while the
+  client inlines local `$ref`s and rejects recursive, remote or dangling
+  ones (ADR-0049 §4.4), so a served tool with such a schema fails
+  `mcpclient`'s listing (other MCP clients may accept it).
 - The audience rule is enforced by the package, not left to each app's
   verifier. A verifier must report the token's audiences: for a JWT, the
   `aud` claim; for introspection, the `aud` (or `resource`) field.

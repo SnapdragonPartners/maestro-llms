@@ -680,8 +680,9 @@ For a remote server use `mcpclient.StreamableHTTP(url, httpClient)`; the
 
 `mcpserver` serves `toolloop.Tool` values (the same ones `toolloop.Run`
 takes) to MCP clients such as ChatGPT. It is in the same v0 module as
-`mcpclient` and shares its translation rules, so whatever it serves
-`mcpclient` can consume ([ADR-0050](docs/adr/0050-mcp-server.md)).
+`mcpclient` and shares its name and result rules, so `mcpclient` can
+consume what it serves, provided any `$ref`s in a schema are local and
+non-recursive ([ADR-0050](docs/adr/0050-mcp-server.md)).
 
 ```go
 import "github.com/SnapdragonPartners/maestro-llms/mcp/mcpserver"
@@ -728,12 +729,15 @@ serves over stdin/stdout without auth.
 - **Validation.** `New` rejects, with one `InvalidToolError` each, a name
   that breaks the portable rule, a duplicate name, a nil `Execute`, and a
   schema that isn't an object schema the MCP SDK accepts. Schemas are
-  served as given; `$ref`s are left for the client.
+  served as given; `$ref`s are left for the client (`mcpclient` inlines
+  local ones and fails its listing on a recursive or remote one).
 - **Transport.** Stateless Streamable HTTP with JSON responses, so it runs
   on several instances behind a load balancer. CORS, rate limits and
   ChatGPT's optional mTLS are your middleware around `Handler`. A client
   that disconnects doesn't cancel a running tool, so a tool that can run
-  long should bound its own work.
+  long should bound its own work. Arguments reach `Execute` as sent, but
+  over HTTP with protocol 2026-07-28 the go-sdk rejects a number outside
+  float64's range (`1e1000`) before the call (an upstream limit).
 - **Not yet:** per-tool scopes (ChatGPT's `securitySchemes`), resources,
   prompts, `structuredContent`.
 

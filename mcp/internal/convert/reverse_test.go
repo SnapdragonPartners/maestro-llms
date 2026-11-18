@@ -97,6 +97,7 @@ func TestToMCPInvalid(t *testing.T) {
 		r    toolloop.ToolResult
 		want string
 	}{
+		"stop and is error":   {toolloop.ToolResult{Content: "x", Stop: true, IsError: true}, "both Stop and IsError"},
 		"content and parts":   {toolloop.ToolResult{Content: "x", Parts: []llms.ContentPart{llms.Text("y")}}, "both Content and Parts"},
 		"empty text part":     {toolloop.ToolResult{Parts: []llms.ContentPart{llms.Text("")}}, "empty text part"},
 		"other part type":     {toolloop.ToolResult{Parts: []llms.ContentPart{{Type: llms.ContentToolCall}}}, "not allowed"},
@@ -153,8 +154,14 @@ func TestRoundTrip(t *testing.T) {
 			}
 		}
 	}
+	// Parts that are all text come back as Content, joined by newlines: MCP
+	// has no way to say the text blocks were parts.
+	got, err := Result(must(ToMCP(&toolloop.ToolResult{Parts: []llms.ContentPart{llms.Text("a"), llms.Text("b")}})))
+	if err != nil || got.Content != "a\nb" || got.Parts != nil {
+		t.Fatalf("text-only Parts round trip = %#v, %v; want Content a\\nb", got, err)
+	}
 	// Stop does not survive: nothing on the MCP side honors it.
-	got, err := Result(must(ToMCP(&toolloop.ToolResult{Content: "x", Stop: true})))
+	got, err = Result(must(ToMCP(&toolloop.ToolResult{Content: "x", Stop: true})))
 	if err != nil || got.Stop {
 		t.Fatalf("Stop round trip = %#v, %v; want Stop false", got, err)
 	}

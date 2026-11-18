@@ -129,8 +129,8 @@ func New(tools []toolloop.Tool, opts Options) (*Server, error) {
 
 	var errs []error
 	for i := range tools {
-		t := &tools[i]
-		mt, invalid := mcpTool(t, names, opts.Annotations)
+		t := tools[i] // a copy: replacing or clearing the caller's element later changes nothing here
+		mt, invalid := mcpTool(&t, names, opts.Annotations)
 		if invalid == nil {
 			if err := registers(impl, mt); err != nil {
 				invalid = &InvalidToolError{Tool: t.Definition.Name, Err: err}
@@ -140,7 +140,7 @@ func New(tools []toolloop.Tool, opts Options) (*Server, error) {
 			errs = append(errs, invalid)
 			continue
 		}
-		s.srv.AddTool(mt, s.handler(t))
+		s.srv.AddTool(mt, s.handler(t.Definition.Name, t.Execute))
 	}
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("mcpserver: %d of the tools can't be served: %w", len(errs), errors.Join(errs...))
@@ -202,9 +202,9 @@ func registers(impl *mcp.Implementation, mt *mcp.Tool) (err error) {
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// handler runs t for a tools/call request (ADR-0050 §3-§5).
-func (s *Server) handler(t *toolloop.Tool) mcp.ToolHandler {
-	name := t.Definition.Name
+// handler runs execute for a tools/call request (ADR-0050 §3-§5). It holds
+// the executor by value, so the caller's tools slice can be reused.
+func (s *Server) handler(name string, execute func(context.Context, llms.ToolCall) (toolloop.ToolResult, error)) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, err := arguments(req.Params.Arguments)
 		if err != nil {
@@ -215,7 +215,7 @@ func (s *Server) handler(t *toolloop.Tool) mcp.ToolHandler {
 				ctx = context.WithValue(ctx, tokenInfoKey{}, info)
 			}
 		}
-		res, err := t.Execute(ctx, llms.ToolCall{Name: name, Parameters: args})
+		res, err := execute(ctx, llms.ToolCall{Name: name, Parameters: args})
 		if err != nil {
 			return nil, s.failed(ctx, name, fmt.Errorf("mcpserver: tool %q: %w", name, err))
 		}

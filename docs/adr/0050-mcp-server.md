@@ -394,11 +394,12 @@ absolute URI. `Verifier` must be non-nil. Any failure is an error from
   `MetadataPath`.
 - `mcpserver` and `mcpclient` share their name and result rules, and tests
   run the client against the server over HTTP (with OAuth) and stdio, so
-  the module's two halves keep each other honest. Schemas are the one
-  asymmetry: the server serves any object schema as given, while the
-  client inlines local `$ref`s and rejects recursive, remote or dangling
-  ones (ADR-0049 §4.4), so a served tool with such a schema fails
-  `mcpclient`'s listing (other MCP clients may accept it).
+  the module's two halves keep each other honest. Two asymmetries remain.
+  Schemas: the server serves any object schema as given, while the client
+  inlines local `$ref`s and rejects recursive, remote or dangling ones
+  (ADR-0049 §4.4), so a served tool with such a schema fails
+  `mcpclient`'s listing (other MCP clients may accept it). Results:
+  `Parts` that are all text come back as `Content` (§4).
 - The audience rule is enforced by the package, not left to each app's
   verifier. A verifier must report the token's audiences: for a JWT, the
   `aud` claim; for introspection, the `aud` (or `resource`) field.

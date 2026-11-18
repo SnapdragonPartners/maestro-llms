@@ -422,7 +422,14 @@ func TestToolsSnapshot(t *testing.T) {
 // or an older protocol the arguments pass through unchanged
 // (TestCallArguments). If this starts passing, update the ADR and README.
 func TestHugeArgumentsOverHTTP(t *testing.T) {
-	s, err := New(testTools(), Options{})
+	var mu sync.Mutex
+	var received []string
+	s, err := New([]toolloop.Tool{tool("rec", "", func(_ context.Context, c llms.ToolCall) (toolloop.ToolResult, error) {
+		mu.Lock()
+		received = append(received, string(c.Parameters))
+		mu.Unlock()
+		return text("ok")
+	})}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,11 +444,17 @@ func TestHugeArgumentsOverHTTP(t *testing.T) {
 	if v := cs.InitializeResult().ProtocolVersion; v != "2026-07-28" {
 		t.Skipf("negotiated %s; the limit is specific to 2026-07-28", v)
 	}
-	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "echo", Arguments: raw(`{"n":1e1000}`)}); err == nil {
+	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "rec", Arguments: raw(`{"n":1e1000}`)}); err == nil {
 		t.Fatal("go-sdk now accepts out-of-range numbers over HTTP; update ADR-0050 §3 and the README")
 	}
-	// Ordinary numbers are fine.
-	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "echo", Arguments: raw(`{"n":12345678901234567890}`)}); err != nil {
+	// Integers beyond 2^53 reach Execute exactly as sent, not re-encoded.
+	const big = `{"n":12345678901234567890}`
+	if _, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "rec", Arguments: raw(big)}); err != nil {
 		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received) != 1 || received[0] != big {
+		t.Fatalf("Execute received %q; want only %s (the 1e1000 call must fail before Execute)", received, big)
 	}
 }

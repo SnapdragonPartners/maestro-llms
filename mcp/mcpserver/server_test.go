@@ -366,13 +366,21 @@ func TestStdio(t *testing.T) {
 	for _, tl := range tools {
 		byName[tl.Definition.Name] = tl
 	}
-	res, err := byName["whoami"].Execute(ctx, llms.ToolCall{Name: "whoami"})
+	get := func(name string) toolloop.Tool {
+		t.Helper()
+		tl, ok := byName[name]
+		if !ok {
+			t.Fatalf("no tool %s in the stdio listing", name)
+		}
+		return tl
+	}
+	res, err := get("whoami").Execute(ctx, llms.ToolCall{Name: "whoami"})
 	if err != nil || res.Content != "anonymous" {
 		t.Fatalf("whoami over stdio = %+v, %v", res, err)
 	}
 	// Out-of-range numbers pass through unchanged over stdio (ADR-0050 §3).
 	const huge = `{"n":1e1000,"m":12345678901234567890}`
-	res, err = byName["echo"].Execute(ctx, llms.ToolCall{Name: "echo", Parameters: raw(huge)})
+	res, err = get("echo").Execute(ctx, llms.ToolCall{Name: "echo", Parameters: raw(huge)})
 	if err != nil || res.Content != "args: "+huge {
 		t.Fatalf("echo over stdio = %+v, %v; want args: %s", res, err, huge)
 	}
@@ -423,8 +431,9 @@ func TestToolsSnapshot(t *testing.T) {
 // TestHugeArgumentsOverHTTP pins a go-sdk v1.8.0 limit (ADR-0050 §3): under
 // protocol 2026-07-28 the SDK's Mcp-Name header handling decodes the whole
 // tools/call params, arguments included, into float64 values, so a number
-// beyond float64's range fails before Execute (on the go-sdk client, which
-// can't set the header, and on the server's check). The paths that pass
+// beyond float64's range fails before Execute. This test pins the go-sdk
+// client's side (it can't set the header); TestHugeArgumentsServerSide pins
+// the server transport's. The paths that pass
 // such numbers through unchanged are pinned by TestCallArguments (in
 // memory), TestStdio (stdio) and TestHugeArgumentsOlderProtocol (HTTP,
 // 2025-06-18). Upstream: modelcontextprotocol/go-sdk#1534. If this starts
@@ -501,5 +510,57 @@ func TestHugeArgumentsOlderProtocol(t *testing.T) {
 	}
 	if got := out.Result.Content[0].Text; got != "args: "+huge {
 		t.Fatalf("Execute got %s, want args: %s", got, huge)
+	}
+}
+
+// TestHugeArgumentsServerSide pins the server half of the go-sdk limit
+// (ADR-0050 §3, go-sdk#1534) with a raw 2026-07-28 request that sets the
+// Mcp-Name header itself, as a non-Go client such as ChatGPT would: the
+// server transport rejects an out-of-range number before Execute. A control
+// request with an ordinary number shows the request shape is accepted.
+func TestHugeArgumentsServerSide(t *testing.T) {
+	var mu sync.Mutex
+	var received []string
+	s, err := New([]toolloop.Tool{tool("rec", "", func(_ context.Context, c llms.ToolCall) (toolloop.ToolResult, error) {
+		mu.Lock()
+		received = append(received, string(c.Parameters))
+		mu.Unlock()
+		return text("ok")
+	})}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	post := func(args string) (int, string) {
+		t.Helper()
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rec","arguments":` + args +
+			`,"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"raw","version":"v0"},"io.modelcontextprotocol/clientCapabilities":{}}}}`
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+		req.Header.Set("Mcp-Method", "tools/call")
+		req.Header.Set("Mcp-Name", "rec")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	const ordinary = `{"n":12345678901234567890}`
+	if code, body := post(ordinary); code != http.StatusOK || !strings.Contains(body, `"ok"`) {
+		t.Fatalf("control request: %d %s", code, body)
+	}
+	code, body := post(`{"n":1e1000}`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "failed to extract name") {
+		t.Fatalf("go-sdk server behavior changed for out-of-range numbers under 2026-07-28 (%d %s); update ADR-0050 §3 and the README", code, body)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received) != 1 || received[0] != ordinary {
+		t.Fatalf("Execute received %q; want only the control request's arguments", received)
 	}
 }

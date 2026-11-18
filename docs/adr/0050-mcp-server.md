@@ -166,7 +166,21 @@ on a schema it dislikes. A tool is invalid when:
 - its input schema is not a JSON object, or its top-level `type` isn't
   `"object"`. An empty schema is served as `{"type":"object"}`. An object
   with no `type` is rejected rather than rewritten, as MCP requires the
-  object type.
+  object type;
+- the go-sdk refuses to register it. `AddTool` has rejection paths beyond
+  the root shape: a schema that won't decode into `map[string]any` (for
+  example a number outside float64's range, such as `"default": 1e1000`),
+  and malformed, misplaced or duplicate `x-mcp-header` annotations. Its
+  rejections are panics, and they can grow in any SDK release. So `New`
+  doesn't copy that list. After its own checks, it registers each tool on
+  a throwaway SDK server under `recover`, and a panic becomes that tool's
+  `InvalidToolError`, with the panic value as `Err`. Only tools that
+  register cleanly are added to the real server. This one choke point
+  covers every SDK rejection, present or future, and the checks above stay
+  only so the common mistakes get clear messages. (The same `x-mcp-header`
+  rules are why the go-sdk client drops such tools from a listing, which
+  `mcpclient` reports as invalid, ADR-0049 §4.5. Rejecting them here keeps
+  the two halves consistent.)
 
 The schema is otherwise served byte for byte (`json.RawMessage`), with its
 numbers as written. `$ref`s are not inlined here: that is the client's
@@ -221,12 +235,24 @@ other:
 `structuredContent` is never set: a `ToolResult` has no structured form.
 
 A `ToolResult` the loop would reject is an invalid executor result here
-too (ADR-0041): `Content` and `Parts` both set; a part that isn't text,
-image or document; an empty text part; an image or document with no data
-or no media type; or an image part whose media type isn't `image/*`. The
-server can't import `llms/internal/media`, so convert checks this
-structural subset itself. Per-provider media support is not checked: the
-remote client's model is unknown.
+too (ADR-0041). The rules are the structural checks of
+`llms/internal/media.Check`, in full:
+
+- `Content` and `Parts` both set;
+- a part that isn't text, image or document, or an empty text part;
+- an image or document part with nil `Media` or empty `Data`;
+- a media type that is empty, doesn't parse (`mime.ParseMediaType`), or
+  has no `type/subtype`;
+- an image part whose base type isn't `image/*`, or a document part whose
+  base type is `image/*`. The second rule also protects the round trip:
+  the client turns every `image/*` blob into `ContentImage`, so an
+  image-typed document would come back as a different part type.
+
+The server can't import `llms/internal/media`, so convert carries the
+same rules, and a test table pins each case against them. The media type
+is sent as given; only the check uses the parsed base type. Per-provider
+media support is not checked: these are provider-neutral structural rules,
+and the remote client's model is unknown.
 
 The client maps these blocks back to the same `ToolResult` (with `Stop`
 false), and a test round-trips each row through both directions.
@@ -367,8 +393,16 @@ Unit tests, no network and no keys:
 
 - `internal/convert` (reverse): every row of §4, each invalid-result case,
   and a round trip through the client's direction for each row.
+- `internal/convert` media rules: malformed media type (`"png"`,
+  `"image/"`, parameters that don't parse), an image part with a
+  non-image type, a document part with an image type, a type with
+  parameters accepted.
 - `New`: each invalid-tool case (names, duplicates, nil `Execute`,
-  schemas), `Annotations` for an unknown tool, each invalid `Auth`.
+  schemas), the SDK-only rejections (`"default": 1e1000`, an
+  `x-mcp-header` on a non-primitive property, an empty or invalid header
+  name, two properties with the same header name), proof that New
+  returns errors rather than panicking and that only valid tools reach the
+  real server, `Annotations` for an unknown tool, and each invalid `Auth`.
 - Auth middleware, table-driven over `httptest`: no header, malformed
   header, `ErrInvalidToken`, another verifier error (500, fixed body,
   `OnError` called), empty subject, wrong audience, custom `Audience`,

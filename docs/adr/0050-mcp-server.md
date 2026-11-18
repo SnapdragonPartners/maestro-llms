@@ -224,8 +224,9 @@ go-sdk client and in the server transport) decodes the whole `tools/call`
 params, arguments included, into float64 values, so a number outside
 float64's range (`1e1000`) fails the call before `Execute` runs. Integers
 beyond 2^53 still pass through unchanged, as do all numbers over stdio and
-older protocol versions. That's upstream, like the client-side limit in
-ADR-0049 §4.4; a test pins it.
+older protocol versions. That's upstream (reported as
+modelcontextprotocol/go-sdk#1534), like the client-side limit in ADR-0049
+§4.4; tests pin both the failure and each pass-through path.
 With `Auth`, the context carries the verified `TokenInfo`, which reaches
 the handler through the SDK's per-request `RequestExtra`, not through
 context values that the detached context may or may not keep.
@@ -396,9 +397,10 @@ absolute URI. `Verifier` must be non-nil. Any failure is an error from
   run the client against the server over HTTP (with OAuth) and stdio, so
   the module's two halves keep each other honest. Two asymmetries remain.
   Schemas: the server serves any object schema as given, while the client
-  inlines local `$ref`s and rejects recursive, remote or dangling ones
-  (ADR-0049 §4.4), so a served tool with such a schema fails
-  `mcpclient`'s listing (other MCP clients may accept it). Results:
+  normalizes `$ref`s and rejects every reference ADR-0049 §4.4 rejects
+  (that section is the list; it isn't repeated here), so a served tool
+  with such a schema fails `mcpclient`'s listing (other MCP clients may
+  accept it). A schema without `$ref`s is unaffected. Results:
   `Parts` that are all text come back as `Content` (§4).
 - The audience rule is enforced by the package, not left to each app's
   verifier. A verifier must report the token's audiences: for a JWT, the

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -360,16 +362,20 @@ func TestStdio(t *testing.T) {
 	if len(tools) != len(testTools()) {
 		t.Fatalf("got %d tools", len(tools))
 	}
+	byName := map[string]toolloop.Tool{}
 	for _, tl := range tools {
-		if tl.Definition.Name == "whoami" {
-			res, err := tl.Execute(ctx, llms.ToolCall{Name: "whoami"})
-			if err != nil || res.Content != "anonymous" {
-				t.Fatalf("whoami over stdio = %+v, %v", res, err)
-			}
-			return
-		}
+		byName[tl.Definition.Name] = tl
 	}
-	t.Fatal("no whoami tool")
+	res, err := byName["whoami"].Execute(ctx, llms.ToolCall{Name: "whoami"})
+	if err != nil || res.Content != "anonymous" {
+		t.Fatalf("whoami over stdio = %+v, %v", res, err)
+	}
+	// Out-of-range numbers pass through unchanged over stdio (ADR-0050 §3).
+	const huge = `{"n":1e1000,"m":12345678901234567890}`
+	res, err = byName["echo"].Execute(ctx, llms.ToolCall{Name: "echo", Parameters: raw(huge)})
+	if err != nil || res.Content != "args: "+huge {
+		t.Fatalf("echo over stdio = %+v, %v; want args: %s", res, err, huge)
+	}
 }
 
 func TestArgumentsShape(t *testing.T) {
@@ -418,9 +424,11 @@ func TestToolsSnapshot(t *testing.T) {
 // protocol 2026-07-28 the SDK's Mcp-Name header handling decodes the whole
 // tools/call params, arguments included, into float64 values, so a number
 // beyond float64's range fails before Execute (on the go-sdk client, which
-// can't set the header, and on the server's check). Over stdio, in memory,
-// or an older protocol the arguments pass through unchanged
-// (TestCallArguments). If this starts passing, update the ADR and README.
+// can't set the header, and on the server's check). The paths that pass
+// such numbers through unchanged are pinned by TestCallArguments (in
+// memory), TestStdio (stdio) and TestHugeArgumentsOlderProtocol (HTTP,
+// 2025-06-18). Upstream: modelcontextprotocol/go-sdk#1534. If this starts
+// passing, update the ADR and README.
 func TestHugeArgumentsOverHTTP(t *testing.T) {
 	var mu sync.Mutex
 	var received []string
@@ -456,5 +464,42 @@ func TestHugeArgumentsOverHTTP(t *testing.T) {
 	defer mu.Unlock()
 	if len(received) != 1 || received[0] != big {
 		t.Fatalf("Execute received %q; want only %s (the 1e1000 call must fail before Execute)", received, big)
+	}
+}
+
+// TestHugeArgumentsOlderProtocol pins that over HTTP with a protocol older
+// than 2026-07-28 (no Mcp-Name header) arguments reach Execute unchanged,
+// out-of-range numbers included (ADR-0050 §3).
+func TestHugeArgumentsOlderProtocol(t *testing.T) {
+	s, err := New(testTools(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	const huge = `{"n":1e1000,"m":12345678901234567890}`
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":` + huge + `}}`
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", "2025-06-18")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(b, &out); err != nil || len(out.Result.Content) != 1 {
+		t.Fatalf("response %d %s (%v)", resp.StatusCode, b, err)
+	}
+	if got := out.Result.Content[0].Text; got != "args: "+huge {
+		t.Fatalf("Execute got %s, want args: %s", got, huge)
 	}
 }

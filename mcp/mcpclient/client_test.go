@@ -689,3 +689,43 @@ func TestConcurrentListingsStayAssociated(t *testing.T) {
 		t.Errorf("%d succeeded and %d failed; want %d and %d (one per listing served)", ok, failed, withoutBad, withBad)
 	}
 }
+
+// TestQueuedToolsHonorsContext: a Tools call queued behind a listing that is
+// stuck on the server returns when its own context ends.
+func TestQueuedToolsHonorsContext(t *testing.T) {
+	ctx := context.Background()
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	list := func(string) string {
+		entered <- struct{}{}
+		<-release
+		return `{"tools":[{"name":"good","inputSchema":{"type":"object"}}]}`
+	}
+	sess, err := Connect(ctx, rawServer(ctx, t, list), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	first := make(chan error, 1)
+	go func() {
+		_, ferr := sess.Tools(ctx) // no deadline: holds the gate until released
+		first <- ferr
+	}()
+	<-entered
+
+	short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err = sess.Tools(short)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("queued Tools error = %v, want context.DeadlineExceeded", err)
+	}
+	if waited := time.Since(start); waited > 2*time.Second {
+		t.Fatalf("queued Tools returned after %v", waited)
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first Tools: %v", err)
+	}
+}

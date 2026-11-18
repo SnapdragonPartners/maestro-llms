@@ -76,14 +76,14 @@ type Options struct {
 type Session struct {
 	cs    *mcp.ClientSession
 	pages map[string]rawPage // tools/list pages as the server sent them, by cursor
-	opts  Options
-	mu    sync.Mutex // guards pages
-	// listMu serializes Tools calls, so each page's recorded raw listing is
-	// the one ListTools just returned (or, for a page the go-sdk serves from
-	// its cache, the fetch that filled that cache entry). Tool calls don't
-	// take it.
-	listMu sync.Mutex
-	closed atomic.Bool
+	// listGate (one slot) serializes Tools calls, so each page's recorded
+	// raw listing is the one ListTools just returned (or, for a page the
+	// go-sdk serves from its cache, the fetch that filled that cache entry).
+	// A queued call gives up when its context ends. Tool calls don't take it.
+	listGate chan struct{}
+	opts     Options
+	mu       sync.Mutex // guards pages
+	closed   atomic.Bool
 }
 
 // rawPage is what the server sent for one tools/list page, before the
@@ -100,7 +100,7 @@ func Connect(ctx context.Context, t Transport, opts Options) (*Session, error) {
 	if t.t == nil {
 		return nil, errors.New("mcpclient: zero Transport (or Command(nil)); use Command with a non-nil exec.Cmd, or StreamableHTTP")
 	}
-	s := &Session{opts: opts, pages: map[string]rawPage{}}
+	s := &Session{opts: opts, pages: map[string]rawPage{}, listGate: make(chan struct{}, 1)}
 	client := mcp.NewClient(&mcp.Implementation{Name: implementationName, Version: moduleVersion()}, nil)
 	client.AddSendingMiddleware(s.recordListing)
 	cs, err := client.Connect(ctx, t.t, nil)
@@ -213,41 +213,20 @@ func (s *Session) Tools(ctx context.Context) ([]toolloop.Tool, error) {
 	if s.closed.Load() {
 		return nil, errClosed
 	}
-	var ( //nolint:prealloc // the count is unknown until every page is listed
-		tools   []toolloop.Tool
-		servers []string // server name of tools[i]
-		errs    []error
-	)
-	s.listMu.Lock()
-	defer s.listMu.Unlock()
-	keep := func(name string) bool { return s.opts.Filter == nil || s.opts.Filter(name) }
+	select {
+	case s.listGate <- struct{}{}:
+		defer func() { <-s.listGate }()
+	case <-ctx.Done():
+		return nil, fmt.Errorf("mcpclient: list tools: %w", ctx.Err())
+	}
+	var l listing
 	seen := map[string]bool{}
 	for cursor := ""; ; {
 		res, err := s.cs.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
 		if err != nil {
 			return nil, fmt.Errorf("mcpclient: list tools: %w", err)
 		}
-		dropped, nulls := s.excluded(cursor, res.Tools)
-		if nulls > 0 {
-			errs = append(errs, fmt.Errorf("mcpclient: the server's tool list has %d null entries", nulls))
-		}
-		for _, name := range dropped {
-			if keep(name) {
-				errs = append(errs, &InvalidToolError{Tool: name, Err: errors.New("the MCP SDK excluded it from the listing as invalid (for example an invalid x-mcp-header annotation)")})
-			}
-		}
-		for _, t := range res.Tools {
-			if !keep(t.Name) {
-				continue
-			}
-			def, invalid := s.definition(t)
-			if invalid != nil {
-				errs = append(errs, invalid)
-				continue
-			}
-			tools = append(tools, toolloop.Tool{Definition: def, Execute: s.executor(t.Name)})
-			servers = append(servers, t.Name)
-		}
+		s.addPage(&l, cursor, res.Tools)
 		if res.NextCursor == "" {
 			break
 		}
@@ -257,11 +236,46 @@ func (s *Session) Tools(ctx context.Context) ([]toolloop.Tool, error) {
 		}
 		cursor = res.NextCursor
 	}
-	errs = append(errs, duplicates(tools, servers)...)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("mcpclient: %d of the server's tools can't be offered: %w", len(errs), errors.Join(errs...))
+	l.errs = append(l.errs, duplicates(l.tools, l.servers)...)
+	if len(l.errs) > 0 {
+		return nil, fmt.Errorf("mcpclient: %d of the server's tools can't be offered: %w", len(l.errs), errors.Join(l.errs...))
 	}
-	return tools, nil
+	return l.tools, nil
+}
+
+// listing accumulates Tools' result across pages.
+type listing struct {
+	tools   []toolloop.Tool
+	servers []string // server name of tools[i]
+	errs    []error
+}
+
+// addPage adds one tools/list page, as the go-sdk returned it after its own
+// filtering, to l: the tools it dropped and null entries become errors, and
+// each kept tool that passes Options.Filter is converted or reported.
+func (s *Session) addPage(l *listing, cursor string, kept []*mcp.Tool) {
+	keep := func(name string) bool { return s.opts.Filter == nil || s.opts.Filter(name) }
+	dropped, nulls := s.excluded(cursor, kept)
+	if nulls > 0 {
+		l.errs = append(l.errs, fmt.Errorf("mcpclient: the server's tool list has %d null entries", nulls))
+	}
+	for _, name := range dropped {
+		if keep(name) {
+			l.errs = append(l.errs, &InvalidToolError{Tool: name, Err: errors.New("the MCP SDK excluded it from the listing as invalid (for example an invalid x-mcp-header annotation)")})
+		}
+	}
+	for _, t := range kept {
+		if !keep(t.Name) {
+			continue
+		}
+		def, invalid := s.definition(t)
+		if invalid != nil {
+			l.errs = append(l.errs, invalid)
+			continue
+		}
+		l.tools = append(l.tools, toolloop.Tool{Definition: def, Execute: s.executor(t.Name)})
+		l.servers = append(l.servers, t.Name)
+	}
 }
 
 func (s *Session) definition(t *mcp.Tool) (llms.ToolDefinition, *InvalidToolError) {

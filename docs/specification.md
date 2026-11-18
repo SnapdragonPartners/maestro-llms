@@ -112,6 +112,7 @@ github.com/SnapdragonPartners/maestro-llms
 
 github.com/SnapdragonPartners/maestro-llms/mcp   (separate module, v0)
   mcp/mcpclient/            an MCP server's tools as toolloop.Tool values
+  mcp/mcpserver/            toolloop.Tool values served over MCP (OAuth resource server)
   mcp/internal/convert/     the shared MCP <-> llms/toolloop translation
 ```
 
@@ -130,7 +131,9 @@ Boundary).
 
 The `mcp` directory is its own Go module (ADR-0049), so the MCP SDK and its
 dependencies reach only applications that import it. It starts at v0,
-outside the v1 stability contract, and exposes no SDK types. It imports
+outside the v1 stability contract, and exposes no SDK types. `mcpserver`
+is an OAuth resource server only: token issuing and client registration
+belong to the application or its identity provider (ADR-0050). It imports
 `llms` and `llms/toolloop`; nothing in the root module imports it.
 
 ## Core Concepts

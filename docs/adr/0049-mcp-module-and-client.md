@@ -99,7 +99,8 @@ package mcpclient
 type Transport struct{ /* unexported */ }
 
 // Command runs cmd as a local server and talks to it over stdin/stdout.
-// The session owns the process: Close stops it.
+// The session owns the process: Close stops it. Command(nil) is rejected by
+// Connect, like the zero Transport.
 func Command(cmd *exec.Cmd) Transport
 
 // StreamableHTTP connects to a Streamable HTTP endpoint. client (nil =
@@ -168,7 +169,10 @@ name would be invisible to the app's grants and logs, and two rewrites
 could collide. Two server tools mapped to the same name are an
 `InvalidToolError` for each. Collisions *between* servers are the caller's
 (toolloop already rejects duplicate names, and maestro-agents' registry
-namespaces them).
+namespaces them). The name `get_toolbox` passes this rule, but `toolloop`
+reserves it when `Config.Toolboxes` is set and fails the run with a
+`ConfigError` naming it; the client doesn't reject it, since it is a valid
+name for an app without toolboxes, and the app maps or filters it.
 
 The definition's description is the tool's `description`, falling back to
 its `title`, then `annotations.title`.
@@ -184,8 +188,12 @@ adapter's schema conversion would otherwise drop the referenced structure
 without an error. A recursive reference, a remote or anchor reference, or a
 pointer that doesn't resolve is an `InvalidToolError`, and so is a schema
 whose expansion nests references more than 32 deep or grows past 100,000
-nodes (references that fan out grow exponentially without being
-recursive). Only subschemas are searched: the keywords that hold schemas
+JSON values or 4 MiB of string bytes, counting each copy of a literal
+(references that fan out grow exponentially without being recursive, and
+a large enum is copied once per reference). A reference inside a nested
+schema resource (a subschema with its own `$id`, against which the
+reference would resolve) is an `InvalidToolError` too, rather than being
+resolved against the wrong document. Only subschemas are searched: the keywords that hold schemas
 (`properties`, `items`, `anyOf`, `additionalProperties` and the rest of
 JSON Schema's applicators). A `"$ref"` member inside literal data
 (`default`, `const`, `enum`, `examples`, unknown keywords) is data and is
@@ -200,7 +208,12 @@ is that adapter's concern, as it is for in-process tools.
 
 #### 4.5 Fail closed, filter to recover
 
-`Tools` returns an error if any tool that passed `Filter` is invalid. The
+`Tools` returns an error if any tool that passed `Filter` is invalid. This
+includes a tool the go-sdk itself drops from `tools/list` (it removes
+tools with invalid `x-mcp-header` annotations and only logs them): the
+client records each page as the server sent it, ahead of that filter, and
+reports a dropped tool as an `InvalidToolError`. A null entry in the
+listing fails `Tools` outright, since it has no name to filter by. The
 error joins one `InvalidToolError` per bad tool (so `errors.As` finds them,
 and the message names every one), and no tools are returned. A caller that
 wants the rest filters the bad ones out and calls again. Failing the whole

@@ -278,3 +278,66 @@ func TestSchemaDepthBounded(t *testing.T) {
 		t.Fatalf("Schema error = %v, want the depth limit", err)
 	}
 }
+
+func TestSchemaLiteralCopiesBounded(t *testing.T) {
+	// A 100 KB enum referenced 50 times: 5 MB of copies, only 50 references.
+	enum := make([]string, 100)
+	for i := range enum {
+		enum[i] = fmt.Sprintf("%q", strings.Repeat(string(rune('a'+i%26)), 1000))
+	}
+	props := make([]string, 50)
+	for i := range props {
+		props[i] = fmt.Sprintf(`"p%d":{"$ref":"#/$defs/Big"}`, i)
+	}
+	in := `{"type":"object","properties":{` + strings.Join(props, ",") + `},"$defs":{"Big":{"enum":[` + strings.Join(enum, ",") + `]}}}`
+	_, err := Schema(json.RawMessage(in))
+	if err == nil || !strings.Contains(err.Error(), "bytes") {
+		t.Fatalf("Schema error = %v, want the size bound", err)
+	}
+
+	// The same literal with no references is sent unchanged, whatever its size.
+	big := `{"type":"object","properties":{"a":{"enum":[` + strings.Repeat(strings.Join(enum, ",")+",", 50) + `"z"]}}}`
+	got, err := Schema(json.RawMessage(big))
+	if err != nil || string(got) != big {
+		t.Fatalf("large schema without references: err=%v, changed=%v", err, string(got) != big)
+	}
+}
+
+func TestSchemaNestedResources(t *testing.T) {
+	bad := []struct{ name, in string }{
+		{"ref inside nested $id", `{"type":"object","properties":{"a":{"$id":"https://x.test/a","$defs":{"X":{"type":"integer"}},"type":"object","properties":{"b":{"$ref":"#/$defs/X"}}}},"$defs":{"X":{"type":"string"}}}`},
+		{"ref beside nested $id", `{"type":"object","properties":{"a":{"$id":"https://x.test/a","$ref":"#/$defs/X"}},"$defs":{"X":{"type":"string"}}}`},
+		{"target is a nested resource with refs", `{"type":"object","properties":{"a":{"$ref":"#/$defs/R"}},"$defs":{"X":{"type":"string"},"R":{"$id":"https://x.test/r","type":"object","properties":{"b":{"$ref":"#/$defs/X"}}}}}`},
+		{"pointer through a nested resource", `{"type":"object","properties":{"a":{"$ref":"#/$defs/R/properties/b"}},"$defs":{"X":{"type":"string"},"R":{"$id":"https://x.test/r","type":"object","properties":{"b":{"type":"object","properties":{"c":{"$ref":"#/$defs/X"}}}}}}}`},
+	}
+	for _, c := range bad {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Schema(json.RawMessage(c.in))
+			if err == nil || !strings.Contains(err.Error(), "nested schema resource") {
+				t.Fatalf("Schema error = %v, want the nested-resource error", err)
+			}
+		})
+	}
+
+	t.Run("root $id is fine", func(t *testing.T) {
+		got, err := Schema(json.RawMessage(`{"$id":"https://x.test/root","type":"object","properties":{"a":{"$ref":"#/$defs/X"}},"$defs":{"X":{"type":"string"}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		equalJSON(t, got, `{"$id":"https://x.test/root","type":"object","properties":{"a":{"type":"string"}}}`)
+	})
+	t.Run("nested $id without refs inside is kept", func(t *testing.T) {
+		got, err := Schema(json.RawMessage(`{"type":"object","properties":{"a":{"$ref":"#/$defs/X"},"r":{"$id":"https://x.test/r","type":"string"}},"$defs":{"X":{"type":"string"}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		equalJSON(t, got, `{"type":"object","properties":{"a":{"type":"string"},"r":{"$id":"https://x.test/r","type":"string"}}}`)
+	})
+	t.Run("pointer to a resource without refs", func(t *testing.T) {
+		got, err := Schema(json.RawMessage(`{"type":"object","properties":{"a":{"$ref":"#/$defs/R"}},"$defs":{"R":{"$id":"https://x.test/r","type":"string"}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		equalJSON(t, got, `{"type":"object","properties":{"a":{"$id":"https://x.test/r","type":"string"}}}`)
+	})
+}

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime/debug"
+	"sync"
 	"sync/atomic"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -42,8 +43,12 @@ type Transport struct {
 // Command runs cmd as a local server and talks to it over stdin/stdout. The
 // session owns the process: Connect starts it and Session.Close stops it
 // (closing its stdin, then signalling it if it doesn't exit). cmd must not
-// have been started, and its Stdin and Stdout must be unset.
+// be nil (Connect rejects it) or already started, and its Stdin and Stdout
+// must be unset.
 func Command(cmd *exec.Cmd) Transport {
+	if cmd == nil {
+		return Transport{}
+	}
 	return Transport{t: &mcp.CommandTransport{Command: cmd}}
 }
 
@@ -70,22 +75,92 @@ type Options struct {
 // do. The caller owns Close.
 type Session struct {
 	cs     *mcp.ClientSession
+	pages  map[string]rawPage // tools/list pages as the server sent them, by cursor
 	opts   Options
+	mu     sync.Mutex // guards pages
 	closed atomic.Bool
+}
+
+// rawPage is what the server sent for one tools/list page, before the
+// go-sdk drops entries it considers invalid (null entries, and tools with
+// invalid x-mcp-header annotations), which it only logs.
+type rawPage struct {
+	names []string
+	nulls int
 }
 
 // Connect opens a session: it starts or dials the server and runs the MCP
 // initialize handshake under ctx.
 func Connect(ctx context.Context, t Transport, opts Options) (*Session, error) {
 	if t.t == nil {
-		return nil, errors.New("mcpclient: zero Transport; use Command or StreamableHTTP")
+		return nil, errors.New("mcpclient: zero Transport (or Command(nil)); use Command with a non-nil exec.Cmd, or StreamableHTTP")
 	}
+	s := &Session{opts: opts, pages: map[string]rawPage{}}
 	client := mcp.NewClient(&mcp.Implementation{Name: implementationName, Version: moduleVersion()}, nil)
+	client.AddSendingMiddleware(s.recordListing)
 	cs, err := client.Connect(ctx, t.t, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcpclient: connect: %w", err)
 	}
-	return &Session{cs: cs, opts: opts}, nil
+	s.cs = cs
+	return s, nil
+}
+
+// recordListing keeps each tools/list page as the server sent it, so Tools
+// can report the tools the go-sdk drops from ListTools' result instead of
+// silently offering the rest (ADR-0049 §4.5). It runs before that filter.
+// A page the go-sdk serves from its cache doesn't pass through here, and
+// the page recorded when it was fetched still describes it.
+func (s *Session) recordListing(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		res, err := next(ctx, method, req)
+		if err != nil || method != "tools/list" {
+			return res, err
+		}
+		lr, ok := res.(*mcp.ListToolsResult)
+		if !ok || lr == nil {
+			return res, err
+		}
+		cursor := ""
+		if p, ok := req.GetParams().(*mcp.ListToolsParams); ok && p != nil {
+			cursor = p.Cursor
+		}
+		var page rawPage
+		for _, t := range lr.Tools {
+			if t == nil {
+				page.nulls++
+				continue
+			}
+			page.names = append(page.names, t.Name)
+		}
+		s.mu.Lock()
+		s.pages[cursor] = page
+		s.mu.Unlock()
+		return res, err
+	}
+}
+
+// excluded returns the names the go-sdk dropped from the page at cursor,
+// given the tools it kept, and the number of null entries.
+func (s *Session) excluded(cursor string, kept []*mcp.Tool) (names []string, nulls int) {
+	s.mu.Lock()
+	page, ok := s.pages[cursor]
+	s.mu.Unlock()
+	if !ok {
+		return nil, 0
+	}
+	left := make(map[string]int, len(kept))
+	for _, t := range kept {
+		left[t.Name]++
+	}
+	for _, n := range page.names {
+		if left[n] > 0 {
+			left[n]--
+			continue
+		}
+		names = append(names, n)
+	}
+	return names, page.nulls
 }
 
 // Close ends the session and stops a Command server. Execute on a tool from
@@ -102,7 +177,8 @@ func (s *Session) Close() error {
 
 // InvalidToolError reports a server tool that can't be offered to a model:
 // its (mapped) name breaks the portable rule or collides with another of the
-// server's tools, or its input schema can't be normalized.
+// server's tools, its input schema can't be normalized, or the MCP SDK
+// excluded it from the listing as invalid.
 type InvalidToolError struct {
 	Err  error
 	Tool string // the server's name
@@ -125,29 +201,54 @@ func (e *InvalidToolError) Unwrap() error { return e.Err }
 // (accepted by every provider) and unique within the server, and an input
 // schema whose type is "object" and whose references are local and
 // non-recursive; those references are inlined, since Gemini rejects them.
+// A tool the MCP SDK itself drops from the listing (for example for an
+// invalid x-mcp-header annotation) is an *InvalidToolError too, and a null
+// entry in the listing fails Tools outright, since it has no name to filter.
 func (s *Session) Tools(ctx context.Context) ([]toolloop.Tool, error) {
 	if s.closed.Load() {
 		return nil, errClosed
 	}
-	var ( //nolint:prealloc // the count is unknown until the iterator has paged through the list
+	var ( //nolint:prealloc // the count is unknown until every page is listed
 		tools   []toolloop.Tool
 		servers []string // server name of tools[i]
 		errs    []error
 	)
-	for t, err := range s.cs.Tools(ctx, nil) {
+	keep := func(name string) bool { return s.opts.Filter == nil || s.opts.Filter(name) }
+	seen := map[string]bool{}
+	for cursor := ""; ; {
+		res, err := s.cs.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
 		if err != nil {
 			return nil, fmt.Errorf("mcpclient: list tools: %w", err)
 		}
-		if s.opts.Filter != nil && !s.opts.Filter(t.Name) {
-			continue
+		dropped, nulls := s.excluded(cursor, res.Tools)
+		if nulls > 0 {
+			errs = append(errs, fmt.Errorf("mcpclient: the server's tool list has %d null entries", nulls))
 		}
-		def, invalid := s.definition(t)
-		if invalid != nil {
-			errs = append(errs, invalid)
-			continue
+		for _, name := range dropped {
+			if keep(name) {
+				errs = append(errs, &InvalidToolError{Tool: name, Err: errors.New("the MCP SDK excluded it from the listing as invalid (for example an invalid x-mcp-header annotation)")})
+			}
 		}
-		tools = append(tools, toolloop.Tool{Definition: def, Execute: s.executor(t.Name)})
-		servers = append(servers, t.Name)
+		for _, t := range res.Tools {
+			if !keep(t.Name) {
+				continue
+			}
+			def, invalid := s.definition(t)
+			if invalid != nil {
+				errs = append(errs, invalid)
+				continue
+			}
+			tools = append(tools, toolloop.Tool{Definition: def, Execute: s.executor(t.Name)})
+			servers = append(servers, t.Name)
+		}
+		if res.NextCursor == "" {
+			break
+		}
+		seen[cursor] = true
+		if seen[res.NextCursor] {
+			return nil, fmt.Errorf("mcpclient: list tools: the server repeated cursor %q", res.NextCursor)
+		}
+		cursor = res.NextCursor
 	}
 	errs = append(errs, duplicates(tools, servers)...)
 	if len(errs) > 0 {

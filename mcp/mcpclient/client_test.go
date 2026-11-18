@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/SnapdragonPartners/maestro-llms/llms"
@@ -353,7 +355,7 @@ func TestConcurrentCalls(t *testing.T) {
 	}
 	echo := byName(t, tools, "echo")
 	var wg sync.WaitGroup
-	errs := make(chan error, 20)
+	errs := make(chan error, 24) // one per worker: 20 calls and 4 listings
 	for i := range 20 {
 		wg.Go(func() {
 			msg := fmt.Sprint(i)
@@ -403,6 +405,146 @@ func TestClose(t *testing.T) {
 func TestZeroTransport(t *testing.T) {
 	if _, err := Connect(context.Background(), Transport{}, Options{}); err == nil {
 		t.Fatal("want an error for the zero Transport")
+	}
+	if _, err := Connect(context.Background(), Command(nil), Options{}); err == nil {
+		t.Fatal("want an error for Command(nil), not a panic")
+	}
+}
+
+// rawServer answers initialize and tools/list over the in-memory transport
+// with hand-written JSON, for listings the go-sdk's own server refuses to
+// produce. pages are tools/list results; page i's nextCursor is "c<i+1>".
+func rawServer(ctx context.Context, t *testing.T, pages ...string) Transport {
+	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	st, ct := mcp.NewInMemoryTransports()
+	conn, err := st.Connect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	go func() {
+		for {
+			msg, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			b, err := jsonrpc.EncodeMessage(msg)
+			if err != nil {
+				return
+			}
+			var req struct {
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
+				Params struct {
+					ProtocolVersion string `json:"protocolVersion"`
+					Cursor          string `json:"cursor"`
+				} `json:"params"`
+			}
+			if json.Unmarshal(b, &req) != nil || len(req.ID) == 0 {
+				continue // a notification or a response
+			}
+			var result string
+			switch req.Method {
+			case "initialize":
+				result = `{"protocolVersion":"` + req.Params.ProtocolVersion + `","capabilities":{"tools":{}},"serverInfo":{"name":"raw","version":"v0"}}`
+			case "tools/list":
+				i := 0
+				if req.Params.Cursor != "" {
+					i, _ = strconv.Atoi(strings.TrimPrefix(req.Params.Cursor, "c"))
+				}
+				result = pages[i]
+				if i+1 < len(pages) {
+					result = result[:len(result)-1] + fmt.Sprintf(`,"nextCursor":"c%d"}`, i+1)
+				}
+			default:
+				result = `{}`
+			}
+			resp, err := jsonrpc.DecodeMessage([]byte(`{"jsonrpc":"2.0","id":` + string(req.ID) + `,"result":` + result + `}`))
+			if err != nil || conn.Write(ctx, resp) != nil {
+				return
+			}
+		}
+	}()
+	return Transport{t: ct}
+}
+
+const badHeaderTool = `{"name":"bad_header","inputSchema":{"type":"object","properties":{"a":{"type":"object","x-mcp-header":"X-A"}}}}`
+
+// TestSDKExcludedToolFailsClosed: the go-sdk drops a tool with an invalid
+// x-mcp-header annotation, and null entries, from ListTools' result and only
+// logs them; Tools reports them instead of offering the rest.
+func TestSDKExcludedToolFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	open := func(t *testing.T, opts Options, pages ...string) *Session {
+		t.Helper()
+		sess, err := Connect(ctx, rawServer(ctx, t, pages...), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = sess.Close() })
+		return sess
+	}
+
+	t.Run("excluded tool", func(t *testing.T) {
+		sess := open(t, Options{}, `{"tools":[{"name":"good","inputSchema":{"type":"object"}},`+badHeaderTool+`]}`)
+		tools, err := sess.Tools(ctx)
+		var ite *InvalidToolError
+		if tools != nil || !errors.As(err, &ite) || ite.Tool != "bad_header" || !strings.Contains(err.Error(), "excluded") {
+			t.Fatalf("Tools = %v, %v; want no tools and an InvalidToolError for bad_header", names(tools), err)
+		}
+	})
+	t.Run("excluded tool on a later page", func(t *testing.T) {
+		sess := open(t, Options{},
+			`{"tools":[{"name":"good","inputSchema":{"type":"object"}}]}`,
+			`{"tools":[`+badHeaderTool+`]}`)
+		var ite *InvalidToolError
+		if _, err := sess.Tools(ctx); !errors.As(err, &ite) || ite.Tool != "bad_header" {
+			t.Fatalf("Tools error = %v", err)
+		}
+	})
+	t.Run("filter recovers", func(t *testing.T) {
+		sess := open(t, Options{Filter: func(n string) bool { return n != "bad_header" }},
+			`{"tools":[{"name":"good","inputSchema":{"type":"object"}},`+badHeaderTool+`]}`)
+		tools, err := sess.Tools(ctx)
+		if err != nil || strings.Join(names(tools), ",") != "good" {
+			t.Fatalf("filtered Tools = %v, %v", names(tools), err)
+		}
+	})
+	t.Run("null entry", func(t *testing.T) {
+		sess := open(t, Options{}, `{"tools":[{"name":"good","inputSchema":{"type":"object"}},null]}`)
+		if _, err := sess.Tools(ctx); err == nil || !strings.Contains(err.Error(), "null entries") {
+			t.Fatalf("Tools error = %v, want the null-entry error", err)
+		}
+	})
+	t.Run("repeated cursor", func(t *testing.T) {
+		// Page 0 points at c1 and page 1 back at c1's own cursor via a
+		// hand-written nextCursor, so the listing never ends.
+		sess := open(t, Options{},
+			`{"tools":[{"name":"a","inputSchema":{"type":"object"}}]}`,
+			`{"tools":[{"name":"b","inputSchema":{"type":"object"}}],"nextCursor":"c1"}`)
+		if _, err := sess.Tools(ctx); err == nil || !strings.Contains(err.Error(), "repeated cursor") {
+			t.Fatalf("Tools error = %v, want the repeated-cursor error", err)
+		}
+	})
+}
+
+func TestExcluded(t *testing.T) {
+	s := &Session{pages: map[string]rawPage{
+		"":  {names: []string{"a", "b", "b", "c"}, nulls: 2},
+		"x": {names: []string{"d"}},
+	}}
+	kept := []*mcp.Tool{{Name: "a"}, {Name: "b"}}
+	got, nulls := s.excluded("", kept)
+	if strings.Join(got, ",") != "b,c" || nulls != 2 {
+		t.Errorf("excluded = %v, %d nulls; want [b c] and 2", got, nulls)
+	}
+	if got, nulls := s.excluded("x", []*mcp.Tool{{Name: "d"}}); got != nil || nulls != 0 {
+		t.Errorf("nothing excluded: got %v, %d", got, nulls)
+	}
+	if got, nulls := s.excluded("unrecorded", nil); got != nil || nulls != 0 {
+		t.Errorf("unrecorded page: got %v, %d", got, nulls)
 	}
 }
 

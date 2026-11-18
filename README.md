@@ -655,10 +655,13 @@ For a remote server use `mcpclient.StreamableHTTP(url, httpClient)`; the
   which every provider accepts. A tool that breaks it is reported, not
   renamed: use `Options.Name` to map it, or `Options.Filter` to leave it out.
   Collisions between servers are yours to avoid (the loop rejects duplicate
-  names).
+  names). With `toolloop` toolboxes on, `get_toolbox` is reserved for the
+  loop, so map or filter a server tool of that name (the loop's
+  `ConfigError` names it).
 - **Fail closed.** If any listed tool is invalid (its name, a name collision,
-  or a schema with a recursive or remote `$ref`), `Tools` returns no tools
-  and an error with one `*mcpclient.InvalidToolError` per bad tool.
+  a schema with a recursive or remote `$ref`, or a tool the MCP SDK itself
+  drops as invalid), `Tools` returns no tools and an error with one
+  `*mcpclient.InvalidToolError` per bad tool.
 - **Schemas.** Local `$ref`s are inlined, because Gemini doesn't accept
   them. Nothing else is rewritten.
 - **Errors.** An MCP `isError` result comes back as `IsError: true`, which

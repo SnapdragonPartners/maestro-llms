@@ -3,7 +3,8 @@
 A separate v0 Go module, `github.com/SnapdragonPartners/maestro-llms/otel`,
 tagged `otel/vX.Y.Z` and outside the root module's v1 stability contract.
 Its one package, `llmotel`, exports chat, embedding, tool and tool-loop calls
-as OpenTelemetry GenAI spans and metrics. Design and attribute mapping:
+as OpenTelemetry GenAI spans, and chat and embedding calls as duration and
+token-usage metrics. Design and attribute mapping:
 [ADR-0051](../docs/adr/0051-otel-module.md). Usage: the root README's
 "OpenTelemetry" section and [`examples/otel`](../examples/otel).
 

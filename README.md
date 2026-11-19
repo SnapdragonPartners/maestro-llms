@@ -1438,6 +1438,12 @@ a minor release until its own v1
 ([ADR-0049](docs/adr/0049-mcp-module-and-client.md)). It exposes no MCP SDK
 types.
 
+**Not covered: the `otel` module.** `github.com/SnapdragonPartners/maestro-llms/otel`
+(package `llmotel`) is likewise a separate v0 module (tags `otel/vX.Y.Z`):
+its API and its attribute names may change in a minor release, notably when
+it moves off semconv v1.41.0 to the GenAI conventions' own release
+([ADR-0051](docs/adr/0051-otel-module.md)).
+
 **Covered: documented semantics, not just signatures.** This includes
 everything [`docs/specification.md`](docs/specification.md) and the accepted
 ADRs specify, for example:

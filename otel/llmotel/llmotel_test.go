@@ -404,6 +404,54 @@ func TestEmbeddings(t *testing.T) {
 	assertNoCanary(t, h)
 }
 
+// TestEmbeddingsCall: the logical-call layer for embeddings is an INTERNAL,
+// span-only "maestro_llms.call embeddings {model}" with the attempt span
+// nested under it.
+func TestEmbeddingsCall(t *testing.T) {
+	h := newHarness(t, llmotel.Options{})
+	emb := &testllm.FakeEmbeddingClient{
+		ModelRef: llms.ModelRef{Provider: llms.ProviderOpenAI, Name: "text-emb"},
+		Usage:    llms.Usage{EmbeddingTokens: 5},
+	}
+	c := h.tel.EmbeddingsCall()(h.tel.Embeddings()(emb))
+	if _, err := c.Embed(context.Background(), llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{{Text: canary}}}); err != nil {
+		t.Fatal(err)
+	}
+	call := h.span("maestro_llms.call embeddings text-emb")
+	if call.SpanKind() != trace.SpanKindInternal {
+		t.Errorf("logical span kind = %v, want internal", call.SpanKind())
+	}
+	wantAttrs(t, call.Attributes(), map[string]any{
+		"gen_ai.operation.name": "embeddings", "gen_ai.provider.name": "openai", "gen_ai.request.model": "text-emb",
+	}, "gen_ai.usage.input_tokens")
+	attempt := h.span("embeddings text-emb")
+	if attempt.Parent().SpanID() != call.SpanContext().SpanID() {
+		t.Error("attempt span must nest under the logical-call span")
+	}
+	rm := h.metrics()
+	if dur := h.histogram(&rm, "gen_ai.client.operation.duration"); len(dur) != 1 || dur[0].count != 1 {
+		t.Errorf("duration points = %+v, want one record (attempt layer only)", dur)
+	}
+	assertNoCanary(t, h)
+}
+
+// TestCacheWriteTokens: CacheWriteTokens maps to
+// gen_ai.usage.cache_creation.input_tokens on the attempt span.
+func TestCacheWriteTokens(t *testing.T) {
+	h := newHarness(t, llmotel.Options{})
+	fake := &testllm.FakeChatClient{ModelRef: anthropicModel, Responses: []llms.ChatResponse{{
+		Message: llms.AssistantText("ok"), Text: "ok",
+		Usage: llms.Usage{InputTokens: 300, OutputTokens: 2, BillableOutputTokens: 2, CacheWriteTokens: 250},
+	}}}
+	if _, err := h.tel.Chat()(fake).Complete(context.Background(), chatReq()); err != nil {
+		t.Fatal(err)
+	}
+	wantAttrs(t, h.span("chat claude-test").Attributes(), map[string]any{
+		"gen_ai.usage.input_tokens":                300,
+		"gen_ai.usage.cache_creation.input_tokens": 250,
+	}, "gen_ai.usage.cache_read.input_tokens")
+}
+
 func TestProviderName(t *testing.T) {
 	for id, want := range map[llms.ProviderID]string{
 		llms.ProviderOpenAI: "openai", llms.ProviderAnthropic: "anthropic", llms.ProviderGoogle: "gcp.gen_ai",

@@ -1775,4 +1775,14 @@ metadata, and the authorization server left to the app — see
 [ADR-0050](docs/adr/0050-mcp-server.md); built on go-sdk v1.8.0 and
 requires the root module at v1.7.0; nothing changes for root-module users).
 
+The separate `otel` module has its own v0 line, tagged `otel/vX.Y.Z` and
+outside the stability contract: **otel/v0.1.0** (`llmotel` exports chat,
+embedding, tool and tool-loop calls as OpenTelemetry GenAI spans and metrics
+under semantic conventions v1.41.0, with per-attempt and span-only
+logical-call decorators so metrics come from one layer, and no prompt,
+completion, tool content or error text exported — see
+[ADR-0051](docs/adr/0051-otel-module.md); depends only on the OpenTelemetry
+Go API v1.47.0 and requires the root module at v1.7.0; nothing changes for
+root-module users).
+
 MIT — see [`LICENSE`](LICENSE).

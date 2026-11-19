@@ -51,3 +51,9 @@ jobs:
       - name: Run govulncheck (mcp module)
         working-directory: mcp
         run: govulncheck ./...
+
+      # The otel module (ADR-0051): OpenTelemetry API, plus the SDK and OTLP
+      # exporters its tests use.
+      - name: Run govulncheck (otel module)
+        working-directory: otel
+        run: govulncheck ./...

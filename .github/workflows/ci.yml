@@ -126,3 +126,23 @@ jobs:
           go work init . ./mcp
           (cd mcp && go build ./... && go test ./...)
           rm -f go.work go.work.sum
+
+      # The otel module (ADR-0051), set up like mcp: against the released
+      # root it requires, then against root HEAD through a temporary go.work.
+      - name: OTel module
+        working-directory: otel
+        run: |
+          set -euo pipefail
+          go mod tidy -diff || { echo "::error::otel/go.mod is out of sync; run 'make tidy' and commit"; exit 1; }
+          golangci-lint run
+          go vet -tags=integration ./...
+          go build ./...
+          govulncheck ./...
+          go test -cover ./...
+
+      - name: OTel module against root HEAD
+        run: |
+          set -euo pipefail
+          go work init . ./otel
+          (cd otel && go build ./... && go test ./...)
+          rm -f go.work go.work.sum

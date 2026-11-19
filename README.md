@@ -89,6 +89,10 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   values to ChatGPT and other MCP clients over Streamable HTTP (optionally
   as an OAuth resource server) or stdio. See
   [ADR-0050](docs/adr/0050-mcp-server.md).
+- **OpenTelemetry** (`otel/llmotel`, a separate v0 module): GenAI-convention
+  spans and metrics for chat, embeddings, tool calls and tool-loop runs,
+  exported through the app's own OpenTelemetry SDK. No content and no error
+  text leave the process. See [ADR-0051](docs/adr/0051-otel-module.md).
 - **Model listing & upgrade detection** (`llms.ModelLister`): optional
   capability for surfacing "newer model available in your family"
   prompts to users — applications decide whether to upgrade, the
@@ -743,6 +747,53 @@ serves over stdin/stdout without auth.
 - **Not yet:** per-tool scopes (ChatGPT's `securitySchemes`), resources,
   prompts, `structuredContent`.
 
+### OpenTelemetry (`otel/llmotel`)
+
+`llmotel` exports calls as OpenTelemetry GenAI spans and metrics. It lives in
+a separate Go module, `github.com/SnapdragonPartners/maestro-llms/otel` (v0,
+tagged `otel/vX.Y.Z`), so OpenTelemetry reaches only the apps that import it
+([ADR-0051](docs/adr/0051-otel-module.md)). It uses only the OpenTelemetry
+API: your app sets up the SDK, exporters and endpoint, and passes its
+providers in.
+
+```sh
+go get github.com/SnapdragonPartners/maestro-llms/otel@latest
+```
+
+```go
+import "github.com/SnapdragonPartners/maestro-llms/otel/llmotel"
+
+tel, err := llmotel.New(llmotel.Options{TracerProvider: tp, MeterProvider: mp})
+// Attempt layer innermost (spans + metrics), logical-call layer outside (span only).
+chat := tel.ChatCall()(middleware.RecommendedChat(tel.Chat()(base), cfg))
+out := tel.Run(ctx, toolloop.Config{
+	Request: req,
+	Client:  chat,
+	Tools:   tel.Tools(tools),
+}, llmotel.RunOptions{AgentName: "reviewer"})
+```
+
+- **What you get.** A `chat {model}` CLIENT span per provider attempt (with
+  the retry attempt number), a `maestro_llms.call chat {model}` span per
+  logical call, `execute_tool {tool}` and `invoke_agent` spans that nest
+  under the caller's span, and the `gen_ai.client.operation.duration` and
+  `gen_ai.client.token.usage` histograms. Embeddings work the same way.
+- **Conventions.** It follows the GenAI semantic conventions as released in
+  semconv v1.41.0. They are unstable and have since moved to their own
+  repository, which hasn't released yet. When it does, a minor version of
+  this module moves to it and the release notes list every renamed name.
+- **Metrics come from one layer.** `Chat()` records metrics and `ChatCall()`
+  doesn't. Don't wrap with `Chat()` both inside and outside a chain.
+- **Provider name.** `gen_ai.provider.name` can't see the deployment, so
+  Google defaults to `gcp.gen_ai`. Set `Options.ProviderName` to say
+  `gcp.vertex_ai` or name an OpenAI-compatible vendor.
+- **No content.** Prompts, completions, tool arguments and results, and
+  error text are never exported. A failure is described by `error.type`
+  only (the `llms.ErrorKind`).
+
+[`examples/otel`](examples/otel) runs a tool loop and exports it over
+OTLP/HTTP; [`otel/README.md`](otel/README.md) has the live test.
+
 ### Model listing & upgrade detection
 
 Long-running projects pin a model ID at config time; months later a newer
@@ -1386,6 +1437,12 @@ is a separate Go module at v0 (tags `mcp/vX.Y.Z`), so its API may change in
 a minor release until its own v1
 ([ADR-0049](docs/adr/0049-mcp-module-and-client.md)). It exposes no MCP SDK
 types.
+
+**Not covered: the `otel` module.** `github.com/SnapdragonPartners/maestro-llms/otel`
+(package `llmotel`) is likewise a separate v0 module (tags `otel/vX.Y.Z`):
+its API and its attribute names may change in a minor release, notably when
+it moves off semconv v1.41.0 to the GenAI conventions' own release
+([ADR-0051](docs/adr/0051-otel-module.md)).
 
 **Covered: documented semantics, not just signatures.** This includes
 everything [`docs/specification.md`](docs/specification.md) and the accepted

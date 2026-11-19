@@ -1,4 +1,4 @@
-.PHONY: build test test-mcp test-integration test-integration-local test-coverage lint fix fix-imports tidy install-lint install-goimports install-hooks clean
+.PHONY: build test test-mcp test-otel test-integration test-integration-local test-coverage lint fix fix-imports tidy install-lint install-goimports install-hooks clean
 
 UNAME_S := $(shell uname -s)
 
@@ -9,10 +9,11 @@ UNAME_S := $(shell uname -s)
 OLLAMA_MODEL ?= llama3.2:1b
 export OLLAMA_MODEL
 
-# Nested modules built, linted and tested beside the root. mcp/ is its own
-# module (ADR-0049) so the MCP SDK stays out of the root module's graph;
-# examples/* are handled by `tidy` and CI's "Build examples" step.
-NESTED_MODULES := mcp
+# Nested modules built, linted and tested beside the root. mcp/ (ADR-0049)
+# and otel/ (ADR-0051) are their own modules so the MCP SDK and OpenTelemetry
+# stay out of the root module's graph; examples/* are handled by `tidy` and
+# CI's "Build examples" step.
+NESTED_MODULES := mcp otel
 
 # Build all packages.
 build: lint
@@ -22,7 +23,8 @@ build: lint
 # Run unit tests with coverage, root module and nested modules.
 # Single test: make test TESTARGS='-run TestName ./llms/...'
 # TESTARGS applies to the root module only, and when it is set the nested
-# modules are skipped; use `make test-mcp TESTARGS=...` for the mcp module.
+# modules are skipped; use `make test-mcp TESTARGS=...` / `make test-otel
+# TESTARGS=...` for the nested modules.
 test:
 	go test -cover $(TESTARGS) ./...
 ifeq ($(strip $(TESTARGS)),)
@@ -32,6 +34,11 @@ endif
 # Run the mcp module's unit tests (ADR-0049).
 test-mcp:
 	cd mcp && go test -cover $(TESTARGS) ./...
+
+# Run the otel module's unit tests (ADR-0051). Its live export test is
+# build-tagged and env-gated; see otel/README.md.
+test-otel:
+	cd otel && go test -cover $(TESTARGS) ./...
 
 # Live integration tests against real provider APIs. Build-tagged so the
 # default `test` target and CI stay network-free. Each test skips unless its

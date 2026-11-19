@@ -4,6 +4,7 @@ coverage/
 .DS_Store
 .claude/
 examples/chat/chat
-# Workspace files: CI creates a temporary go.work for the mcp module; never commit one.
+examples/otel/otel
+# Workspace files: CI creates a temporary go.work for the mcp and otel modules; never commit one.
 go.work
 go.work.sum

@@ -36,6 +36,7 @@ llms/providers/{anthropic,anthropic/anthropicvertex,openai,google,ollama,openaic
 llms/testllm/        deterministic FakeChatClient / FakeEmbeddingClient
 bucket/              generic per-key token/concurrency limiter (no llms import); bucket/memory, bucket/postgres (ADR-0025)
 mcp/                 SEPARATE v0 module (own go.mod, tags mcp/vX.Y.Z, outside the v1 contract): mcpclient (MCP server tools as toolloop.Tool), mcpserver (toolloop.Tool served over Streamable HTTP/stdio, OAuth resource server, ADR-0050), internal/convert (shared translation, both directions) (ADR-0049)
+otel/                SEPARATE v0 module (own go.mod, tags otel/vX.Y.Z, outside the v1 contract): llmotel — GenAI spans + metrics (semconv v1.41.0 pinned) via attempt/logical-call decorators, a tool wrapper and a Run span; OTel API only, no content or error text (ADR-0051)
 ```
 
 Load-bearing structural decisions:
@@ -49,7 +50,7 @@ Load-bearing structural decisions:
 
 ## Build/test commands
 
-`make build` (lint + `go build ./...`), `make test` (unit tests w/ coverage, root + `mcp/`; single: `make test TESTARGS='-run TestName ./llms/...'`, root only; `make test-mcp` for the mcp module), `make lint` (gofmt + golangci-lint — the lint gate is strict: `fieldalignment`, `gocritic rangeValCopy`, `revive` unused-params, modernize `min`/`max`/`WaitGroup.Go` all fail CI). Live provider tests: `make test-integration` (OS-aware; see README). CI requires `build-lint-test` + `CodeQL` (aggregate only — see memory).
+`make build` (lint + `go build ./...`), `make test` (unit tests w/ coverage, root + `mcp/` + `otel/`; single: `make test TESTARGS='-run TestName ./llms/...'`, root only; `make test-mcp` / `make test-otel` for the nested modules), `make lint` (gofmt + golangci-lint — the lint gate is strict: `fieldalignment`, `gocritic rangeValCopy`, `revive` unused-params, modernize `min`/`max`/`WaitGroup.Go` all fail CI). Live provider tests: `make test-integration` (OS-aware; see README). CI requires `build-lint-test` + `CodeQL` (aggregate only — see memory).
 
 ## Versioning
 

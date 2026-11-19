@@ -114,6 +114,9 @@ github.com/SnapdragonPartners/maestro-llms/mcp   (separate module, v0)
   mcp/mcpclient/            an MCP server's tools as toolloop.Tool values
   mcp/mcpserver/            toolloop.Tool values served over MCP (OAuth resource server)
   mcp/internal/convert/     the shared MCP <-> llms/toolloop translation
+
+github.com/SnapdragonPartners/maestro-llms/otel  (separate module, v0)
+  otel/llmotel/             OpenTelemetry GenAI spans and metrics (ADR-0051)
 ```
 
 Provider packages are leaf imports: an application imports only the

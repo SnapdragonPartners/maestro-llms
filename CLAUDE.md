@@ -50,7 +50,7 @@ Load-bearing structural decisions:
 
 ## Build/test commands
 
-`make build` (lint + `go build ./...`), `make test` (unit tests w/ coverage, root + `mcp/`; single: `make test TESTARGS='-run TestName ./llms/...'`, root only; `make test-mcp` for the mcp module), `make lint` (gofmt + golangci-lint — the lint gate is strict: `fieldalignment`, `gocritic rangeValCopy`, `revive` unused-params, modernize `min`/`max`/`WaitGroup.Go` all fail CI). Live provider tests: `make test-integration` (OS-aware; see README). CI requires `build-lint-test` + `CodeQL` (aggregate only — see memory).
+`make build` (lint + `go build ./...`), `make test` (unit tests w/ coverage, root + `mcp/` + `otel/`; single: `make test TESTARGS='-run TestName ./llms/...'`, root only; `make test-mcp` / `make test-otel` for the nested modules), `make lint` (gofmt + golangci-lint — the lint gate is strict: `fieldalignment`, `gocritic rangeValCopy`, `revive` unused-params, modernize `min`/`max`/`WaitGroup.Go` all fail CI). Live provider tests: `make test-integration` (OS-aware; see README). CI requires `build-lint-test` + `CodeQL` (aggregate only — see memory).
 
 ## Versioning
 

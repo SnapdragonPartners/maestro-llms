@@ -104,8 +104,10 @@ type Options struct {
 
 func New(opts Options) (*Telemetry, error) // creates the instruments once
 
-func (t *Telemetry) Chat() middleware.ChatMiddleware
+func (t *Telemetry) Chat() middleware.ChatMiddleware           // attempt layer: span + metrics
 func (t *Telemetry) Embeddings() middleware.EmbeddingMiddleware
+func (t *Telemetry) ChatCall() middleware.ChatMiddleware       // logical-call layer: span only
+func (t *Telemetry) EmbeddingsCall() middleware.EmbeddingMiddleware
 func (t *Telemetry) Tools(tools []toolloop.Tool) []toolloop.Tool
 func (t *Telemetry) Run(ctx context.Context, cfg toolloop.Config, ro RunOptions) toolloop.Outcome
 
@@ -122,9 +124,20 @@ instrument creation fails.
 are ordinary middleware. To get one span per provider attempt, wrap the
 base client: `RecommendedChat(t.Chat()(base), cfg)`. That puts the span
 innermost, inside retry, timeout, circuit and the reservation, like
-`MetricsChat`. To get one span per logical call, wrap the chain from
-outside as well. The attempt spans then nest under the logical span, and the
-gaps between them are backoff and limiter wait.
+`MetricsChat`. To get one span per logical call as well, wrap the chain from
+outside with `t.ChatCall()`. The attempt spans then nest under the logical
+span, and the gaps between them are backoff and limiter wait.
+
+**Metrics come from exactly one layer.** `Chat()`/`Embeddings()` record the
+§4 metrics. `ChatCall()`/`EmbeddingsCall()` record none, and their span
+carries no `gen_ai.usage.*` attributes (§4). Without that split, nesting
+the same decorator would double every token sum and operation count, and
+retries would mix logical-call latency into the attempt-duration
+histogram.
+
+An app that wants metrics per logical call rather than per attempt uses
+`Chat()` outside the chain *instead of* inside it. Using `Chat()` in both
+places is a misuse the package can't detect, and the GoDoc says so.
 
 Rejected: an `Observer`/`ContextObserver` adapter. An `Event` arrives only
 after the call. The span would have to be rebuilt with start = end −
@@ -173,6 +186,14 @@ is `BillableOutputTokens`, not our visible-only `OutputTokens`. Cache
 counts are subsets of input on both sides. A zero `Usage` field is never
 emitted, because zero may mean "not reported". `gen_ai.response.model` is
 not emitted because the toolkit doesn't carry it.
+
+**Logical-call span** (`ChatCall`/`EmbeddingsCall`): kind `INTERNAL`, name
+`maestro_llms.call chat {model}` or `maestro_llms.call embeddings {model}`.
+It has the operation, provider and request-model attributes,
+`maestro_llms.purpose`, and `error.type` on failure. It has no
+`gen_ai.usage.*`, no `gen_ai.response.*` and no metrics. A different name
+and kind keep it from being read as a second inference call, both in trace
+views and in span-derived metrics (Tempo's metrics-generator, for example).
 
 **Embeddings span:** kind `CLIENT`, name `embeddings {model}`.
 `gen_ai.operation.name` = `embeddings`, provider, request model,
@@ -238,7 +259,10 @@ them, and a model-invented name never reaches a wrapped tool.
 - Unit tests use the SDK's in-memory span recorder and a manual metric
   reader against `testllm` fakes. They cover every attribute row above,
   zero-usage omission, the error mapping, span nesting (run → attempt and
-  tool, logical → attempt under `RecommendedChat` with retry), and that a
+  tool, logical → attempt under `RecommendedChat` with retry), and metric
+  counts with `ChatCall()` outside and `Chat()` inside a retrying chain:
+  exactly one duration record per attempt, and token sums equal to the
+  successful attempt's usage. They also check that a
   canary error string never appears in any exported span or metric.
 - `examples/otel` exports over OTLP/HTTP to the endpoint in the standard
   `OTEL_EXPORTER_OTLP_ENDPOINT` (the example reads it, the package doesn't).

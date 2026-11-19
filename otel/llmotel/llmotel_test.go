@@ -569,3 +569,67 @@ func TestGlobalProvidersByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestPanicIsNotRecorded: a panic carrying content propagates through every
+// span the package starts, the spans still end, and the SDK's End does not
+// export the panic value as an exception event.
+func TestPanicIsNotRecorded(t *testing.T) {
+	panicky := func(context.Context, llms.ChatRequest) (llms.ChatResponse, error) { panic(canary) }
+	cases := []struct {
+		run       func(h *harness)
+		name      string
+		wantSpans []string
+	}{
+		{
+			name: "chat attempt and logical call",
+			run: func(h *harness) {
+				fake := &testllm.FakeChatClient{ModelRef: anthropicModel, Func: panicky}
+				_, _ = h.tel.ChatCall()(h.tel.Chat()(fake)).Complete(context.Background(), chatReq())
+			},
+			wantSpans: []string{"chat claude-test", "maestro_llms.call chat claude-test"},
+		},
+		{
+			name: "embeddings",
+			run: func(h *harness) {
+				fake := &testllm.FakeEmbeddingClient{ModelRef: llms.ModelRef{Provider: llms.ProviderOpenAI, Name: "emb"},
+					Func: func(context.Context, llms.EmbeddingRequest) (llms.EmbeddingResponse, error) { panic(canary) }}
+				_, _ = h.tel.Embeddings()(fake).Embed(context.Background(), llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{{Text: "x"}}})
+			},
+			wantSpans: []string{"embeddings emb"},
+		},
+		{
+			name: "tool and run",
+			run: func(h *harness) {
+				call := testllm.ToolCallResponse("c1", "boom", `{}`)
+				fake := &testllm.FakeChatClient{ModelRef: anthropicModel, Responses: []llms.ChatResponse{call}}
+				tool := toolloop.Tool{
+					Definition: llms.ToolDefinition{Name: "boom", InputSchema: json.RawMessage(`{"type":"object"}`)},
+					Execute:    func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) { panic(canary) },
+				}
+				h.tel.Run(context.Background(), toolloop.Config{
+					Request: chatReq(), Client: fake, Tools: h.tel.Tools([]toolloop.Tool{tool}),
+				}, llmotel.RunOptions{AgentName: "a"})
+			},
+			wantSpans: []string{"execute_tool boom", "invoke_agent a"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, llmotel.Options{})
+			func() {
+				defer func() {
+					if r := recover(); r != canary {
+						t.Errorf("panic = %v, want the original panic to propagate", r)
+					}
+				}()
+				tc.run(h)
+			}()
+			for _, name := range tc.wantSpans {
+				if ev := h.span(name).Events(); len(ev) != 0 {
+					t.Errorf("span %s has events %v, want none", name, ev)
+				}
+			}
+			assertNoCanary(t, h)
+		})
+	}
+}

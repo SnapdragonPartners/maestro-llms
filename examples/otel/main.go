@@ -31,15 +31,16 @@ import (
 func main() {
 	provider := flag.String("provider", "", "provider ID (anthropic, openai, google, ollama, openaicompat); empty runs a scripted fake")
 	model := flag.String("model", "", "model name for -provider")
+	baseURL := flag.String("base-url", "", "provider base URL (required for openaicompat, e.g. http://host:8000/v1)")
 	prompt := flag.String("prompt", "What time is it in UTC? Use the clock tool.", "user prompt")
 	flag.Parse()
 
-	if err := run(*provider, *model, *prompt); err != nil {
+	if err := run(*provider, *model, *baseURL, *prompt); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(provider, model, prompt string) (err error) {
+func run(provider, model, baseURL, prompt string) (err error) {
 	ctx := context.Background()
 
 	// The application owns the SDK. The OTLP exporters read the standard
@@ -66,7 +67,7 @@ func run(provider, model, prompt string) (err error) {
 		return err
 	}
 
-	base, err := client(provider, model)
+	base, err := client(provider, model, baseURL)
 	if err != nil {
 		return err
 	}
@@ -95,7 +96,7 @@ func run(provider, model, prompt string) (err error) {
 
 // client returns a live provider client, or a scripted fake that calls the
 // clock tool once and then answers.
-func client(provider, model string) (llms.ChatClient, error) {
+func client(provider, model, baseURL string) (llms.ChatClient, error) {
 	if provider == "" {
 		call := testllm.ToolCallResponse("call-1", "clock", `{}`)
 		call.Usage = llms.Usage{InputTokens: 120, OutputTokens: 12, BillableOutputTokens: 12}
@@ -110,8 +111,9 @@ func client(provider, model string) (llms.ChatClient, error) {
 		return nil, errors.New("-model is required with -provider")
 	}
 	c, err := providers.New(llms.ProviderID(provider), providers.Options{
-		Model:  model,
-		APIKey: os.Getenv("LLM_API_KEY"),
+		Model:   model,
+		APIKey:  os.Getenv("LLM_API_KEY"),
+		BaseURL: baseURL,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("provider: %w", err)

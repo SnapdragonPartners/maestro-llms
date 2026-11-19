@@ -42,7 +42,7 @@ func (t *Telemetry) Tools(tools []toolloop.Tool) []toolloop.Tool {
 			}
 			ctx, span := t.tracer.Start(ctx, spanName("execute_tool", name),
 				trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attrs...))
-			defer span.End()
+			defer endSpan(span)
 			res, err := exec(ctx, call)
 			switch {
 			case err != nil:
@@ -87,7 +87,7 @@ func (t *Telemetry) Run(ctx context.Context, cfg toolloop.Config, ro RunOptions)
 	}
 	ctx, span := t.tracer.Start(ctx, spanName("invoke_agent", ro.AgentName),
 		trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attrs...))
-	defer span.End()
+	defer endSpan(span)
 
 	out := toolloop.Run(ctx, cfg)
 

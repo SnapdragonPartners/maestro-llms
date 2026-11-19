@@ -37,4 +37,6 @@
 // exported either (provider errors can echo request content). A failure is
 // described only by error.type: the llms.ErrorKind of a *llms.ProviderError,
 // "rate_limited" for a *llms.LimitError, and "_OTHER" for anything else.
+// A panic passes through every span unrecorded: the span ends, and the panic
+// value (which can carry content) is not exported as an exception event.
 package llmotel

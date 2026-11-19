@@ -141,10 +141,17 @@ func TestIntegrationExportToCollector(t *testing.T) {
 // poll GETs u until ok accepts the body or 60s pass.
 func poll(t *testing.T, u string, ok func(string) bool) string {
 	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
+	// The deadline bounds each request, headers and body read included, so
+	// a stalled collector fails here instead of at the go test timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 	var last string
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(u) //nolint:gosec,noctx // test URL from the environment
+	for ctx.Err() == nil {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
+		if err != nil {
+			t.Fatalf("request %s: %v", u, err)
+		}
+		resp, err := http.DefaultClient.Do(req) //nolint:gosec // test URL from the environment
 		if err == nil {
 			b, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
@@ -155,7 +162,10 @@ func poll(t *testing.T, u string, ok func(string) bool) string {
 		} else {
 			last = err.Error()
 		}
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+		case <-time.After(2 * time.Second):
+		}
 	}
 	t.Fatalf("%s: not found within 60s; last response: %.500s", u, last)
 	return ""

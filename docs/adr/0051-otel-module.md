@@ -251,6 +251,13 @@ The package **never** calls `span.RecordError` and never writes
 Morris must be able to export metadata without content reaching a
 telemetry buffer (#112).
 
+Panics are not recorded either. The Go SDK's `End` calls `recover()` and
+exports the panic value as an `exception` event when it is deferred
+directly, and a panic value can carry content; the package defers a helper
+that calls `End`, so `End`'s `recover()` returns nil, the span still ends,
+and the panic propagates unrecorded. A test plants the canary in a panic
+through every span the package starts.
+
 No prompt, completion, system prompt, tool definition, tool argument or
 tool result is emitted, and there is no option to turn content on. Content
 capture stays with #112. Tool and agent names are emitted: the app chose

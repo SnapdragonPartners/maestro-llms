@@ -33,7 +33,8 @@ LLM_API_KEY=... OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
   go run . -provider anthropic -model claude-sonnet-5-5
 ```
 
-(`ollama` needs no key; Vertex isn't wired in this example.)
+(`ollama` needs no key; `openaicompat` also needs `-base-url`, e.g.
+`http://host:8000/v1`; Vertex isn't wired in this example.)
 
 ## What to look at
 

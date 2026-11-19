@@ -157,7 +157,7 @@ func traced[Resp any](
 	after func(context.Context, trace.Span, *Resp, error),
 ) (Resp, error) {
 	ctx, span := t.tracer.Start(ctx, name, trace.WithSpanKind(kind), trace.WithAttributes(attrs...))
-	defer span.End()
+	defer endSpan(span)
 	resp, err := call(ctx)
 	if after != nil {
 		var seen Resp
@@ -171,6 +171,12 @@ func traced[Resp any](
 	}
 	return resp, err
 }
+
+// endSpan ends span. It is deferred in place of span.End() so that End's
+// recover() is not called directly by a deferred function: it returns nil,
+// and an active panic propagates without the SDK exporting its value as an
+// exception event (a panic value can carry request or tool content).
+func endSpan(span trace.Span) { span.End() }
 
 // setFailed marks a span failed with error.type as both attribute and status
 // description. It never records the error itself (ADR-0051 §5).

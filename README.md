@@ -90,8 +90,8 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   as an OAuth resource server) or stdio. See
   [ADR-0050](docs/adr/0050-mcp-server.md).
 - **OpenTelemetry** (`otel/llmotel`, a separate v0 module): GenAI-convention
-  spans and metrics for chat, embeddings, tool calls and tool-loop runs,
-  exported through the app's own OpenTelemetry SDK. No content and no error
+  spans for chat, embeddings, tool calls and tool-loop runs, and duration
+  and token-usage metrics for chat and embeddings, exported through the app's own OpenTelemetry SDK. No content and no error
   text leave the process. See [ADR-0051](docs/adr/0051-otel-module.md).
 - **Model listing & upgrade detection** (`llms.ModelLister`): optional
   capability for surfacing "newer model available in your family"
@@ -1777,8 +1777,8 @@ requires the root module at v1.7.0; nothing changes for root-module users).
 
 The separate `otel` module has its own v0 line, tagged `otel/vX.Y.Z` and
 outside the stability contract: **otel/v0.1.0** (`llmotel` exports chat,
-embedding, tool and tool-loop calls as OpenTelemetry GenAI spans and metrics
-under semantic conventions v1.41.0, with per-attempt and span-only
+embedding, tool and tool-loop calls as OpenTelemetry GenAI spans, and chat
+and embedding calls as duration and token-usage metrics, under semantic conventions v1.41.0, with per-attempt and span-only
 logical-call decorators so metrics come from one layer, and no prompt,
 completion, tool content or error text exported — see
 [ADR-0051](docs/adr/0051-otel-module.md); depends only on the OpenTelemetry

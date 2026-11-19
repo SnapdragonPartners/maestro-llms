@@ -110,11 +110,13 @@ func client(provider, model, baseURL string) (llms.ChatClient, error) {
 	if model == "" {
 		return nil, errors.New("-model is required with -provider")
 	}
-	c, err := providers.New(llms.ProviderID(provider), providers.Options{
-		Model:   model,
-		APIKey:  os.Getenv("LLM_API_KEY"),
-		BaseURL: baseURL,
-	})
+	opts := providers.Options{Model: model, BaseURL: baseURL}
+	// ollama takes no key, and providers.New refuses one, so a shell that
+	// exported LLM_API_KEY for another provider still runs ollama.
+	if llms.ProviderID(provider) != llms.ProviderOllama {
+		opts.APIKey = os.Getenv("LLM_API_KEY")
+	}
+	c, err := providers.New(llms.ProviderID(provider), opts)
 	if err != nil {
 		return nil, fmt.Errorf("provider: %w", err)
 	}

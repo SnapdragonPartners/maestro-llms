@@ -210,7 +210,9 @@ failure the model sees, and a trace view should show it.
 
 **Run span:** kind `INTERNAL`, name `invoke_agent` or `invoke_agent
 {AgentName}`. `gen_ai.operation.name` = `invoke_agent`, `gen_ai.agent.name`
-when set, `gen_ai.request.model` from `cfg.Client.Model()`, and on return:
+when set, `gen_ai.provider.name` (the same provider-name function as the
+client spans) and `gen_ai.request.model` from `cfg.Client.Model()` when
+non-empty, and on return:
 
 - `maestro_llms.toolloop.outcome` = `Outcome.Kind`
 - `maestro_llms.toolloop.iterations` = `Outcome.Iterations` (provider

@@ -2,7 +2,7 @@
 # downstream consumers (Maestro, Morris) inherit provider SDKs transitively
 # and ignore them in their own dependabot config.
 #
-# The root module and the mcp module are watched. examples/* modules `replace` onto the root
+# The root module and the mcp and otel modules are watched. examples/* modules `replace` onto the root
 # and are re-synced with `make tidy`; CI's "Build examples" step fails on any
 # dependabot PR until that is run and committed to the PR branch.
 version: 2
@@ -42,6 +42,21 @@ updates:
         patterns: ["*"]
         exclude-patterns:
           - "github.com/modelcontextprotocol/go-sdk"
+
+  # The otel module (ADR-0051). Like mcp, it requires a released root
+  # version. OpenTelemetry modules release in lockstep, so they are grouped.
+  - package-ecosystem: gomod
+    directory: "/otel"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    ignore:
+      # Bumped deliberately when otel needs a newer root release.
+      - dependency-name: "github.com/SnapdragonPartners/maestro-llms"
+    groups:
+      otel-go-deps:
+        patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: "/"

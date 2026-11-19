@@ -1,6 +1,6 @@
 # 0051. OpenTelemetry module: GenAI spans and metrics as a nested v0 module
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-18
 
 ## Context
@@ -213,9 +213,11 @@ failure the model sees, and a trace view should show it.
 when set, `gen_ai.request.model` from `cfg.Client.Model()`, and on return:
 
 - `maestro_llms.toolloop.outcome` = `Outcome.Kind`
-- `maestro_llms.toolloop.iterations` = the number of turns
+- `maestro_llms.toolloop.iterations` = `Outcome.Iterations` (provider
+  responses that contained tool calls)
 - `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` from the run
-  total, when > 0
+  total, `TotalUsage` plus `CompactionUsage` ("the whole run", ADR-0030),
+  when > 0
 
 `OutcomeFinalAnswer` and `OutcomeTerminalTool` leave the status unset.
 Every other kind sets status Error with `error.type` = the outcome kind.

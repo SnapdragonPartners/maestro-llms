@@ -170,7 +170,10 @@ and versioning" below), plus its version table:
   and `last_refill`;
 - `bucket.lease`: one row per held slot, holding the lease ID, a
   `bucket_id` that references `bucket.bucket(id)` with `ON DELETE CASCADE`,
-  `expires_at` and `acquired_at`.
+  `expires_at` and `acquired_at`. Schema v2 adds `detached`, `tokens`,
+  `token_charged`, `adjusted`, `ttl` and `max_expires_at`: a detached
+  lease's own terms, which in-process leases leave at their defaults
+  ([ADR-0052](0052-bucket-detached-leases.md)).
 
 **The database owns the limits.** Every acquire reads them from the row it
 already locks, so storing them costs nothing extra.
@@ -241,8 +244,13 @@ no renewal failure to report it. This applies to refill, expiry checks,
 
 **Lock scope.** Only acquire, `Adjust` (by the bucket's id) and `Ensure`
 take the bucket row lock, plus `LockLimits` and `EnsureTx` in the caller's
-transaction (ADR-0046), which hold it until that transaction ends.
-Renewal and `Release` touch only their own lease row. Renewal changes
+transaction (ADR-0046), which hold it until that transaction ends, and the
+by-ID `AdjustLease` (ADR-0052), which locks the bucket row and then its
+lease row, acquire's order, so it queues behind acquirers like `Adjust`.
+Renewal and `Release` touch only their own lease row. That includes the
+by-ID `RenewLease`, which locks only its lease row (`FOR UPDATE OF l` on a
+join that checks the bucket's name), and `ReleaseLease`, which deletes
+through the same name-checked join without locking the bucket row. Renewal changes
 `expires_at`, which is not a key column, so Postgres does not recheck the
 foreign key, and deleting a child row takes no lock on its parent. So
 renewal and release never queue behind contention among acquirers. If a

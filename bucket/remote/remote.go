@@ -117,34 +117,16 @@ func New(b Backend, cfg Config) (*Limiter, error) {
 //
 // When the wait ends (MaxWait or ctx) while a backend call is failing or in
 // flight, the backend may have admitted the request and lost the response.
-// Acquire then returns that call's error, not a *bucket.LimitError: a
-// limiter refusal is retryable upstream, and retrying would replay an
-// acquire that may already hold a slot and a charge.
+// Acquire then returns that call's error (marked core.Unknown), not a
+// *bucket.LimitError: a limiter refusal is retryable upstream, and retrying
+// would replay an acquire that may already hold a slot and a charge.
 func (l *Limiter) Acquire(ctx context.Context, key string, tokens int) (bucket.Lease, error) {
 	tokens = max(tokens, 0)
 	w := core.Waiter{MaxWait: l.cfg.MaxWait, Initial: l.cfg.PollInterval, Max: l.cfg.MaxPollInterval}
-	var unknown error // the last attempt's outcome, when the backend left it unknown
-	lease, err := core.Wait(ctx, key, w, func(waitCtx context.Context) (core.Result, error) {
-		res, err := l.try(ctx, waitCtx, key, tokens)
-		unknown = nil
-		var ue unknownOutcome
-		if errors.As(err, &ue) {
-			unknown = ue.err
-			return res, ue.err
-		}
-		return res, err
+	return core.Wait(ctx, key, w, func(waitCtx context.Context) (core.Result, error) {
+		return l.try(ctx, waitCtx, key, tokens)
 	})
-	if err != nil && unknown != nil {
-		return nil, fmt.Errorf("bucket %q: remote: acquire outcome unknown: %w", key, unknown)
-	}
-	return lease, err //nolint:wrapcheck // Wait's errors name the key
 }
-
-// unknownOutcome marks a backend error that leaves the attempt's outcome
-// unknown, so Acquire never reports it as a refusal.
-type unknownOutcome struct{ err error }
-
-func (u unknownOutcome) Error() string { return u.err.Error() }
 
 // permanentReason stands in for an empty Reason on a Permanent refusal:
 // core.Wait reads an empty Impossible as "wait and retry".
@@ -172,7 +154,7 @@ func (l *Limiter) try(ctx, waitCtx context.Context, key string, tokens int) (cor
 			// not admitted, and not a capacity refusal to retry.
 			return core.Result{}, err //nolint:wrapcheck // the backend's refusal, as is
 		}
-		return core.Result{}, unknownOutcome{err}
+		return core.Result{}, core.Unknown(fmt.Errorf("bucket %q: remote: acquire outcome unknown: %w", key, err))
 	}
 	if dl.ID == "" || dl.TTL/3 <= 0 || dl.ExpiresIn <= 0 || dl.CapIn <= 0 {
 		if dl.ID != "" {

@@ -175,3 +175,38 @@ func TestRetryAfterSaturates(t *testing.T) {
 		t.Fatalf("RetryAfter = %v, want MaxInt64", got)
 	}
 }
+
+// An attempt whose outcome is unknown is returned as is, never as a
+// refusal, whether or not the wait has ended.
+func TestWaitReturnsUnknownAsIs(t *testing.T) {
+	cause := errors.New("commit ack lost")
+	for name, ended := range map[string]bool{"wait live": false, "wait ended": true} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			_, err := Wait(ctx, "k", Waiter{Initial: time.Millisecond, Max: time.Millisecond}, func(context.Context) (Result, error) {
+				if ended {
+					cancel()
+				}
+				return Result{}, Unknown(cause)
+			})
+			var le *bucket.LimitError
+			if errors.As(err, &le) || !errors.Is(err, cause) || !IsUnknown(err) {
+				t.Fatalf("Wait = %v, want the Unknown error as is", err)
+			}
+		})
+	}
+	// A plain error once the wait ended still reads as the ended wait.
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := Wait(ctx, "k", Waiter{Initial: time.Millisecond, Max: time.Millisecond}, func(context.Context) (Result, error) {
+		cancel()
+		return Result{}, cause
+	})
+	var le *bucket.LimitError
+	if !errors.As(err, &le) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Wait = %v, want a LimitError with the Cause", err)
+	}
+	if Unknown(nil) != nil || IsUnknown(cause) {
+		t.Fatal("Unknown(nil) or IsUnknown on an unmarked error")
+	}
+}

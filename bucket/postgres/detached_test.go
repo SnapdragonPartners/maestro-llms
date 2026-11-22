@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/SnapdragonPartners/maestro-llms/bucket"
+	"github.com/SnapdragonPartners/maestro-llms/bucket/internal/core"
 	"github.com/SnapdragonPartners/maestro-llms/bucket/remote"
 )
 
@@ -557,5 +558,23 @@ func TestRenewAfterLockWaitPastExpiry(t *testing.T) {
 	}
 	if r := readLease(t, db, dl.ID); r.present && r.expiresAt.After(time.Now()) {
 		t.Fatalf("expired lease was extended to %v", r.expiresAt)
+	}
+}
+
+// A failure while ctx is done is a refusal only when nothing committed; a
+// failed COMMIT (marked unknown by inTx) stays a plain error.
+func TestDetachedAcquireErrClassification(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	dbErr := errors.New("connection lost")
+	var le *bucket.LimitError
+	if err := detachedAcquireErr(canceled, "k", dbErr); !errors.As(err, &le) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("rolled back while canceled = %v, want a refusal with the Cause", err)
+	}
+	if err := detachedAcquireErr(canceled, "k", core.Unknown(dbErr)); errors.As(err, &le) || !errors.Is(err, dbErr) {
+		t.Fatalf("failed COMMIT while canceled = %v, want the plain error", err)
+	}
+	if err := detachedAcquireErr(context.Background(), "k", dbErr); err != dbErr { //nolint:errorlint // identity
+		t.Fatalf("live ctx = %v, want the error as is", err)
 	}
 }

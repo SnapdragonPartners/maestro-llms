@@ -116,7 +116,8 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Limiter, error) {
 func micros(d time.Duration) int64 { return d.Microseconds() }
 
 // inTx runs fn in a transaction bounded by OpTimeout, with lock waits
-// bounded the same way. fn's error rolls back; a nil error commits.
+// bounded the same way. fn's error rolls back; a nil error commits. A
+// failed commit is marked core.Unknown: it may have committed.
 func (l *Limiter) inTx(ctx context.Context, fn func(context.Context, Tx) error) error {
 	opCtx, cancel := context.WithTimeout(ctx, l.cfg.OpTimeout)
 	defer cancel()
@@ -133,7 +134,9 @@ func (l *Limiter) inTx(ctx context.Context, fn func(context.Context, Tx) error) 
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("bucket: commit: %w", err)
+		// The COMMIT may have reached the server and only its
+		// acknowledgement been lost, so the outcome is unknown.
+		return core.Unknown(fmt.Errorf("bucket: commit: %w", err))
 	}
 	return nil
 }

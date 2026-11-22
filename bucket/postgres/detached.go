@@ -58,8 +58,12 @@ func scanValidity(scan func(...any) error, extra ...any) (bucket.Validity, error
 // RetryAfter hint (zero when waiting on a slot), and a Permanent one when it
 // can never fit. A holder that wants Acquire's waiting runs it on its own
 // side (bucket/remote does). A key with no configured limits returns an
-// error wrapping bucket.ErrUnknownKey; any other error is a database failure
-// and no lease is held. The attempt is bounded by OpTimeout.
+// error wrapping bucket.ErrUnknownKey. A refusal with a Cause means ctx
+// ended before anything committed. Any other error is a database failure:
+// no lease is held, except that a failed COMMIT may have admitted the
+// request (a lease nobody renews, freed within one TTL, its estimate
+// charged), so it is never reported as a refusal. The attempt is bounded by
+// OpTimeout.
 //
 // The lease's TTL and hard cap come from this Limiter's LeaseTTL and
 // MaxLeaseDuration and are stored on the row, so a renewal on any instance
@@ -93,16 +97,25 @@ RETURNING id, `+validityCols,
 	})
 	switch {
 	case err != nil:
-		if cause := ctx.Err(); cause != nil {
-			return bucket.DetachedLease{}, &bucket.LimitError{Key: key, Reason: "context done while acquiring", Cause: cause}
-		}
-		return bucket.DetachedLease{}, err
+		return bucket.DetachedLease{}, detachedAcquireErr(ctx, key, err)
 	case refusal != nil && refusal.Impossible != "":
 		return bucket.DetachedLease{}, &bucket.LimitError{Key: key, Reason: refusal.Impossible, Permanent: true}
 	case refusal != nil:
 		return bucket.DetachedLease{}, &bucket.LimitError{Key: key, Reason: "no capacity now", RetryAfter: refusal.RetryAfter}
 	}
 	return dl, nil
+}
+
+// detachedAcquireErr classifies a failed TryAcquireDetached. A failure while
+// ctx was done is a refusal with that Cause only when non-admission is
+// established: the transaction rolled back before COMMIT. A failed COMMIT
+// may have admitted the request, so it stays a plain error (never a
+// refusal, which is retryable upstream and would replay the admission).
+func detachedAcquireErr(ctx context.Context, key string, err error) error {
+	if cause := ctx.Err(); cause != nil && !core.IsUnknown(err) {
+		return &bucket.LimitError{Key: key, Reason: "context done while acquiring", Cause: cause}
+	}
+	return err
 }
 
 // RenewLease extends the live detached lease id on key by its own TTL,

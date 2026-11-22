@@ -72,7 +72,7 @@ func (l *Limiter) ReleaseLease(ctx context.Context, key, id string) error
 
 `bucket.DetachedLease{ID; Validity}` and
 `bucket.Validity{TTL, ExpiresIn, CapIn}` live in `bucket`, so
-`*postgres.Limiter` is itself a `remote.Backend` (Decision 4) and a host's
+`*postgres.Limiter` is itself a `remote.Backend` (Decision 5) and a host's
 handlers pass straight through. `bucket.Limiter` and `bucket.Lease` are
 unchanged.
 
@@ -83,7 +83,7 @@ unchanged.
   one that can never fit returns a `Permanent` one. It never waits: waiting
   across an HTTP hop would hold the web request open for up to `MaxWait`,
   polling the database the whole time, and a client-side timeout would then
-  leak a slot. The holder waits instead (Decision 4).
+  leak a slot. The holder waits instead (Decision 5).
 - **Validity is returned as durations,** measured on the database clock
   from a single reading taken after the row is written (`CapIn` is
   `ExpiresIn` plus the stored gap to the cap, so it is never below
@@ -120,7 +120,26 @@ unchanged.
   bounded by `OpTimeout`, like their in-process counterparts. `RenewLease`
   and `TryAcquireDetached` follow the caller's context.
 
-### 3. A gone lease's estimate stands (a deliberate relaxation)
+### 3. An unknown outcome is never a refusal
+
+A refusal (`*bucket.LimitError`) is retryable upstream (ADR-0033), so it
+must mean "not admitted". Two cases can't establish that: a COMMIT whose
+acknowledgement was lost, and a remote call whose response never came.
+Reporting either as a refusal would let the retry middleware replay an
+admission that may already hold a slot and a charge.
+
+The rule lives at one choke point, `core.Wait`, the only place that turns
+an attempt's error into a refusal when the wait ends. An error marked
+`core.Unknown` is always returned as is. `bucket/postgres`'s `inTx` marks a
+failed COMMIT. `TryAcquireDetached` reports a context-ended failure as a
+refusal (with `Cause`) only when it isn't marked, meaning the transaction
+rolled back. `bucket/remote` marks any backend error that isn't a refusal.
+The in-process `Acquire` runs through the same `inTx` and `core.Wait`, so
+it gets the same protection. Its one visible change: a COMMIT that fails
+just as the wait ends now returns the commit error rather than a
+`LimitError`.
+
+### 4. A gone lease's estimate stands (a deliberate relaxation)
 
 The in-process `Adjust` reconciles even after its lease is lost, because
 the charge is in memory. A detached adjustment needs a live row, so an
@@ -138,7 +157,7 @@ worked anyway: during a rolling deploy, binaries that require v1 reap them
 on acquire. If late reconciliation is ever needed, it belongs in a separate,
 bounded accounting record.
 
-### 4. `bucket/remote`: the holder's side
+### 5. `bucket/remote`: the holder's side
 
 A leaf package (it imports `bucket` and `bucket/internal/core` only; never a
 database driver or `llms`). `remote.New(backend, Config)` returns a
@@ -156,10 +175,8 @@ The worker uses it with `ratelimit.FromBucket` like any other limiter.
   after one attempt and fails closed. Acquire is not idempotent: a server
   can commit the acquire and lose the response, and replaying it would debit
   twice. So when the wait ends (`MaxWait` or ctx) while a backend call is
-  failing or in flight, Acquire returns that call's error rather than the
-  `*bucket.LimitError` the wait loop would build. A limiter refusal is
-  retryable upstream (ADR-0033), and the retry middleware would replay the
-  acquire. A lost response leaks the slot for at most one TTL, with the
+  failing or in flight, Acquire returns that call's error rather than a
+  refusal (Decision 3). A lost response leaks the slot for at most one TTL, with the
   estimate charged.
 - **Validity is measured from when the request was sent,** so a slow
   response only shortens the lease. A grant that arrives after that
@@ -184,7 +201,7 @@ The worker uses it with `ratelimit.FromBucket` like any other limiter.
 `remote.Backend` joins the README's frozen-interface list: apps implement
 it over their own API, so adding a method would be a v2 change.
 
-### 5. Schema v2 rollout
+### 6. Schema v2 rollout
 
 `SchemaVersion` becomes 2 with `000002_detached_leases.{up,down}.sql`. The
 release notes open with "Database migration required", addressed to
@@ -208,8 +225,8 @@ within one TTL.
   (every 10s at the default TTL) through the host, plus one database
   statement per renewal on the host.
 - A detached adjustment can miss a shortfall once its lease is gone
-  (Decision 3), and a lost acquire response leaks a slot for at most one TTL
-  (Decision 4). Both are documented, and both are bounded.
+  (Decision 4), and a lost acquire response leaks a slot for at most one TTL
+  (Decision 5). Both are documented, and both are bounded.
 - In-process leases are untouched: same SQL, same behavior, same in-memory
   reconciliation.
 

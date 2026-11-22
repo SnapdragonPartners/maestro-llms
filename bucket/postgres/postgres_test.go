@@ -174,9 +174,9 @@ const (
 // can't show that, since a MaxWait that expires mid-attempt is one too. Then
 // Acquire on a short-lived probe must return the public refusal's shape:
 // a temporary *LimitError with no Cause and no RetryAfter (ADR-0033).
-func mustRefuse(t *testing.T, l *Limiter, key string, tokens int) {
+func mustRefuse(t *testing.T, l *Limiter, key string) {
 	t.Helper()
-	res, err := l.tryAcquire(context.Background(), key, tokens)
+	res, err := l.tryAcquire(context.Background(), key, 0)
 	if err != nil {
 		t.Fatalf("admission attempt on %q: %v", key, err)
 	}
@@ -192,7 +192,7 @@ func mustRefuse(t *testing.T, l *Limiter, key string, tokens int) {
 	// probe would admit. A MaxWait expiry mid-attempt has the same shape as
 	// a capacity refusal here, so a short window loses nothing.
 	probe := newLimiter(t, l.db, Config{LeaseTTL: l.cfg.LeaseTTL, MaxWait: min(refuseWait, l.cfg.LeaseTTL/2)})
-	ls, err := probe.Acquire(context.Background(), key, tokens)
+	ls, err := probe.Acquire(context.Background(), key, 0)
 	if ls != nil {
 		_ = ls.Release(context.Background())
 		t.Fatalf("Acquire on %q admitted while the slot was held, want a refusal", key)
@@ -432,7 +432,7 @@ func TestRenewalKeepsLeaseAlive(t *testing.T) {
 	ensure(t, l, name, bucket.Limits{MaxConcurrency: 1})
 	held := mustAcquire(t, l, name, 0)
 	time.Sleep(2 * time.Second) // several TTLs
-	mustRefuse(t, l, name, 0)   // the renewed lease still holds the slot
+	mustRefuse(t, l, name)      // the renewed lease still holds the slot
 	if n := liveLeases(t, db, name); n != 1 {
 		t.Fatalf("live leases = %d after the refusal, want the renewed holder's 1", n)
 	}
@@ -553,7 +553,7 @@ func TestAcquireAfterLongLockWait(t *testing.T) {
 	if err := db.QueryRow(`SELECT expires_at > clock_timestamp() + interval '200 milliseconds' FROM bucket.lease WHERE id = $1`, ls.id).Scan(&live); err != nil || !live {
 		t.Fatalf("lease after a long lock wait is not live: %v", err)
 	}
-	mustRefuse(t, l, name, 0) // the fresh lease holds the slot
+	mustRefuse(t, l, name) // the fresh lease holds the slot
 	if n := liveLeases(t, db, name); n != 1 {
 		t.Fatalf("live leases = %d after the refusal, want the fresh lease's 1", n)
 	}
@@ -734,7 +734,7 @@ func TestLimitChangeSeenByEveryInstance(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 	held := mustAcquire(t, a, name, 0)
-	mustRefuse(t, b, name, 0) // over the limit
+	mustRefuse(t, b, name) // over the limit
 	if n := liveLeases(t, openMain(t), name); n != 1 {
 		t.Fatalf("live leases = %d after the refusal, want MaxConcurrency 1", n)
 	}

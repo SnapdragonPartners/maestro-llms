@@ -116,7 +116,8 @@ func New(ctx context.Context, db *sql.DB, cfg Config) (*Limiter, error) {
 func micros(d time.Duration) int64 { return d.Microseconds() }
 
 // inTx runs fn in a transaction bounded by OpTimeout, with lock waits
-// bounded the same way. fn's error rolls back; a nil error commits.
+// bounded the same way. fn's error rolls back; a nil error commits. A
+// failed commit is marked core.Unknown: it may have committed.
 func (l *Limiter) inTx(ctx context.Context, fn func(context.Context, Tx) error) error {
 	opCtx, cancel := context.WithTimeout(ctx, l.cfg.OpTimeout)
 	defer cancel()
@@ -133,7 +134,9 @@ func (l *Limiter) inTx(ctx context.Context, fn func(context.Context, Tx) error) 
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("bucket: commit: %w", err)
+		// The COMMIT may have reached the server and only its
+		// acknowledgement been lost, so the outcome is unknown.
+		return core.Unknown(fmt.Errorf("bucket: commit: %w", err))
 	}
 	return nil
 }
@@ -196,35 +199,12 @@ func (l *Limiter) tryAcquire(ctx context.Context, key string, tokens int) (core.
 	var bucketID int64
 	var tokenCharged bool
 	err := l.inTx(ctx, func(ctx context.Context, tx Tx) error {
-		r, now, err := lockBucket(ctx, tx, key)
-		if err != nil {
+		r, refused, err := admit(ctx, tx, key, tokens)
+		if err != nil || refused != nil {
+			if refused != nil {
+				res = *refused
+			}
 			return err
-		}
-		if reason := core.Impossible(r.limits, tokens); reason != "" {
-			res.Impossible = reason
-			return nil
-		}
-		if _, err := tx.Exec(ctx,
-			`DELETE FROM bucket.lease WHERE bucket_id = $1 AND expires_at <= $2`, r.id, now); err != nil {
-			return fmt.Errorf("bucket %q: reap: %w", key, schemaErr(err))
-		}
-		var live int
-		if err := tx.QueryRow(ctx,
-			`SELECT count(*) FROM bucket.lease WHERE bucket_id = $1`, r.id).Scan(&live); err != nil {
-			return fmt.Errorf("bucket %q: count: %w", key, schemaErr(err))
-		}
-		balance := core.Settle(r.limits, r.balance, r.lastRefill, now)
-		fits := core.Fits(r.limits, balance, tokens, live)
-		if fits && r.limits.TokenLimited() {
-			balance -= float64(tokens)
-		}
-		if _, err := tx.Exec(ctx,
-			`UPDATE bucket.bucket SET token_balance = $1, last_refill = $2 WHERE id = $3`, balance, now, r.id); err != nil {
-			return fmt.Errorf("bucket %q: refill: %w", key, schemaErr(err))
-		}
-		if !fits {
-			res.RetryAfter = core.RetryAfter(r.limits, balance, tokens)
-			return nil
 		}
 		// Fresh database time for both stamps: the lease is live for a full
 		// TTL from the moment it is written.
@@ -245,4 +225,42 @@ RETURNING id`, r.id, micros(l.cfg.LeaseTTL)).Scan(&leaseID); err != nil {
 		res.Lease = l.newLease(ctx, key, leaseID, bucketID, tokens, tokenCharged)
 	}
 	return res, nil
+}
+
+// admit is the admission check every acquire shares, in tx: lock key's row,
+// refill, reap expired leases (in-process and detached alike), count live
+// ones, and debit tokens if they and a slot fit. It persists the refill and
+// reap either way. On admission it returns the locked row and a nil result,
+// and the caller inserts the lease row in the same transaction; otherwise it
+// returns the refusal (Impossible, or a RetryAfter to wait on).
+func admit(ctx context.Context, tx Tx, key string, tokens int) (row, *core.Result, error) {
+	r, now, err := lockBucket(ctx, tx, key)
+	if err != nil {
+		return row{}, nil, err
+	}
+	if reason := core.Impossible(r.limits, tokens); reason != "" {
+		return row{}, &core.Result{Impossible: reason}, nil
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM bucket.lease WHERE bucket_id = $1 AND expires_at <= $2`, r.id, now); err != nil {
+		return row{}, nil, fmt.Errorf("bucket %q: reap: %w", key, schemaErr(err))
+	}
+	var live int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM bucket.lease WHERE bucket_id = $1`, r.id).Scan(&live); err != nil {
+		return row{}, nil, fmt.Errorf("bucket %q: count: %w", key, schemaErr(err))
+	}
+	balance := core.Settle(r.limits, r.balance, r.lastRefill, now)
+	fits := core.Fits(r.limits, balance, tokens, live)
+	if fits && r.limits.TokenLimited() {
+		balance -= float64(tokens)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE bucket.bucket SET token_balance = $1, last_refill = $2 WHERE id = $3`, balance, now, r.id); err != nil {
+		return row{}, nil, fmt.Errorf("bucket %q: refill: %w", key, schemaErr(err))
+	}
+	if !fits {
+		return row{}, &core.Result{RetryAfter: core.RetryAfter(r.limits, balance, tokens)}, nil
+	}
+	return r, nil, nil
 }

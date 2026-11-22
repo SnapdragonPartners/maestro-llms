@@ -34,7 +34,7 @@ llms/toolloop/       synchronous tool loop; llms/toolloop/compact compaction pol
 llms/providers/      provider-neutral constructor New(id, Options) (ADR-0048); links every provider package
 llms/providers/{anthropic,anthropic/anthropicvertex,openai,google,ollama,openaicompat}/   one package per provider, imported only if used (vllm = deprecated alias of openaicompat)
 llms/testllm/        deterministic FakeChatClient / FakeEmbeddingClient
-bucket/              generic per-key token/concurrency limiter (no llms import); bucket/memory, bucket/postgres (ADR-0025)
+bucket/              generic per-key token/concurrency limiter (no llms import); bucket/memory, bucket/postgres (ADR-0025), bucket/remote (leases held through another process, ADR-0052)
 mcp/                 SEPARATE v0 module (own go.mod, tags mcp/vX.Y.Z, outside the v1 contract): mcpclient (MCP server tools as toolloop.Tool), mcpserver (toolloop.Tool served over Streamable HTTP/stdio, OAuth resource server, ADR-0050), internal/convert (shared translation, both directions) (ADR-0049)
 otel/                SEPARATE v0 module (own go.mod, tags otel/vX.Y.Z, outside the v1 contract): llmotel — GenAI spans + metrics (semconv v1.41.0 pinned) via attempt/logical-call decorators, a tool wrapper and a Run span; OTel API only, no content or error text (ADR-0051)
 ```

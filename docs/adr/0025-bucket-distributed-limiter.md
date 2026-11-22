@@ -1,6 +1,6 @@
 # 0025. Generic `bucket` limiter with a Postgres backend (lease rows, renewal, FIFO queue planned)
 
-- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (`bucket.LimitError` gains `Permanent` and `Cause`; `FromBucket` maps both) [ADR-0034](0034-limiter-config-and-charging.md) (`Limits.Validate` rejects non-finite and overflowing values; `InMemoryLimiter` sizes through `Limits`) and [ADR-0046](0046-bucket-caller-transactions.md) (`EnsureTx`, `LockLimits` and `Limits` let an app change limits in its own transaction)
+- **Status:** Accepted; amended by [ADR-0033](0033-limit-error-classification.md) (`bucket.LimitError` gains `Permanent` and `Cause`; `FromBucket` maps both) [ADR-0034](0034-limiter-config-and-charging.md) (`Limits.Validate` rejects non-finite and overflowing values; `InMemoryLimiter` sizes through `Limits`) [ADR-0046](0046-bucket-caller-transactions.md) (`EnsureTx`, `LockLimits` and `Limits` let an app change limits in its own transaction) and [ADR-0052](0052-bucket-detached-leases.md) (detached leases held by ID from another process; `bucket/remote`)
 - **Date:** 2026-10-18
 
 ## Context
@@ -170,7 +170,10 @@ and versioning" below), plus its version table:
   and `last_refill`;
 - `bucket.lease`: one row per held slot, holding the lease ID, a
   `bucket_id` that references `bucket.bucket(id)` with `ON DELETE CASCADE`,
-  `expires_at` and `acquired_at`.
+  `expires_at` and `acquired_at`. Schema v2 adds `detached`, `tokens`,
+  `token_charged`, `adjusted`, `ttl` and `max_expires_at`: a detached
+  lease's own terms, which in-process leases leave at their defaults
+  ([ADR-0052](0052-bucket-detached-leases.md)).
 
 **The database owns the limits.** Every acquire reads them from the row it
 already locks, so storing them costs nothing extra.
@@ -179,8 +182,8 @@ already locks, so storing them costs nothing extra.
   effect on the next acquire everywhere. Lowering `max_concurrency` below
   the slots currently held preempts no one; new acquires wait until the
   count falls under the new limit. **Raw `UPDATE`s of the limit columns are
-  unsupported.** The schema's column comments say so too, but they predate
-  ADR-0046 and name only `Ensure`; this ADR and ADR-0046 are the authority.
+  unsupported.** The schema's column comments say so too (refreshed in
+  schema v2 to name `Ensure` and `EnsureTx`, ADR-0052).
   Refill is computed
   lazily, from `last_refill` to now at the row's *current* rate. Changing
   the rate without first settling the refill would apply the new rate
@@ -241,8 +244,13 @@ no renewal failure to report it. This applies to refill, expiry checks,
 
 **Lock scope.** Only acquire, `Adjust` (by the bucket's id) and `Ensure`
 take the bucket row lock, plus `LockLimits` and `EnsureTx` in the caller's
-transaction (ADR-0046), which hold it until that transaction ends.
-Renewal and `Release` touch only their own lease row. Renewal changes
+transaction (ADR-0046), which hold it until that transaction ends, and the
+by-ID `AdjustLease` (ADR-0052), which locks the bucket row and then its
+lease row, acquire's order, so it queues behind acquirers like `Adjust`.
+Renewal and `Release` touch only their own lease row. That includes the
+by-ID `RenewLease`, which locks only its lease row (`FOR UPDATE OF l` on a
+join that checks the bucket's name), and `ReleaseLease`, which deletes
+through the same name-checked join without locking the bucket row. Renewal changes
 `expires_at`, which is not a key column, so Postgres does not recheck the
 foreign key, and deleting a child row takes no lock on its parent. So
 renewal and release never queue behind contention among acquirers. If a

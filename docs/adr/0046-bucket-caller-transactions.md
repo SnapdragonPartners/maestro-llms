@@ -107,7 +107,9 @@ func (l *Limiter) EnsureTx(ctx context.Context, tx Tx, name string, limits bucke
   adopter through a "Database migration required" upgrade for no change
   in behavior. The comments are refreshed the next time the schema
   changes for a real reason; until then, ADR-0025 and this ADR are the
-  authority.
+  authority. (Done: schema v2, `000002_detached_leases`, refreshes them to
+  name `Ensure` and `EnsureTx`; see
+  [ADR-0052](0052-bucket-detached-leases.md).)
 - No schema change, so no `SchemaVersion` bump. Additive under the v1
   stability contract.
 - No `MAESTRO_DIVERGENCES.md` row: `bucket` has no Maestro counterpart.

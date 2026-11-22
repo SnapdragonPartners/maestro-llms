@@ -5,7 +5,9 @@
 // one concurrency slot, adjusts the token charge once the actual count is
 // known, and always releases the lease. Backends live in subpackages:
 // bucket/memory (process-local) and bucket/postgres (shared across
-// processes).
+// processes). bucket/remote is a Limiter for a process that holds leases
+// through another process's API (ADR-0052); DetachedLease and Validity are
+// the by-ID form of a lease it and bucket/postgres exchange.
 //
 // This package must not import the llms packages; the dependency runs the
 // other way (llms/ratelimit.FromBucket adapts a Limiter to the LLM
@@ -51,6 +53,32 @@ type Lease interface {
 	// that want to abort work can select on it. It never closes for
 	// backends that cannot lose a lease.
 	Lost() <-chan struct{}
+}
+
+// DetachedLease is a lease held by its ID rather than by a Lease value, so a
+// process other than the one that acquired it can renew, adjust and release
+// it (ADR-0052). Nothing renews it on its own: the holder renews it every
+// TTL/3 or it expires. The ID is a bearer secret: together with the key it
+// is all an operation on the lease needs.
+type DetachedLease struct {
+	ID string
+	Validity
+}
+
+// Validity is how long a detached lease stays live, as durations measured
+// on the backend's clock when the call that returned them ran. A holder that
+// measures them from when it sent the request stays on the safe side of the
+// backend, whatever the clocks and the network delay.
+type Validity struct {
+	// TTL is the renewal window fixed when the lease was acquired: renew
+	// every TTL/3.
+	TTL time.Duration
+	// ExpiresIn is how long until the lease expires unless it is renewed.
+	// It never exceeds CapIn.
+	ExpiresIn time.Duration
+	// CapIn is how long until the lease's hard cap (the backend's maximum
+	// lease duration, fixed at acquire). No renewal extends it past that.
+	CapIn time.Duration
 }
 
 // Limits are what every user of a key must agree on. Zero values mean

@@ -109,6 +109,7 @@ github.com/SnapdragonPartners/maestro-llms
   bucket/                   generic per-key token/concurrency limiter (no llms import)
   bucket/memory/            in-process backend
   bucket/postgres/          shared PostgreSQL backend
+  bucket/remote/            holder of leases through another process (no database)
 
 github.com/SnapdragonPartners/maestro-llms/mcp   (separate module, v0)
   mcp/mcpclient/            an MCP server's tools as toolloop.Tool values
@@ -962,6 +963,7 @@ Shared limiter ([ADR-0025](adr/0025-bucket-distributed-limiter.md), which replac
 - `ratelimit.FromBucket(l, key)` adapts any `bucket.Limiter` to `Limiter`, so the middleware is unchanged. `key` is the application's policy for mapping a request to a bucket key. A bucket lease is exactly one concurrency slot.
 - `bucket/postgres` keeps limits in the database (`Ensure`), holds concurrency slots as renewed lease rows, treats `MaxWait` as a hard deadline, and fails closed. Its tables live in a dedicated `bucket` schema with versioned migrations; a database behind `postgres.SchemaVersion` gets a `*postgres.SchemaError` rather than wrong behavior.
 - An app changes limits atomically with its own writes through `LockLimits` and `EnsureTx(..., overwrite=true)` in a transaction it owns (a driver-neutral `postgres.Tx`; `SQLTx` adapts `*sql.Tx`), and reads stored limits with `Limits` ([ADR-0046](adr/0046-bucket-caller-transactions.md)). The caller owns commit, rollback and lock waits; while it holds the row lock, the bucket's `Acquire` and `Adjust` wait.
+- A process without database access holds leases through a host that has it ([ADR-0052](adr/0052-bucket-detached-leases.md)): `bucket/postgres` detached leases (`TryAcquireDetached`, a single admission attempt; `RenewLease`, `AdjustLease`, `ReleaseLease` by authorized key and lease ID from any instance) record their charge, adjusted flag, TTL and hard deadline in the lease row (schema v2), so renewal enforces the acquiring instance's terms and the balance changes at most once, only while the lease is live. `bucket/remote` is the holder's `bucket.Limiter` over an app-supplied `Backend`: it waits on the holder's side (`MaxWait` hard, only temporary refusals retried, any other error fails closed), measures validity from the request's send time, and renews every TTL/3. In-process leases are unchanged.
 - PostgreSQL only for now; other SQL dialects or Redis would be further `bucket/<backend>` packages behind the same interface.
 
 ## Token Estimation

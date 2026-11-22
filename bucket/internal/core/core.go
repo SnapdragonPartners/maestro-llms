@@ -4,6 +4,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -93,6 +94,31 @@ type Waiter struct {
 	Max     time.Duration
 }
 
+// Unknown marks err as a failed attempt whose outcome is unknown: the
+// backend may have admitted the request (a COMMIT whose acknowledgement was
+// lost, a remote call whose response never came). Wait returns such an
+// error as is and never reports it as a refusal, even when the wait has
+// ended: a refusal is retryable upstream, and a retry would replay an
+// admission that may already hold a slot and a charge. The marker keeps
+// err's message and unwraps to it.
+func Unknown(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &unknownError{err: err}
+}
+
+// IsUnknown reports whether err carries the Unknown marker.
+func IsUnknown(err error) bool {
+	var u *unknownError
+	return errors.As(err, &u)
+}
+
+type unknownError struct{ err error }
+
+func (u *unknownError) Error() string { return u.err.Error() }
+func (u *unknownError) Unwrap() error { return u.err }
+
 // Wait runs try until it admits, reports the request impossible, fails, or
 // the wait ends. MaxWait is a hard deadline on the whole call. Each try
 // receives a context that ends when the caller's ctx does or MaxWait
@@ -100,7 +126,7 @@ type Waiter struct {
 // charging capacity, so no attempt can admit work after the budget is
 // spent. A try error is a backend failure and is returned as is,
 // unless that context is done, in which case the ended wait is reported as
-// a *bucket.LimitError.
+// a *bucket.LimitError. An error marked Unknown is always returned as is.
 func Wait(ctx context.Context, key string, w Waiter, try func(context.Context) (Result, error)) (bucket.Lease, error) {
 	waitCtx := ctx
 	if w.MaxWait > 0 {
@@ -124,7 +150,7 @@ func Wait(ctx context.Context, key string, w Waiter, try func(context.Context) (
 		}
 		res, err := try(waitCtx)
 		if err != nil {
-			if waitCtx.Err() != nil {
+			if waitCtx.Err() != nil && !IsUnknown(err) {
 				return nil, ended("while acquiring", retryAfter)
 			}
 			return nil, err

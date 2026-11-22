@@ -5,7 +5,9 @@
 // one concurrency slot, adjusts the token charge once the actual count is
 // known, and always releases the lease. Backends live in subpackages:
 // bucket/memory (process-local) and bucket/postgres (shared across
-// processes).
+// processes). bucket/remote is a Limiter for a process that holds leases
+// through another process's API (ADR-0052); DetachedLease and Validity are
+// the by-ID form of a lease it and bucket/postgres exchange.
 //
 // This package must not import the llms packages; the dependency runs the
 // other way (llms/ratelimit.FromBucket adapts a Limiter to the LLM

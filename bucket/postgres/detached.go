@@ -112,25 +112,47 @@ RETURNING id, `+validityCols,
 // CapIn); after it, or for a lease that expired, was released or is unknown,
 // it returns bucket.ErrLeaseLost. Any other error is a database failure; the
 // lease keeps its previous expiry. Bounded by OpTimeout and ctx.
+//
+// It locks the lease row first and checks liveness on a clock read after
+// the lock: a renewal that waited on the lock (behind AdjustLease, say)
+// past the expiry must find the lease lost, and PostgreSQL does not
+// re-evaluate a predicate checked before the wait when the holder only
+// locked the row.
 func (l *Limiter) RenewLease(ctx context.Context, key, id string) (bucket.Validity, error) {
 	if !validLeaseID(id) {
 		return bucket.Validity{}, bucket.ErrLeaseLost
 	}
-	opCtx, cancel := context.WithTimeout(ctx, l.cfg.OpTimeout)
-	defer cancel()
-	row := l.db.QueryRowContext(opCtx, `
-UPDATE bucket.lease AS l
-SET expires_at = LEAST(clock_timestamp() + l.ttl, l.max_expires_at)
-FROM bucket.bucket AS b
-WHERE l.id = $1 AND l.detached AND b.id = l.bucket_id AND b.name = $2
-  AND l.expires_at > clock_timestamp()
-RETURNING `+validityCols, id, key)
-	v, err := scanValidity(row.Scan)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return bucket.Validity{}, bucket.ErrLeaseLost
-	case err != nil:
-		return bucket.Validity{}, fmt.Errorf("bucket %q: renew: %w", key, schemaErr(err))
+	var v bucket.Validity
+	err := l.inTx(ctx, func(ctx context.Context, tx Tx) error {
+		var expiresAt time.Time
+		err := tx.QueryRow(ctx, `
+SELECT l.expires_at FROM bucket.lease AS l JOIN bucket.bucket AS b ON b.id = l.bucket_id
+WHERE l.id = $1 AND l.detached AND b.name = $2
+FOR UPDATE OF l`, id, key).Scan(&expiresAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return bucket.ErrLeaseLost
+		}
+		if err != nil {
+			return fmt.Errorf("bucket %q: renew: %w", key, schemaErr(err))
+		}
+		var now time.Time
+		if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+			return fmt.Errorf("bucket %q: clock: %w", key, err)
+		}
+		if !expiresAt.After(now) {
+			return bucket.ErrLeaseLost
+		}
+		row := tx.QueryRow(ctx, `
+UPDATE bucket.lease SET expires_at = LEAST($2::timestamptz + ttl, max_expires_at)
+WHERE id = $1
+RETURNING `+validityCols, id, now)
+		if v, err = scanValidity(row.Scan); err != nil {
+			return fmt.Errorf("bucket %q: renew: %w", key, schemaErr(err))
+		}
+		return nil
+	})
+	if err != nil {
+		return bucket.Validity{}, err
 	}
 	return v, nil
 }

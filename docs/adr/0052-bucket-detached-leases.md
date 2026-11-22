@@ -41,6 +41,9 @@ Schema v2 adds six columns to `bucket.lease`, all defaulted:
 | `max_expires_at` | null | the hard deadline (`acquired_at + MaxLeaseDuration` of the acquiring instance) |
 
 A check constraint requires `ttl` and `max_expires_at` on detached rows.
+The migration also refreshes the three `bucket.bucket` limit-column
+comments to name `Ensure` and `EnsureTx`, which closes the deferral in
+ADR-0046.
 
 **Each lease has exactly one authority for whether it has been adjusted.**
 An in-process lease keeps it in memory, exactly as before. It writes none
@@ -89,6 +92,11 @@ unchanged.
 - **`RenewLease`** returns the validity after the renewal. Once the cap is
   reached a renewal succeeds without extending the lease
   (`ExpiresIn == CapIn`); after the cap it returns `bucket.ErrLeaseLost`.
+  It locks the lease row first, then reads `clock_timestamp()` and checks
+  liveness. A renewal that waited on the lock past the expiry (behind
+  `AdjustLease`'s `FOR UPDATE`, say) must find the lease lost, and
+  PostgreSQL doesn't re-evaluate a predicate checked before the wait when
+  the holder only locked the row.
 - **`AdjustLease` only adjusts a live lease.** It locks the bucket row and
   then the lease row (acquire's lock order), reads `clock_timestamp()` after
   both locks are held, and marks the lease adjusted in the same transaction
@@ -142,19 +150,29 @@ The worker uses it with `ratelimit.FromBucket` like any other limiter.
   sleeps past `RetryAfter`, and `MaxWait` as a hard deadline across every
   backend call. Only a temporary refusal is retried, meaning a
   `*bucket.LimitError` with `Permanent` false and no `Cause`. A `Permanent`
-  refusal returns after one attempt. Caller cancellation ends the wait. Any
-  other error, including a transport failure whose outcome is unknown, is
-  returned after one attempt and fails closed. Acquire is not idempotent: a
-  server can commit the acquire and lose the response, and replaying it
-  would debit twice. A lost response leaks the slot for at most one TTL, with
-  the estimate charged.
+  refusal returns after one attempt, and keeps its classification even
+  with an empty `Reason`. Caller cancellation ends the wait. Any other
+  error, including a transport failure whose outcome is unknown, is returned
+  after one attempt and fails closed. Acquire is not idempotent: a server
+  can commit the acquire and lose the response, and replaying it would debit
+  twice. So when the wait ends (`MaxWait` or ctx) while a backend call is
+  failing or in flight, Acquire returns that call's error rather than the
+  `*bucket.LimitError` the wait loop would build. A limiter refusal is
+  retryable upstream (ADR-0033), and the retry middleware would replay the
+  acquire. A lost response leaks the slot for at most one TTL, with the
+  estimate charged.
 - **Validity is measured from when the request was sent,** so a slow
   response only shortens the lease. A grant that arrives after that
   validity, or after `MaxWait`, is released (best effort) and not returned,
-  so no provider call starts on a lease that may already be gone. A grant
-  with no ID or a TTL too short to renew also fails closed.
+  so no provider call starts on a lease that may already be gone. The hard
+  cap bounds the grant the same way. A grant with no ID, a TTL too short to
+  renew, or a non-positive `ExpiresIn` or `CapIn` fails closed and is
+  released.
 - **Renewal runs every `TTL/3`.** Each attempt is bounded by `OpTimeout`,
-  the interval and the remaining validity. `Lost()` closes when a renewal
+  the interval and the remaining validity. Each call runs in its own
+  goroutine, with at most one in flight, so a backend that ignores
+  cancellation can't hold `Lost()` open or block `Release`. A
+  confirmation that arrives after the deadline has passed is discarded. `Lost()` closes when a renewal
   reports `ErrLeaseLost`, when the last confirmed validity runs out without
   a successful renewal (the backend is unreachable or hanging), or at the
   hard cap. A renewal can tighten the cap but never extend it.

@@ -525,3 +525,37 @@ func TestValidLeaseID(t *testing.T) {
 		}
 	}
 }
+
+// TestRenewAfterLockWaitPastExpiry: a renewal that waits on the lease row's
+// lock until after the lease expired must find it lost, not extend it. A
+// lock-only holder (AdjustLease's FOR UPDATE) rolling back doesn't make
+// PostgreSQL recheck a predicate evaluated before the wait, so liveness is
+// checked on a clock read after the lock.
+func TestRenewAfterLockWaitPastExpiry(t *testing.T) {
+	db := openMain(t)
+	ttl := 300 * time.Millisecond
+	l := newLimiter(t, db, Config{LeaseTTL: ttl})
+	name := bucketName(t)
+	ensure(t, l, name, bucket.Limits{MaxConcurrency: 1})
+	dl := mustDetach(t, l, name, 0)
+
+	holder := begin(t, openMain(t))
+	if _, err := holder.Exec(`SELECT 1 FROM bucket.lease WHERE id = $1 FOR UPDATE`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := l.RenewLease(context.Background(), name, dl.ID)
+		result <- err
+	}()
+	time.Sleep(ttl + 200*time.Millisecond) // the renewal waits; the lease expires
+	if err := holder.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, bucket.ErrLeaseLost) {
+		t.Fatalf("RenewLease after a lock wait past expiry = %v, want ErrLeaseLost", err)
+	}
+	if r := readLease(t, db, dl.ID); r.present && r.expiresAt.After(time.Now()) {
+		t.Fatalf("expired lease was extended to %v", r.expiresAt)
+	}
+}

@@ -179,8 +179,8 @@ already locks, so storing them costs nothing extra.
   effect on the next acquire everywhere. Lowering `max_concurrency` below
   the slots currently held preempts no one; new acquires wait until the
   count falls under the new limit. **Raw `UPDATE`s of the limit columns are
-  unsupported.** The schema's column comments say so too, but they predate
-  ADR-0046 and name only `Ensure`; this ADR and ADR-0046 are the authority.
+  unsupported.** The schema's column comments say so too (refreshed in
+  schema v2 to name `Ensure` and `EnsureTx`, ADR-0052).
   Refill is computed
   lazily, from `last_refill` to now at the row's *current* rate. Changing
   the rate without first settling the refill would apply the new rate

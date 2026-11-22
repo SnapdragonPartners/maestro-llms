@@ -424,3 +424,135 @@ func TestConcurrentAcquires(t *testing.T) {
 		t.Fatalf("releases = %d", f.releases.Load())
 	}
 }
+
+// When MaxWait ends while a backend call is in flight, the outcome is
+// unknown: Acquire must not report a (retryable) refusal, which would let an
+// upstream retry replay an acquire that may have committed.
+func TestUnknownOutcomeAtMaxWaitIsNotARefusal(t *testing.T) {
+	for name, fail := range map[string]func(ctx context.Context, n int) error{
+		"honors ctx": func(ctx context.Context, _ int) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		"ignores ctx": func(context.Context, int) error {
+			time.Sleep(150 * time.Millisecond)
+			return errors.New("connection reset")
+		},
+		"after refusals": func(ctx context.Context, n int) error {
+			if n < 3 {
+				return &bucket.LimitError{Key: "k", Reason: "full", RetryAfter: time.Millisecond}
+			}
+			<-ctx.Done()
+			return errors.New("timeout awaiting response")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			acquire := func(ctx context.Context, n int) (bucket.DetachedLease, error) {
+				return bucket.DetachedLease{}, fail(ctx, n)
+			}
+			f := &fake{acquire: acquire}
+			ls, err := newTest(t, f, Config{MaxWait: 50 * time.Millisecond}).Acquire(context.Background(), "k", 1)
+			var le *bucket.LimitError
+			if ls != nil || err == nil || errors.As(err, &le) {
+				t.Fatalf("Acquire = %v, %v; want a non-refusal error", ls, err)
+			}
+		})
+	}
+}
+
+func TestUnknownOutcomeOnCancelIsNotARefusal(t *testing.T) {
+	f := &fake{acquire: func(ctx context.Context, _ int) (bucket.DetachedLease, error) {
+		<-ctx.Done()
+		return bucket.DetachedLease{}, ctx.Err()
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := newTest(t, f, Config{}).Acquire(ctx, "k", 1)
+	var le *bucket.LimitError
+	if err == nil || errors.As(err, &le) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Acquire = %v, want a non-refusal error wrapping the context's", err)
+	}
+}
+
+// A Permanent refusal keeps its classification without a Reason.
+func TestPermanentRefusalWithoutReason(t *testing.T) {
+	f := &fake{acquire: func(context.Context, int) (bucket.DetachedLease, error) {
+		return bucket.DetachedLease{}, &bucket.LimitError{Key: "k", Permanent: true}
+	}}
+	_, err := newTest(t, f, Config{}).Acquire(context.Background(), "k", 1) // no MaxWait: a retry would spin forever
+	var le *bucket.LimitError
+	if !errors.As(err, &le) || !le.Permanent || le.Reason == "" {
+		t.Fatalf("Acquire = %v, want a Permanent refusal with a reason", err)
+	}
+	if n := f.acquires.Load(); n != 1 {
+		t.Fatalf("attempts = %d, want 1", n)
+	}
+}
+
+// The hard cap bounds a grant like its expiry: a cap of zero is invalid, and
+// a cap that passed before the response arrived fails closed.
+func TestGrantCapChecked(t *testing.T) {
+	t.Run("zero cap", func(t *testing.T) {
+		f := &fake{acquire: func(context.Context, int) (bucket.DetachedLease, error) {
+			return bucket.DetachedLease{ID: testID, Validity: bucket.Validity{TTL: time.Second, ExpiresIn: time.Second}}, nil
+		}}
+		if ls, err := newTest(t, f, Config{}).Acquire(context.Background(), "k", 1); ls != nil || err == nil {
+			t.Fatalf("Acquire = %v, %v; want an error", ls, err)
+		}
+		if f.releases.Load() != 1 {
+			t.Fatal("invalid grant not released")
+		}
+	})
+	t.Run("cap passed in flight", func(t *testing.T) {
+		f := &fake{acquire: func(context.Context, int) (bucket.DetachedLease, error) {
+			time.Sleep(80 * time.Millisecond)
+			return bucket.DetachedLease{ID: testID, Validity: bucket.Validity{TTL: time.Second, ExpiresIn: time.Second, CapIn: 50 * time.Millisecond}}, nil
+		}}
+		if ls, err := newTest(t, f, Config{}).Acquire(context.Background(), "k", 1); ls != nil || err == nil {
+			t.Fatalf("Acquire = %v, %v; want an error", ls, err)
+		}
+		if f.releases.Load() != 1 {
+			t.Fatal("expired grant not released")
+		}
+	})
+}
+
+// A renewal call that ignores cancellation neither holds Lost open past the
+// validity nor blocks Release, and its late success is discarded.
+func TestRenewalIgnoringCancellation(t *testing.T) {
+	f := &fake{renew: func(context.Context, int) (bucket.Validity, error) {
+		time.Sleep(time.Second) // ignores ctx, then confirms
+		return bucket.Validity{TTL: 300 * time.Millisecond, ExpiresIn: time.Hour, CapIn: time.Hour}, nil
+	}}
+	start := time.Now()
+	ls := mustAcquire(t, newTest(t, f, Config{}))
+	select {
+	case <-ls.Lost():
+		if el := time.Since(start); el > 450*time.Millisecond {
+			t.Fatalf("Lost() closed after %v, want at the 300ms validity", el)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Lost() held open by a hung renewal")
+	}
+	relStart := time.Now()
+	_ = ls.Release(context.Background())
+	if el := time.Since(relStart); el > 200*time.Millisecond {
+		t.Fatalf("Release took %v behind a hung renewal", el)
+	}
+}
+
+func TestRenewalReleaseWhileInFlight(t *testing.T) {
+	f := &fake{renew: func(context.Context, int) (bucket.Validity, error) {
+		time.Sleep(time.Second)
+		return bucket.Validity{}, errors.New("late")
+	}}
+	ls := mustAcquire(t, newTest(t, f, Config{}))
+	time.Sleep(150 * time.Millisecond) // a renewal is in flight
+	start := time.Now()
+	if err := ls.Release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if el := time.Since(start); el > 200*time.Millisecond {
+		t.Fatalf("Release took %v behind an in-flight renewal", el)
+	}
+}

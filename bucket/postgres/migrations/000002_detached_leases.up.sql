@@ -18,4 +18,13 @@ ALTER TABLE bucket.lease
 COMMENT ON COLUMN bucket.lease.detached IS
     'True for a lease held by ID (TryAcquireDetached). Its tokens, token_charged, adjusted, ttl and max_expires_at are the only record of its terms; in-process leases keep them in memory and leave the defaults.';
 
+-- Refresh the v1 limit-column comments, which named only Ensure (ADR-0046
+-- deferred this to the next real schema change).
+COMMENT ON COLUMN bucket.bucket.tokens_per_minute IS
+    'Change only with postgres.Ensure or EnsureTx (overwrite=true): a raw UPDATE applies the new rate retroactively to unsettled refill.';
+COMMENT ON COLUMN bucket.bucket.max_concurrency IS
+    'Change only with postgres.Ensure or EnsureTx (overwrite=true).';
+COMMENT ON COLUMN bucket.bucket.buffer_factor IS
+    'Change only with postgres.Ensure or EnsureTx (overwrite=true): a raw UPDATE applies the new capacity retroactively to unsettled refill.';
+
 INSERT INTO bucket.schema_version (version) VALUES (2);

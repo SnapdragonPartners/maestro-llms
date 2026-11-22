@@ -110,16 +110,45 @@ func New(b Backend, cfg Config) (*Limiter, error) {
 // attempt, and no lease is held.
 //
 // A lease's validity is measured from when its request was sent, so a slow
-// response only shortens it. A grant that arrives after that validity ran
-// out or after MaxWait is released (best effort) and not returned, so the
-// caller never starts work on a lease that may already be gone.
+// response only shortens it. A grant that arrives after that validity (or
+// its hard cap) ran out, or after MaxWait, is released (best effort) and not
+// returned, so the caller never starts work on a lease that may already be
+// gone.
+//
+// When the wait ends (MaxWait or ctx) while a backend call is failing or in
+// flight, the backend may have admitted the request and lost the response.
+// Acquire then returns that call's error, not a *bucket.LimitError: a
+// limiter refusal is retryable upstream, and retrying would replay an
+// acquire that may already hold a slot and a charge.
 func (l *Limiter) Acquire(ctx context.Context, key string, tokens int) (bucket.Lease, error) {
 	tokens = max(tokens, 0)
 	w := core.Waiter{MaxWait: l.cfg.MaxWait, Initial: l.cfg.PollInterval, Max: l.cfg.MaxPollInterval}
-	return core.Wait(ctx, key, w, func(waitCtx context.Context) (core.Result, error) {
-		return l.try(ctx, waitCtx, key, tokens)
+	var unknown error // the last attempt's outcome, when the backend left it unknown
+	lease, err := core.Wait(ctx, key, w, func(waitCtx context.Context) (core.Result, error) {
+		res, err := l.try(ctx, waitCtx, key, tokens)
+		unknown = nil
+		var ue unknownOutcome
+		if errors.As(err, &ue) {
+			unknown = ue.err
+			return res, ue.err
+		}
+		return res, err
 	})
+	if err != nil && unknown != nil {
+		return nil, fmt.Errorf("bucket %q: remote: acquire outcome unknown: %w", key, unknown)
+	}
+	return lease, err //nolint:wrapcheck // Wait's errors name the key
 }
+
+// unknownOutcome marks a backend error that leaves the attempt's outcome
+// unknown, so Acquire never reports it as a refusal.
+type unknownOutcome struct{ err error }
+
+func (u unknownOutcome) Error() string { return u.err.Error() }
+
+// permanentReason stands in for an empty Reason on a Permanent refusal:
+// core.Wait reads an empty Impossible as "wait and retry".
+const permanentReason = "the backend reports the request can never be admitted"
 
 // try is one acquire attempt. waitCtx ends with ctx or at MaxWait; ctx's
 // values (not its cancellation) carry into the renewal loop.
@@ -130,25 +159,34 @@ func (l *Limiter) try(ctx, waitCtx context.Context, key string, tokens int) (cor
 		var le *bucket.LimitError
 		if errors.As(err, &le) && le.Cause == nil {
 			if le.Permanent {
-				return core.Result{Impossible: le.Reason}, nil
+				reason := le.Reason
+				if reason == "" {
+					reason = permanentReason
+				}
+				return core.Result{Impossible: reason}, nil
 			}
 			return core.Result{RetryAfter: le.RetryAfter}, nil
 		}
-		return core.Result{}, err //nolint:wrapcheck // the backend's error, as is
+		if le != nil {
+			// A refusal whose Cause is the serving side's context ending:
+			// not admitted, and not a capacity refusal to retry.
+			return core.Result{}, err //nolint:wrapcheck // the backend's refusal, as is
+		}
+		return core.Result{}, unknownOutcome{err}
 	}
-	if dl.ID == "" || dl.TTL/3 <= 0 {
+	if dl.ID == "" || dl.TTL/3 <= 0 || dl.ExpiresIn <= 0 || dl.CapIn <= 0 {
 		if dl.ID != "" {
 			l.releaseQuietly(ctx, key, dl.ID)
 		}
-		return core.Result{}, fmt.Errorf("bucket %q: remote: invalid grant (ID %q, TTL %v)", key, dl.ID, dl.TTL)
+		return core.Result{}, fmt.Errorf("bucket %q: remote: invalid grant (ID %q, %+v)", key, dl.ID, dl.Validity)
 	}
-	deadline := sent.Add(dl.ExpiresIn)
+	deadline := sent.Add(min(dl.ExpiresIn, dl.CapIn))
 	if waitCtx.Err() != nil || !time.Now().Before(deadline) {
 		l.releaseQuietly(ctx, key, dl.ID)
 		if err := waitCtx.Err(); err != nil {
 			return core.Result{}, err //nolint:wrapcheck // Wait reports the ended wait as a *LimitError
 		}
-		return core.Result{}, fmt.Errorf("bucket %q: remote: the grant arrived after its validity (%v) ran out", key, dl.ExpiresIn)
+		return core.Result{}, fmt.Errorf("bucket %q: remote: the grant arrived after its validity (%v) ran out", key, min(dl.ExpiresIn, dl.CapIn))
 	}
 	return core.Result{Lease: l.newLease(ctx, key, dl.ID, dl.TTL/3, deadline, sent.Add(dl.CapIn))}, nil
 }
@@ -201,9 +239,22 @@ func (r *lease) markLost() { r.lostOnce.Do(func() { close(r.lost) }) }
 // cap.
 func (r *lease) Lost() <-chan struct{} { return r.lost }
 
+// renewal is one renewal call's outcome.
+type renewal struct {
+	err  error
+	sent time.Time
+	v    bucket.Validity
+}
+
 // renew renews every interval. deadline is the last confirmed validity and
 // hardCap the lease's cap, both on the local clock and measured from when
 // the confirming request was sent, so they never run past the backend's.
+//
+// Each renewal call runs in its own goroutine, so a backend that ignores
+// cancellation can't hold Lost open past the deadline or block Release:
+// expiry and cancellation are watched while the call is in flight. At most
+// one call is in flight; a confirmation that arrives after the deadline has
+// passed is discarded (the lease may already be gone).
 func (r *lease) renew(ctx context.Context, deadline, hardCap time.Time) {
 	defer close(r.done)
 	deadline = minTime(deadline, hardCap)
@@ -211,6 +262,7 @@ func (r *lease) renew(ctx context.Context, deadline, hardCap time.Time) {
 	defer tick.Stop()
 	expiry := time.NewTimer(time.Until(deadline))
 	defer expiry.Stop()
+	var results chan renewal // non-nil while a call is in flight
 	for {
 		select {
 		case <-ctx.Done():
@@ -219,24 +271,43 @@ func (r *lease) renew(ctx context.Context, deadline, hardCap time.Time) {
 			r.markLost()
 			return
 		case <-tick.C:
+			if results == nil {
+				results = r.startRenewal(ctx, deadline)
+			}
+		case res := <-results:
+			results = nil
+			switch {
+			case errors.Is(res.err, bucket.ErrLeaseLost):
+				r.markLost()
+				return
+			case res.err != nil:
+				// Transient: the next tick retries, and expiry fires if
+				// the validity runs out first.
+				continue
+			case !time.Now().Before(deadline):
+				r.markLost() // confirmed too late to trust
+				return
+			}
+			hardCap = minTime(hardCap, res.sent.Add(res.v.CapIn))
+			deadline = minTime(res.sent.Add(res.v.ExpiresIn), hardCap)
+			expiry.Reset(time.Until(deadline))
 		}
-		sent := time.Now()
-		opCtx, cancel := context.WithTimeout(ctx, min(r.l.cfg.OpTimeout, r.interval, time.Until(deadline)))
-		v, err := r.l.b.RenewLease(opCtx, r.key, r.id)
-		cancel()
-		switch {
-		case errors.Is(err, bucket.ErrLeaseLost):
-			r.markLost()
-			return
-		case err != nil:
-			// Transient: the next tick retries, and expiry fires if the
-			// validity runs out first.
-			continue
-		}
-		hardCap = minTime(hardCap, sent.Add(v.CapIn))
-		deadline = minTime(sent.Add(v.ExpiresIn), hardCap)
-		expiry.Reset(time.Until(deadline))
 	}
+}
+
+// startRenewal sends one renewal, bounded by OpTimeout, the interval and the
+// time left before deadline, and delivers its outcome on the returned
+// channel (buffered, so an abandoned call never blocks).
+func (r *lease) startRenewal(ctx context.Context, deadline time.Time) chan renewal {
+	out := make(chan renewal, 1)
+	sent := time.Now()
+	opCtx, cancel := context.WithTimeout(ctx, min(r.l.cfg.OpTimeout, r.interval, time.Until(deadline)))
+	go func() {
+		defer cancel()
+		v, err := r.l.b.RenewLease(opCtx, r.key, r.id)
+		out <- renewal{err: err, sent: sent, v: v}
+	}()
+	return out
 }
 
 func minTime(a, b time.Time) time.Time {

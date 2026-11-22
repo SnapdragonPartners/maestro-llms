@@ -1776,7 +1776,7 @@ Connect root without `/v1`; importing `llms/providers` links every provider
 SDK — see [ADR-0048](docs/adr/0048-provider-neutral-constructor.md); purely
 additive, nothing changes for existing callers), and **v1.8.0**
 (**database migration required for `bucket/postgres` users**: apply
-`000002_detached_leases` from `postgres.Migrations()` before deploying, or
+`000002_detached_leases.up.sql` from `postgres.Migrations()` before deploying, or
 `postgres.New` fails with `*postgres.SchemaError` (required v2, found v1);
 users without `bucket/postgres` have nothing to do. Leases held through
 another process: a process without database access holds `bucket/postgres`

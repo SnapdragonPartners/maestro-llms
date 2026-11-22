@@ -1233,6 +1233,18 @@ c := middleware.RecommendedChat(client, middleware.RecommendedConfig{Limiter: li
   `EstimatedUnits.Requests > 1`.
 - **Waiting is polling** with backoff and jitter (no FIFO queue yet), bounded
   by `MaxWait` or ctx.
+- **A process without database access** (a worker that reaches your service
+  only over its API) can hold leases through it
+  ([ADR-0052](docs/adr/0052-bucket-detached-leases.md)). Your service exposes
+  `TryAcquireDetached`, `RenewLease`, `AdjustLease` and `ReleaseLease` (one
+  admission attempt, then calls by key and lease ID that any instance can
+  serve; the lease row records its own TTL, cap and charge). The worker wraps
+  your API in a `remote.Backend` and uses `remote.New(backend, cfg)` as its
+  `bucket.Limiter`: it waits and backs off on its side, renews every TTL/3,
+  closes `Lost()` when its confirmed validity runs out, and fails closed on
+  any error that isn't a capacity refusal. Authorize the key in your API;
+  the lease ID is a bearer secret. An adjustment that arrives after its
+  lease expired leaves the estimate charged.
 
 **Database migrations.** The package never runs DDL. Apply the files from
 `postgres.Migrations()` (golang-migrate naming, in a dedicated `bucket`
@@ -1430,7 +1442,7 @@ life of v1.
 | `llms/providers/anthropic`, `.../anthropic/anthropicvertex`, `.../google`, `.../ollama`, `.../openai`, `.../openaicompat` | Constructors, options and client methods |
 | `llms/providers` | `New`, `Options`, `Vertex` and the two error sentinels; `Options` grows only by new fields ([ADR-0048](docs/adr/0048-provider-neutral-constructor.md)) |
 | `llms/providers/vllm` | Deprecated alias of `openaicompat`, kept permanently ([ADR-0027](docs/adr/0027-pre-v1-api-cleanup.md)) |
-| `bucket`, `bucket/memory`, `bucket/postgres` | Limiter, lease, backends, `Ensure`, `EnsureTx`, `LockLimits`, `Limits`, `Tx`/`Row` (`SQLTx`), the schema-version API |
+| `bucket`, `bucket/memory`, `bucket/postgres`, `bucket/remote` | Limiter, lease, backends, `Ensure`, `EnsureTx`, `LockLimits`, `Limits`, `Tx`/`Row` (`SQLTx`), the schema-version API, detached leases (`DetachedLease`/`Validity`, `TryAcquireDetached`, `RenewLease`, `AdjustLease`, `ReleaseLease`) and the `remote` holder |
 
 **Not covered: the `mcp` module.** `github.com/SnapdragonPartners/maestro-llms/mcp`
 is a separate Go module at v0 (tags `mcp/vX.Y.Z`), so its API may change in
@@ -1496,8 +1508,9 @@ of record for this list.
 break every implementation, including consumers' own fakes and wrappers.
 That applies to `ChatClient`, `EmbeddingClient`, `ModelLister`, `ratelimit.Limiter`, `Reservation`, `LimiterStats`, `Rollbacker`,
 `middleware.Observer`, `ContextObserver`, `TokenEstimator`, `InputBounder`,
-`bucket.Limiter`, `bucket.Lease`, and `postgres.Tx` and `postgres.Row`
-(which apps implement as adapters). So adding a method is a v2 change.
+`bucket.Limiter`, `bucket.Lease`, `postgres.Tx` and `postgres.Row`
+(which apps implement as adapters), and `remote.Backend` (which apps
+implement over their own API). So adding a method is a v2 change.
 Capabilities grow through new optional interfaces, which callers detect with
 a type assertion, as `ModelLister` and `ContextObserver` already do.
 New fields on exported structs and new functional options are additive.

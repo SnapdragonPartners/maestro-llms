@@ -13,7 +13,7 @@ import (
 // release that raises it must open its release notes with a "Database
 // migration required" section (ADR-0025). A test keeps it equal to the
 // highest migration file number.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS

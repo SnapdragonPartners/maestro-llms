@@ -53,6 +53,32 @@ type Lease interface {
 	Lost() <-chan struct{}
 }
 
+// DetachedLease is a lease held by its ID rather than by a Lease value, so a
+// process other than the one that acquired it can renew, adjust and release
+// it (ADR-0052). Nothing renews it on its own: the holder renews it every
+// TTL/3 or it expires. The ID is a bearer secret: together with the key it
+// is all an operation on the lease needs.
+type DetachedLease struct {
+	ID string
+	Validity
+}
+
+// Validity is how long a detached lease stays live, as durations measured
+// on the backend's clock when the call that returned them ran. A holder that
+// measures them from when it sent the request stays on the safe side of the
+// backend, whatever the clocks and the network delay.
+type Validity struct {
+	// TTL is the renewal window fixed when the lease was acquired: renew
+	// every TTL/3.
+	TTL time.Duration
+	// ExpiresIn is how long until the lease expires unless it is renewed.
+	// It never exceeds CapIn.
+	ExpiresIn time.Duration
+	// CapIn is how long until the lease's hard cap (the backend's maximum
+	// lease duration, fixed at acquire). No renewal extends it past that.
+	CapIn time.Duration
+}
+
 // Limits are what every user of a key must agree on. Zero values mean
 // unlimited for that dimension. Caller policy such as how long to wait is a
 // backend option, not part of Limits.

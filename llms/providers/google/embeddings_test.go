@@ -161,13 +161,14 @@ func TestAutoTruncateConstructionRules(t *testing.T) {
 
 // Also pins ADR-0029 for embeddings: the plain injected client is
 // authenticated with WithCredentials through the shared clientConfig.
+// gemini-embedding-001 is on :embedContent since genai v1.79 (ADR-0045).
 func TestAutoTruncateTrueVertexPassesThrough(t *testing.T) {
-	var body, authz string
+	var body, authz, path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		body, authz = string(b), r.Header.Get("Authorization")
+		body, authz, path = string(b), r.Header.Get("Authorization"), r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"predictions":[{"embeddings":{"values":[0.1,0.2]}}]}`)
+		_, _ = io.WriteString(w, `{"embedding":{"values":[0.1,0.2]}}`)
 	}))
 	defer srv.Close()
 	creds := auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: stubTokenProvider{}})
@@ -184,6 +185,9 @@ func TestAutoTruncateTrueVertexPassesThrough(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Embed (Vertex, autoTruncate): %v", err)
+	}
+	if !strings.HasSuffix(path, "/gemini-embedding-001:embedContent") {
+		t.Fatalf("path %q, want the :embedContent route", path)
 	}
 	if authz != "Bearer stub" {
 		t.Fatalf("Authorization %q, want the WithCredentials token on the injected client", authz)

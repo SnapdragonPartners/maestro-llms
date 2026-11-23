@@ -61,7 +61,12 @@ func TestIntegrationVertexGeminiEmbeddings(t *testing.T) {
 	if len(resp.Vectors) != 1 || len(resp.Vectors[0].Values) == 0 {
 		t.Fatalf("expected one non-empty vector, got %d vectors", len(resp.Vectors))
 	}
-	t.Logf("OK Vertex embeddings: project=%s location=%s model=%s dims=%d", project, location, model, len(resp.Vectors[0].Values))
+	// Vertex reports token statistics on both routes (ADR-0045);
+	// gemini-embedding-001 moved to :embedContent with genai v1.79.
+	if resp.Usage.EmbeddingTokens <= 0 {
+		t.Errorf("Usage.EmbeddingTokens = %d, want the reported token count", resp.Usage.EmbeddingTokens)
+	}
+	t.Logf("OK Vertex embeddings: project=%s location=%s model=%s dims=%d tokens=%d", project, location, model, len(resp.Vectors[0].Values), resp.Usage.EmbeddingTokens)
 }
 
 // vertexEmbedClient builds a live Vertex embedding client for model in

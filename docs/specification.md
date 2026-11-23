@@ -674,8 +674,8 @@ etc.) and ignored elsewhere (OpenAI). They are *not* app context smuggled
 through `Metadata` — task type materially changes the vectors for retrieval.
 
 `gemini-embedding-001` accepts **one input per call**, and so does every Vertex
-model the SDK sends to `:embedContent` (its raw model name contains `gemini`
-or `maas`; ADR-0045): this is simply the
+model the SDK sends to `:embedContent` (its model ID, the last path segment,
+contains `gemini` or `maas`; ADR-0045): this is simply the
 "batch limit" rule above with a limit of 1 — the client returns a typed
 `bad_request`/validation error when `len(Inputs) > 1`. It must **not**
 internally fan out or otherwise make a hidden chunking exception; applications

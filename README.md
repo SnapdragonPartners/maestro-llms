@@ -951,12 +951,11 @@ out, err := emb.Embed(ctx, llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{
 On Gemini (a multimodal model such as `gemini-embedding-2`, on the Gemini
 API or Vertex) the parts go to the provider as one content, and the model
 decides which media types it accepts. OpenAI embeddings, and Vertex models
-served by the predict API (`text-embedding-005`, `gemini-embedding-001`),
-are text-only: text parts are joined by a blank line and an image or
+served by the predict API (such as `text-embedding-005`), are text-only: text parts are joined by a blank line and an image or
 document is a `bad_request` before the call. `WithMaxInputBytes` limits
-the text as sent; media bytes don't count. On Vertex, Gemini embedding
-models other than `gemini-embedding-001` (by the SDK's routing, any name
-containing `gemini` or `maas`) take one input per call.
+the text as sent; media bytes don't count. On Vertex, models on the
+`:embedContent` API (by the SDK's routing, any model ID containing `gemini`
+or `maas`, `gemini-embedding-001` included) take one input per call.
 
 ### Vertex AI (Anthropic, Gemini chat & Gemini embeddings)
 
@@ -1025,7 +1024,9 @@ Vertex global / `us`/`eu` multi-region / regional endpoint for the
 `WithVertex` location). They never read `GOOGLE_GEMINI_BASE_URL` /
 `GOOGLE_VERTEX_BASE_URL` or a process-wide `genai.SetDefaultBaseURLs`
 (divergence G6, as X6 for `OPENAI_*`), so a PSC or gateway host must be
-passed as `WithBaseURL`.
+passed as `WithBaseURL`. The API version is pinned too: `v1beta` on the
+Gemini API and `v1beta1` on Vertex, never genai's default (`v1` on the
+Gemini API since genai v1.78) or `GOOGLE_GENAI_API_VERSION`.
 
 `gemini-embedding-001` is single-input, and so is every Vertex embedding model
 the SDK sends to `:embedContent` (ADR-0045): a multi-input request is rejected

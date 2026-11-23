@@ -41,15 +41,15 @@ func baseModel(model string) string {
 }
 
 // embedContentRoute reports whether genai sends model to Vertex's
-// :embedContent API rather than predict. It mirrors genai v1.77's
-// tIsVertexEmbedContentModel on the raw model string, so a resource path
-// whose project or location contains "gemini" or "maas" matches as genai
-// does (ADR-0045 item 9). TestEmbedContentRouteMatchesSDK pins the SDK's
-// behavior. On :embedContent genai sends one content per call with all its
-// parts; on predict it sends only each content's first text part.
+// :embedContent API rather than predict. It mirrors genai v1.79's
+// tIsVertexEmbedContentModel: the model ID (the last path segment)
+// contains "gemini" or "maas", gemini-embedding-001 included (ADR-0045
+// item 9). TestEmbedContentRouteMatchesSDK pins the SDK's behavior. On
+// :embedContent genai sends one content per call with all its parts; on
+// predict it sends only each content's first text part.
 func embedContentRoute(model string) bool {
-	return (strings.Contains(model, "gemini") && model != "gemini-embedding-001") ||
-		strings.Contains(model, "maas")
+	id := baseModel(model)
+	return strings.Contains(id, "gemini") || strings.Contains(id, "maas")
 }
 
 // batchLimit is the max inputs per call. Single-input models return 1: a
@@ -240,7 +240,7 @@ func (c *EmbeddingClient) content(i int, in *llms.EmbeddingInput) (*genai.Conten
 		if media.HasMedia(in.Parts) {
 			return nil, 0, badRequest(c.model, fmt.Sprintf(
 				"embedding input %d: this model is served by Vertex's predict API, which takes text only; "+
-					"image and document parts need a model on the embedContent API (a Gemini embedding model other than gemini-embedding-001)", i))
+					"image and document parts need a multimodal embedding model on the embedContent API, such as gemini-embedding-2", i))
 		}
 		text := media.JoinText(in.Parts)
 		return genai.NewContentFromText(text, genai.RoleUser), len(text), nil

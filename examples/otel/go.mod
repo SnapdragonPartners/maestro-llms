@@ -25,7 +25,7 @@ require (
 
 require (
 	cloud.google.com/go v0.116.0 // indirect
-	cloud.google.com/go/auth v0.24.3 // indirect
+	cloud.google.com/go/auth v0.24.4 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.3.1 // indirect
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.84.0 // indirect
@@ -45,10 +45,10 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
-	github.com/openai/openai-go/v3 v3.96.0 // indirect
+	github.com/openai/openai-go/v3 v3.104.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
-	github.com/tidwall/gjson v1.20.0 // indirect
+	github.com/tidwall/gjson v1.20.1 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
@@ -69,7 +69,7 @@ require (
 	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/api v0.304.0 // indirect
-	google.golang.org/genai v1.77.0 // indirect
+	google.golang.org/genai v1.79.1 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/grpc v1.84.0 // indirect

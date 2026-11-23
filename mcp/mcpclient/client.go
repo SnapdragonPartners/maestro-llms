@@ -13,7 +13,6 @@ package mcpclient
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -68,6 +67,15 @@ type Options struct {
 	Name func(serverName string) string
 	// Filter selects tools by the server's name. Nil keeps every tool.
 	Filter func(serverName string) bool
+	// Meta returns the _meta to send with each tools/call request (ADR-0053):
+	// per-call context that is not a tool argument, such as a run ID or an
+	// idempotency key, read from the ctx Execute gets. Nil, or an empty map,
+	// sends none. Keys must be valid MCP _meta keys and must not use a
+	// prefix MCP reserves (a label "modelcontextprotocol" or "mcp") or the
+	// name progressToken; values must marshal to JSON. An error, or an
+	// invalid map, fails the call with ErrNotSent before anything is sent.
+	// The map is copied, so the caller may reuse it.
+	Meta func(ctx context.Context, call llms.ToolCall) (map[string]any, error)
 }
 
 // Session is one connection to an MCP server. It is safe for concurrent use:
@@ -84,6 +92,10 @@ type Session struct {
 	opts     Options
 	mu       sync.Mutex // guards pages
 	closed   atomic.Bool
+	// ended is set once the SDK connection has completely finished (its
+	// Wait returned), after which nothing can be written on it, so a call
+	// is refused as ErrNotSent without reaching the SDK (ADR-0053).
+	ended atomic.Bool
 }
 
 // rawPage is what the server sent for one tools/list page, before the
@@ -108,6 +120,10 @@ func Connect(ctx context.Context, t Transport, opts Options) (*Session, error) {
 		return nil, fmt.Errorf("mcpclient: connect: %w", err)
 	}
 	s.cs = cs
+	go func() {
+		_ = cs.Wait()
+		s.ended.Store(true)
+	}()
 	return s, nil
 }
 
@@ -169,7 +185,7 @@ func (s *Session) excluded(cursor string, kept []*mcp.Tool) (names []string, nul
 }
 
 // Close ends the session and stops a Command server. Execute on a tool from
-// a closed session returns an error. Close is idempotent.
+// a closed session returns an ErrNotSent error. Close is idempotent.
 func (s *Session) Close() error {
 	if s.closed.Swap(true) {
 		return nil
@@ -311,32 +327,6 @@ func duplicates(tools []toolloop.Tool, servers []string) []error {
 		}
 	}
 	return errs
-}
-
-var errClosed = errors.New("mcpclient: session closed")
-
-// executor calls serverName on the session. A transport or protocol failure,
-// or a malformed result, is an Execute error (a loop-visible stop); an MCP
-// isError result is a model-visible IsError result (ADR-0049 §4.6).
-func (s *Session) executor(serverName string) func(context.Context, llms.ToolCall) (toolloop.ToolResult, error) {
-	return func(ctx context.Context, call llms.ToolCall) (toolloop.ToolResult, error) {
-		if s.closed.Load() {
-			return toolloop.ToolResult{}, fmt.Errorf("mcpclient: call %q: %w", serverName, errClosed)
-		}
-		args := call.Parameters
-		if len(args) == 0 {
-			args = json.RawMessage("{}")
-		}
-		res, err := s.cs.CallTool(ctx, &mcp.CallToolParams{Name: serverName, Arguments: args})
-		if err != nil {
-			return toolloop.ToolResult{}, fmt.Errorf("mcpclient: call %q: %w", serverName, err)
-		}
-		out, err := convert.Result(res)
-		if err != nil {
-			return toolloop.ToolResult{}, fmt.Errorf("mcpclient: call %q: %w", serverName, err)
-		}
-		return out, nil
-	}
 }
 
 // moduleVersion is this module's version from the build info, for the

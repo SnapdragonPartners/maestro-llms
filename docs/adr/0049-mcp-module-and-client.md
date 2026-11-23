@@ -1,6 +1,6 @@
 # 0049. MCP module: a nested v0 module, and server tools as `toolloop.Tool`
 
-- **Status:** Accepted
+- **Status:** Accepted; §4.6's call errors classified and per-call `_meta` added by ADR-0053 (2026-11-23, #194)
 - **Date:** 2026-11-17
 
 ## Context
@@ -258,6 +258,10 @@ loop passes.
   model-visible, and the loop continues.
 - `Stop` is never set: a remote tool can't end the loop. An app that wants
   a terminal MCP tool wraps it.
+
+(Amended by ADR-0053: `Options.Meta` adds a per-call `_meta`, and every
+`Execute` error is one of `ErrNotSent`, `ErrServerError` (`*CallError`) or
+`ErrOutcomeUnknown`.)
 
 #### 4.7 Results
 

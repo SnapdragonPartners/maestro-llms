@@ -675,7 +675,17 @@ For a remote server use `mcpclient.StreamableHTTP(url, httpClient)`; the
   them. Nothing else is rewritten.
 - **Errors.** An MCP `isError` result comes back as `IsError: true`, which
   the model sees and the loop continues. A transport or protocol failure is
-  an `Execute` error, which stops the loop with `OutcomeToolError`.
+  an `Execute` error, which stops the loop with `OutcomeToolError`. Every
+  `Execute` error is exactly one of `mcpclient.ErrNotSent` (never sent, a
+  retry is safe), `mcpclient.ErrServerError` (the server answered; a
+  `*mcpclient.CallError` with the JSON-RPC code and message) or
+  `mcpclient.ErrOutcomeUnknown` (it may have run). When the client can't be
+  sure, it says unknown, never not sent
+  ([ADR-0053](docs/adr/0053-mcpclient-meta-and-call-errors.md)).
+- **Per-call `_meta`.** `Options.Meta` returns the `_meta` to send with each
+  call, read from the `ctx` `Execute` gets (a run ID, an idempotency key).
+  Keys MCP reserves are refused, and a `Meta` error fails the call as not
+  sent.
 - **Results.** Text, images and embedded documents map to `Content` or
   `Parts`. Audio comes back as an `IsError` result.
 - **Snapshot.** `Tools` lists the tools once; call it again to pick up

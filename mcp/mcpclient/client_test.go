@@ -416,6 +416,19 @@ func TestZeroTransport(t *testing.T) {
 // produce. list returns the tools/list result for a cursor.
 func rawServer(ctx context.Context, t *testing.T, list func(cursor string) string) Transport {
 	t.Helper()
+	return rawServerCalls(ctx, t, list, nil)
+}
+
+// rawCloseConn, returned by a rawServerCalls call handler, makes the server
+// drop the connection instead of answering.
+const rawCloseConn = "close"
+
+// rawServerCalls is rawServer with a handler for tools/call: call gets the
+// request's params and returns the response member as JSON text (for
+// example `"result":{...}` or `"error":{...}`), "" to never answer, or
+// rawCloseConn to drop the connection. A nil call answers `"result":{}`.
+func rawServerCalls(ctx context.Context, t *testing.T, list func(cursor string) string, call func(params json.RawMessage) string) Transport {
+	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	st, ct := mcp.NewInMemoryTransports()
@@ -437,24 +450,35 @@ func rawServer(ctx context.Context, t *testing.T, list func(cursor string) strin
 			var req struct {
 				ID     json.RawMessage `json:"id"`
 				Method string          `json:"method"`
-				Params struct {
-					ProtocolVersion string `json:"protocolVersion"`
-					Cursor          string `json:"cursor"`
-				} `json:"params"`
+				Params json.RawMessage `json:"params"`
+			}
+			var params struct {
+				ProtocolVersion string `json:"protocolVersion"`
+				Cursor          string `json:"cursor"`
 			}
 			if json.Unmarshal(b, &req) != nil || len(req.ID) == 0 {
 				continue // a notification or a response
 			}
-			var result string
+			_ = json.Unmarshal(req.Params, &params)
+			member := `"result":{}`
 			switch req.Method {
 			case "initialize":
-				result = `{"protocolVersion":"` + req.Params.ProtocolVersion + `","capabilities":{"tools":{}},"serverInfo":{"name":"raw","version":"v0"}}`
+				member = `"result":{"protocolVersion":"` + params.ProtocolVersion + `","capabilities":{"tools":{}},"serverInfo":{"name":"raw","version":"v0"}}`
 			case "tools/list":
-				result = list(req.Params.Cursor)
-			default:
-				result = `{}`
+				member = `"result":` + list(params.Cursor)
+			case "tools/call":
+				if call != nil {
+					member = call(req.Params)
+				}
 			}
-			resp, err := jsonrpc.DecodeMessage([]byte(`{"jsonrpc":"2.0","id":` + string(req.ID) + `,"result":` + result + `}`))
+			switch member {
+			case "":
+				continue
+			case rawCloseConn:
+				_ = conn.Close()
+				return
+			}
+			resp, err := jsonrpc.DecodeMessage([]byte(`{"jsonrpc":"2.0","id":` + string(req.ID) + `,` + member + `}`))
 			if err != nil || conn.Write(ctx, resp) != nil {
 				return
 			}

@@ -678,7 +678,8 @@ For a remote server use `mcpclient.StreamableHTTP(url, httpClient)`; the
   an `Execute` error, which stops the loop with `OutcomeToolError`. Every
   `Execute` error is exactly one of `mcpclient.ErrNotSent` (never sent, a
   retry is safe), `mcpclient.ErrServerError` (the server answered; a
-  `*mcpclient.CallError` with the JSON-RPC code and message) or
+  `*mcpclient.CallError` with the JSON-RPC code and message, or with
+  `Malformed` set for a result the client can't use) or
   `mcpclient.ErrOutcomeUnknown` (it may have run). When the client can't be
   sure, it says unknown, never not sent
   ([ADR-0053](docs/adr/0053-mcpclient-meta-and-call-errors.md)).

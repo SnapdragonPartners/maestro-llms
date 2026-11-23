@@ -53,6 +53,18 @@ type Options struct {
 	Name, Version string
 	// Instructions is sent in the initialize result. Optional.
 	Instructions string
+	// AllowedHosts are the Host header values Handler answers to (DNS
+	// rebinding protection): host names or IP addresses, matched without
+	// the port and case-insensitively; anything else gets 403. Set it when
+	// the server listens on loopback behind a reverse proxy that forwards
+	// the public Host. Loopback hosts are not implied; list them too if
+	// local clients connect directly. Empty keeps the default: with Auth, a
+	// request arriving on a loopback address must name a loopback host or
+	// Auth.Resource's host; without Auth, the MCP SDK's check (a loopback
+	// host only). Neither default checks requests arriving on other
+	// addresses. An entry with a port, scheme, path or wildcard is an error
+	// from New.
+	AllowedHosts []string
 }
 
 // Annotations are a tool's behavior hints for clients, which may use them
@@ -85,6 +97,7 @@ func (e *InvalidToolError) Unwrap() error { return e.Err }
 type Server struct {
 	srv      *mcp.Server
 	auth     *authConfig // nil without Auth
+	hosts    *hostCheck  // nil: the go-sdk's loopback check
 	onError  func(context.Context, error)
 	metaPath string
 }
@@ -104,6 +117,9 @@ func New(tools []toolloop.Tool, opts Options) (*Server, error) {
 		}
 		s.auth = ac
 		s.metaPath = ac.metadataPath
+	}
+	if err := s.setHosts(opts.AllowedHosts); err != nil {
+		return nil, err
 	}
 
 	names := make(map[string]int, len(tools))
@@ -259,15 +275,25 @@ func (s *Server) report(ctx context.Context, err error) {
 }
 
 // Handler is the Streamable HTTP endpoint (stateless, JSON responses),
-// behind the bearer-token checks when Options.Auth is set. The app mounts
-// it at the path of Auth.Resource.
+// behind the Host check (Options.AllowedHosts) and, when Options.Auth is
+// set, the bearer-token checks. The app mounts it at the path of
+// Auth.Resource.
 func (s *Server) Handler() http.Handler {
 	h := http.Handler(mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return s.srv },
-		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+		&mcp.StreamableHTTPOptions{
+			Stateless:    true,
+			JSONResponse: true,
+			// This package's check replaces the SDK's, which can't be
+			// given extra hosts.
+			DisableLocalhostProtection: s.hosts != nil,
+		},
 	))
 	if s.auth != nil {
 		h = s.requireToken(h)
+	}
+	if s.hosts != nil {
+		h = s.hosts.wrap(h) // outermost: a wrong Host never reaches the verifier
 	}
 	return h
 }

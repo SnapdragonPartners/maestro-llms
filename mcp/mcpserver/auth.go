@@ -104,6 +104,7 @@ type authConfig struct {
 	audience     string
 	metadataPath string // where the metadata is mounted
 	metadataURL  string // resource_metadata in challenges
+	resourceHost string // Resource's host, for the default Host check
 	scopes       []string
 	skew         time.Duration
 	allowNoExp   bool
@@ -151,6 +152,7 @@ func newAuthConfig(a *Auth) (*authConfig, error) {
 		scopes:       slices.Clone(a.Scopes),
 		skew:         a.ClockSkew,
 		allowNoExp:   a.AllowMissingExpiration,
+		resourceHost: u.Hostname(),
 	}
 	if c.audience == "" {
 		c.audience = a.Resource

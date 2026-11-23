@@ -1,6 +1,6 @@
 # 0050. `mcpserver`: serve `toolloop.Tool` over MCP, as an OAuth resource server
 
-- **Status:** Accepted
+- **Status:** Accepted; §6's DNS-rebinding default amended for reverse proxies (2026-11-23, #188, see the amendment at the end)
 - **Date:** 2026-11-17
 
 ## Context
@@ -303,7 +303,9 @@ with JSON responses (`Stateless`, `JSONResponse`):
 - JSON responses: the server streams nothing (no progress notifications),
   and plain JSON passes through proxies that buffer or cut SSE.
 - The SDK's defaults stay: DNS-rebinding protection for loopback
-  addresses, and its request body limit.
+  addresses, and its request body limit. (Amended: `Options.AllowedHosts`,
+  and a default with `Auth` that accepts `Resource`'s host; see the
+  amendment at the end.)
 - CORS, rate limiting, IP allowlisting and ChatGPT's optional mTLS are the
   app's middleware around `Handler`.
 
@@ -457,3 +459,57 @@ Unit tests, no network and no keys:
 - OpenAI Apps SDK, "Authentication" (ChatGPT's requirements for MCP
   servers and authorization servers).
 - go-sdk v1.8.0: `mcp.NewStreamableHTTPHandler`, `auth.RequireBearerToken`.
+
+## Amendment: Host checks behind a reverse proxy (2026-11-23, #188)
+
+§6 kept the go-sdk's DNS-rebinding protection: a request arriving on a
+loopback address must carry a loopback `Host`, or it gets 403. That is
+every request in the usual deployment of a remote server: the app listens
+on `127.0.0.1` and a reverse proxy (Tailscale Funnel, Caddy, nginx, a
+sidecar) forwards the public `Host`. gateway-mcp found it on its first
+live ChatGPT connection. Unauthenticated probes got the right 401 (the
+bearer check runs first), so only a request with a valid token reached
+the SDK and got the 403. The SDK's check can be turned off but not given
+more hosts, so this package now owns the check whenever it has to accept
+a non-loopback name:
+
+- **`Options.AllowedHosts []string`.** When set, `Handler` accepts exactly
+  these hosts on every request, whatever address it arrived on, and
+  answers anything else with 403. Entries are host names or IP addresses,
+  matched without the port, case-insensitively, without a trailing dot,
+  and IPs in canonical form. Loopback hosts are not implied: an allowlist
+  means what it lists. An entry with a port, scheme, path or wildcard is an
+  error from `New`. The SDK's check is turned off
+  (`DisableLocalhostProtection`): this one replaces it, it doesn't remove
+  the protection.
+- **Default with `Auth`.** `AllowedHosts` unset, a request arriving on a
+  loopback address must carry a loopback `Host` or `Auth.Resource`'s host.
+  Requests on other addresses pass, as with the SDK. This is the SDK's
+  check with one more name: `Resource` already names the public host the
+  server answers to, so a server behind a proxy works without new
+  configuration.
+- **Default without `Auth`.** Unchanged: the SDK's check.
+- **Order.** The Host check is outermost, before the bearer check, so a
+  wrong `Host` never reaches the `TokenVerifier`. The 403 body is fixed
+  ("host not allowed"); unlike the SDK's, it does not echo the `Host`.
+- **Scope.** `Handler` only. `MetadataHandler` serves a public document,
+  and stdio has no `Host`.
+
+Rejected alternatives:
+
+- **Apply the `Auth` default on every request.** It would add a Host check
+  to servers on non-loopback addresses, which the SDK never checked, and
+  break any deployment reached by a second name (a Cloud Run `run.app` URL
+  beside a custom domain). DNS rebinding attacks loopback listeners, and a
+  bearer token, which a rebinding browser doesn't have, already guards an
+  `Auth` server. An app that wants the check everywhere sets
+  `AllowedHosts`.
+- **Rewrite `Host` to a loopback name and keep the SDK's check** (the
+  gateway-mcp workaround). It hides the real `Host` from everything behind
+  it and still needs the allowlist this package now applies.
+- **Imply loopback in an explicit `AllowedHosts`.** A local health check
+  that connects directly lists `localhost` or `127.0.0.1`; an implied
+  entry would be a surprise in an allowlist.
+- **Trust `X-Forwarded-Host`.** Only the proxy knows whether that header
+  is its own; trusting it lets any client choose the host it is checked
+  against.

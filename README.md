@@ -739,7 +739,13 @@ serves over stdin/stdout without auth.
   the ones it can and fails its listing on the rest, per ADR-0049 §4.4).
 - **Transport.** Stateless Streamable HTTP with JSON responses, so it runs
   on several instances behind a load balancer. CORS, rate limits and
-  ChatGPT's optional mTLS are your middleware around `Handler`. A client
+  ChatGPT's optional mTLS are your middleware around `Handler`.
+  DNS-rebinding protection checks the `Host` header: a request arriving on
+  a loopback address must name a loopback host or, with `Auth`,
+  `Resource`'s host, so a server on `127.0.0.1` behind a reverse proxy
+  that forwards the public `Host` works as is. Set
+  `Options.AllowedHosts` to accept exactly the hosts you list on every
+  request instead (loopback hosts aren't implied). A client
   that disconnects doesn't cancel a running tool, so a tool that can run
   long should bound its own work. Arguments reach `Execute` as sent, but
   over HTTP with protocol 2026-07-28 the go-sdk rejects a number outside

@@ -1763,7 +1763,7 @@ call to a declared tool the turn did not offer is still executed and flagged
 access — see [ADR-0047](docs/adr/0047-toolloop-toolboxes.md); `Config`,
 `Outcome` and `ToolCallEvent` each gain a field, so unkeyed literals of them
 no longer compile (use keyed literals; `Outcome`'s fields after `Messages`
-moved), and nothing changes when `Toolboxes` is nil), and **v1.7.0**
+moved), and nothing changes when `Toolboxes` is nil), **v1.7.0**
 (provider-neutral chat constructor: `providers.New(id, providers.Options{...})`
 in the new `llms/providers` package builds the chat client for any
 `llms.ProviderID` from `Model`, `APIKey`, `BaseURL`, `HTTPClient` and, for
@@ -1774,7 +1774,22 @@ matching `providers.ErrUnsupportedOption` and an unknown ID one matching
 `providers.ErrUnknownProvider`; on Vertex, `BaseURL` is the Private Service
 Connect root without `/v1`; importing `llms/providers` links every provider
 SDK — see [ADR-0048](docs/adr/0048-provider-neutral-constructor.md); purely
-additive, nothing changes for existing callers).
+additive, nothing changes for existing callers), and **v1.8.0**
+(**database migration required for `bucket/postgres` users**: apply
+`000002_detached_leases.up.sql` from `postgres.Migrations()` before deploying, or
+`postgres.New` fails with `*postgres.SchemaError` (required v2, found v1);
+users without `bucket/postgres` have nothing to do. Leases held through
+another process: a process without database access holds `bucket/postgres`
+leases through a service that has it. The service exposes
+`TryAcquireDetached` (one admission attempt) and `RenewLease`,
+`AdjustLease` and `ReleaseLease` by key and lease ID, which any instance can
+serve because the lease row records its own TTL, hard cap and charge; the
+holder uses `bucket/remote`, a `bucket.Limiter` over the app's own
+`remote.Backend` that waits and renews on its side and fails closed; a
+detached adjustment applies only while the lease is live; an acquire whose
+outcome is unknown (a lost COMMIT acknowledgement or remote response) is
+never reported as a refusal, which in-process `Acquire` now shares — see
+[ADR-0052](docs/adr/0052-bucket-detached-leases.md); otherwise additive).
 
 The separate `mcp` module has its own v0 line, tagged `mcp/vX.Y.Z` and outside
 the stability contract: **mcp/v0.1.0** (`mcpclient` runs an MCP server's

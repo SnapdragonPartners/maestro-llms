@@ -1,6 +1,6 @@
 # 0045. Image and document inputs for embeddings
 
-- **Status:** Accepted; amends [ADR-0006](0006-validation-error.md) (adds `ValidationEmbeddings`) and [ADR-0009](0009-vertex-backend-psc-and-gemini-embeddings.md) (the Vertex single-input rule)
+- **Status:** Accepted; amends [ADR-0006](0006-validation-error.md) (adds `ValidationEmbeddings`) and [ADR-0009](0009-vertex-backend-psc-and-gemini-embeddings.md) (the Vertex single-input rule); item 9's predicate updated for genai v1.79 (2026-11-22, see the amendment at the end)
 - **Date:** 2026-11-11
 
 ## Context
@@ -115,7 +115,8 @@ batch limit").
    bare names, full resource paths, and a project or location containing
    `gemini` or `maas`. A predicate test pins the genai version's behavior,
    so an SDK bump that changes routing shows up as a failing test. This
-   fixes the defect above for text and is required for media.
+   fixes the defect above for text and is required for media. (genai v1.79
+   changed the predicate; see the amendment at the end.)
 10. **Estimate, no bound.** `DefaultEstimator.EstimateEmbeddings` counts
     an input's `Parts` with the chat rules (text by bytes, media from the
     ADR-0040 figures, per-part overhead). `BoundEmbeddings` stays
@@ -254,3 +255,29 @@ Live tests on 2026-11-11, project `morris-qa`
 
 Not verified live: media on the Gemini API backend (the unit tests check
 the wire shape; Morris uses Vertex), and the 6-images-per-prompt limit.
+
+## Amendment: genai v1.79 routes by the model ID (2026-11-22)
+
+genai v1.79 rewrote `tIsVertexEmbedContentModel`. It now takes the **model
+ID** (the text after the last `/`) and routes it to `:embedContent` when the
+ID contains `gemini` or `maas`. The `gemini-embedding-001` exception is gone,
+and a project or location name no longer affects the route. The predicate
+test caught the change on the bump, as item 9 intended. Item 9 still holds:
+the route follows genai. `embedContentRoute` now mirrors v1.79, and the test
+pins it. On Vertex:
+
+- **`gemini-embedding-001` takes the `:embedContent` route.** It stays
+  single-input (by base name, and now by route as well). Its text parts are
+  sent as separate parts rather than joined (item 7), and `MaxInputBytes`
+  counts them without separators (item 8). An image or document is no
+  longer rejected before the call: the provider answers, as for every
+  `:embedContent` model (no per-model prediction, ADR-0040 item 6).
+- **A resource path routes by its model ID.** A predict-route model under a
+  project whose name contains `maas` or `gemini` now batches and joins text,
+  instead of being treated as single-input with media allowed. A model ID
+  containing `maas` still takes `:embedContent`.
+
+The rejected alternative "Matching the route on the base model name" was
+rejected because genai matched the raw string. genai now matches the model
+ID, so this ADR does too.
+

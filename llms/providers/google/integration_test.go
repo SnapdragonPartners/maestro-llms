@@ -30,7 +30,7 @@ func apiKey(t *testing.T) string {
 // context-overflow tests. Change them here when a model reaches end of life.
 const (
 	defaultChatModel  = "gemini-3.8-flash"
-	defaultLevelModel = "gemini-3-flash-preview" // takes thinkingLevel (Gemini 3)
+	defaultLevelModel = "gemini-3.8-flash" // takes thinkingLevel (Gemini 3); gemini-3-flash-preview was retired
 )
 
 func model() string {

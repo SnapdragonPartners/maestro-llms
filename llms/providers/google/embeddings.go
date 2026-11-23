@@ -41,15 +41,18 @@ func baseModel(model string) string {
 }
 
 // embedContentRoute reports whether genai sends model to Vertex's
-// :embedContent API rather than predict. It mirrors genai v1.77's
-// tIsVertexEmbedContentModel on the raw model string, so a resource path
-// whose project or location contains "gemini" or "maas" matches as genai
-// does (ADR-0045 item 9). TestEmbedContentRouteMatchesSDK pins the SDK's
-// behavior. On :embedContent genai sends one content per call with all its
-// parts; on predict it sends only each content's first text part.
+// :embedContent API rather than predict. It mirrors genai v1.79's
+// tIsVertexEmbedContentModel: the model ID (the last path segment)
+// contains "gemini" or "maas", gemini-embedding-001 included (ADR-0045
+// item 9). TestEmbedContentRouteMatchesSDK pins the SDK's behavior. On
+// :embedContent genai sends one content per call with all its parts; on
+// predict it sends only each content's first text part.
 func embedContentRoute(model string) bool {
-	return (strings.Contains(model, "gemini") && model != "gemini-embedding-001") ||
-		strings.Contains(model, "maas")
+	id := model
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		id = model[i+1:]
+	}
+	return strings.Contains(id, "gemini") || strings.Contains(id, "maas")
 }
 
 // batchLimit is the max inputs per call. Single-input models return 1: a

@@ -87,14 +87,17 @@ func TestEmbedContentRouteMatchesSDK(t *testing.T) {
 		model string
 		embed bool
 	}{
-		{"gemini-embedding-001", false},
+		{"gemini-embedding-001", true},
 		{"gemini-embedding-2", true},
 		{"text-embedding-005", false},
 		{"multimodalembedding@001", false},
 		{"publishers/google/models/gemini-embedding-2", true},
 		{"projects/p/locations/us-central1/publishers/google/models/gemini-embedding-001", true},
-		{"projects/maas-prod/locations/us-central1/publishers/google/models/text-embedding-005", true},
-		{"projects/gemini-team/locations/us-central1/publishers/google/models/text-embedding-005", true},
+		{"projects/p/locations/us-central1/publishers/acme/models/embed-maas", true},
+		// genai v1.79 matches the model ID only: a project or location
+		// containing "gemini" or "maas" no longer changes the route.
+		{"projects/maas-prod/locations/us-central1/publishers/google/models/text-embedding-005", false},
+		{"projects/gemini-team/locations/us-central1/publishers/google/models/text-embedding-005", false},
 		{"projects/p/locations/us-central1/publishers/google/models/text-embedding-005", false},
 	}
 	for _, tc := range cases {
@@ -124,7 +127,7 @@ func TestVertexSingleInputRule(t *testing.T) {
 		"gemini-embedding-2",
 		"gemini-embedding-001",
 		"projects/p/locations/us-central1/publishers/google/models/gemini-embedding-001",
-		"projects/maas-prod/locations/us-central1/publishers/google/models/text-embedding-005",
+		"projects/p/locations/us-central1/publishers/acme/models/embed-maas",
 	} {
 		v := &vertexServer{}
 		c := newVertexEmbed(t, model, v.handle)
@@ -136,11 +139,18 @@ func TestVertexSingleInputRule(t *testing.T) {
 		}
 	}
 
-	v := &vertexServer{}
-	c := newVertexEmbed(t, "text-embedding-005", v.handle)
-	resp, err := c.Embed(context.Background(), two)
-	if err != nil || len(resp.Vectors) != 2 {
-		t.Fatalf("text-embedding-005 batch on Vertex: %+v / %v", resp, err)
+	// Predict-route models batch, including a path whose project name
+	// contains "maas" (genai v1.79 routes by the model ID only).
+	for _, model := range []string{
+		"text-embedding-005",
+		"projects/maas-prod/locations/us-central1/publishers/google/models/text-embedding-005",
+	} {
+		v := &vertexServer{}
+		c := newVertexEmbed(t, model, v.handle)
+		resp, err := c.Embed(context.Background(), two)
+		if err != nil || len(resp.Vectors) != 2 {
+			t.Fatalf("%s batch on Vertex: %+v / %v", model, resp, err)
+		}
 	}
 
 	var body string

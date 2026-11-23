@@ -5,12 +5,12 @@ go 1.26.0
 toolchain go1.26.11
 
 require (
-	cloud.google.com/go/auth v0.24.3
+	cloud.google.com/go/auth v0.24.4
 	cloud.google.com/go/auth/oauth2adapt v0.3.1
 	github.com/anthropics/anthropic-sdk-go v1.84.0
-	github.com/jackc/pgx/v5 v5.12.0
-	github.com/openai/openai-go/v3 v3.96.0
-	google.golang.org/genai v1.77.0
+	github.com/jackc/pgx/v5 v5.13.0
+	github.com/openai/openai-go/v3 v3.104.0
+	google.golang.org/genai v1.79.1
 )
 
 require (
@@ -34,7 +34,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
-	github.com/tidwall/gjson v1.20.0 // indirect
+	github.com/tidwall/gjson v1.20.1 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect

@@ -29,7 +29,7 @@ func TestIntegrationGoogleReasoningBudget(t *testing.T) {
 }
 
 // levelModel is a model that takes thinkingLevel (Gemini 3), for tests that
-// set an effort: GOOGLE_LEVEL_MODEL, default gemini-3.8-flash.
+// set an effort: GOOGLE_LEVEL_MODEL, default gemini-3-flash-preview.
 func levelModel() string {
 	if m := os.Getenv("GOOGLE_LEVEL_MODEL"); m != "" {
 		return m

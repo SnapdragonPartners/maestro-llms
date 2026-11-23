@@ -55,6 +55,7 @@ func setAmbientGoogleEnv(t *testing.T) {
 		"GOOGLE_CLOUD_LOCATION":     "env-location",
 		"GOOGLE_CLOUD_REGION":       "env-region",
 		"GOOGLE_GENAI_USE_VERTEXAI": "true",
+		"GOOGLE_GENAI_API_VERSION":  "v1",
 	} {
 		t.Setenv(k, v)
 	}
@@ -65,8 +66,10 @@ func setAmbientGoogleEnv(t *testing.T) {
 // process-wide genai.SetDefaultBaseURLs (which genai consults before the
 // environment) set too, chat and embeddings on both backends, and
 // ListModels on the Gemini API, still go to the backend's default endpoint,
-// or to WithBaseURL when set, with the app-supplied credentials only. On
-// Vertex, ListModels sends nothing (ADR-0037).
+// or to WithBaseURL when set, with the app-supplied credentials only, at the
+// pinned API version (v1beta, or v1beta1 on Vertex) although
+// GOOGLE_GENAI_API_VERSION says v1. On Vertex, ListModels sends nothing
+// (ADR-0037).
 func TestEndpointIgnoresAmbientGoogleEnv(t *testing.T) {
 	setAmbientGoogleEnv(t)
 	t.Run("environment", testEndpointFromOptionsOnly)
@@ -76,6 +79,13 @@ func TestEndpointIgnoresAmbientGoogleEnv(t *testing.T) {
 		t.Cleanup(func() { genai.SetDefaultBaseURLs(genai.BaseURLParameters{}) })
 		testEndpointFromOptionsOnly(t)
 	})
+}
+
+// With no environment at all, the API version is still pinned: genai v1.78+
+// defaults the Gemini API to v1, where preview models are not served.
+func TestAPIVersionPinned(t *testing.T) {
+	t.Setenv("GOOGLE_GENAI_API_VERSION", "") // genai treats empty as unset
+	testEndpointFromOptionsOnly(t)
 }
 
 func testEndpointFromOptionsOnly(t *testing.T) {
@@ -145,6 +155,13 @@ func testEndpointFromOptionsOnly(t *testing.T) {
 				}
 				if strings.Contains(r.URL.Path, "env-") {
 					t.Errorf("%s: path carries an environment value", r.URL)
+				}
+				version := "/v1beta/"
+				if tc.vertex {
+					version = "/v1beta1/"
+				}
+				if !strings.HasPrefix(r.URL.Path, version) {
+					t.Errorf("%s: path not at the pinned API version %s", r.URL, version)
 				}
 			}
 		})

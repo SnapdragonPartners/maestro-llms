@@ -202,11 +202,12 @@ func (s *settings) clientConfig() (*genai.ClientConfig, error) {
 	return cc, nil
 }
 
-// applyTransport applies WithBaseURL (or the backend's default endpoint) and
-// WithHTTPClient to cc. On Vertex the injected client is authenticated with
+// applyTransport pins the API version and applies WithBaseURL (or the
+// backend's default endpoint) and WithHTTPClient to cc. On Vertex the injected client is authenticated with
 // the credentials: genai uses Credentials only for a client it builds
 // itself, so the client would otherwise send no auth (ADR-0029).
 func (s *settings) applyTransport(cc *genai.ClientConfig) error {
+	cc.HTTPOptions.APIVersion = apiVersion(cc.Backend)
 	cc.HTTPOptions.BaseURL = s.baseURL
 	if cc.HTTPOptions.BaseURL == "" {
 		cc.HTTPOptions.BaseURL = defaultBaseURL(cc.Backend, cc.Location)
@@ -223,6 +224,20 @@ func (s *settings) applyTransport(cc *genai.ClientConfig) error {
 		cc.HTTPClient = hc
 	}
 	return nil
+}
+
+// apiVersion is the API version the package always sends: v1beta on the
+// Gemini API and v1beta1 on Vertex, what genai used by default through
+// v1.77. genai v1.78 moved the Gemini API default to v1, where preview
+// models are not served, and reads GOOGLE_GENAI_API_VERSION on both
+// backends when the version is unset. Pinning it keeps requests where they
+// have always gone and keeps ambient state from redirecting them
+// (divergence G6).
+func apiVersion(backend genai.Backend) string {
+	if backend == genai.BackendVertexAI {
+		return "v1beta1"
+	}
+	return "v1beta"
 }
 
 // defaultBaseURL is the endpoint genai v1.75 picks when it is given no base

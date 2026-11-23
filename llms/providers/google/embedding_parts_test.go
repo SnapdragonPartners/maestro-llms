@@ -78,10 +78,10 @@ func isBadRequest(err error) bool {
 	return errors.As(err, &pe) && pe.Kind == llms.ErrorKindBadRequest
 }
 
-// ADR-0045 item 9: embedContentRoute agrees with the route genai v1.77
-// actually takes, on bare names and on raw resource paths (where genai
-// matches substrings of the project or location too). A genai bump that
-// changes routing fails here.
+// ADR-0045 item 9: embedContentRoute agrees with the route genai v1.79
+// actually takes, on bare names and on resource paths (where genai matches
+// the model ID, the last path segment, so a project or location name never
+// changes the route). A genai bump that changes routing fails here.
 func TestEmbedContentRouteMatchesSDK(t *testing.T) {
 	cases := []struct {
 		model string

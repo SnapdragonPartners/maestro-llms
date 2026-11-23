@@ -951,12 +951,11 @@ out, err := emb.Embed(ctx, llms.EmbeddingRequest{Inputs: []llms.EmbeddingInput{
 On Gemini (a multimodal model such as `gemini-embedding-2`, on the Gemini
 API or Vertex) the parts go to the provider as one content, and the model
 decides which media types it accepts. OpenAI embeddings, and Vertex models
-served by the predict API (`text-embedding-005`, `gemini-embedding-001`),
-are text-only: text parts are joined by a blank line and an image or
+served by the predict API (such as `text-embedding-005`), are text-only: text parts are joined by a blank line and an image or
 document is a `bad_request` before the call. `WithMaxInputBytes` limits
-the text as sent; media bytes don't count. On Vertex, Gemini embedding
-models other than `gemini-embedding-001` (by the SDK's routing, any name
-containing `gemini` or `maas`) take one input per call.
+the text as sent; media bytes don't count. On Vertex, models on the
+`:embedContent` API (by the SDK's routing, any model ID containing `gemini`
+or `maas`, `gemini-embedding-001` included) take one input per call.
 
 ### Vertex AI (Anthropic, Gemini chat & Gemini embeddings)
 

@@ -48,10 +48,7 @@ func baseModel(model string) string {
 // :embedContent genai sends one content per call with all its parts; on
 // predict it sends only each content's first text part.
 func embedContentRoute(model string) bool {
-	id := model
-	if i := strings.LastIndex(model, "/"); i >= 0 {
-		id = model[i+1:]
-	}
+	id := baseModel(model)
 	return strings.Contains(id, "gemini") || strings.Contains(id, "maas")
 }
 
@@ -243,7 +240,7 @@ func (c *EmbeddingClient) content(i int, in *llms.EmbeddingInput) (*genai.Conten
 		if media.HasMedia(in.Parts) {
 			return nil, 0, badRequest(c.model, fmt.Sprintf(
 				"embedding input %d: this model is served by Vertex's predict API, which takes text only; "+
-					"image and document parts need a model on the embedContent API (a Gemini embedding model other than gemini-embedding-001)", i))
+					"image and document parts need a model on the embedContent API (a model whose ID contains gemini, such as gemini-embedding-2)", i))
 		}
 		text := media.JoinText(in.Parts)
 		return genai.NewContentFromText(text, genai.RoleUser), len(text), nil

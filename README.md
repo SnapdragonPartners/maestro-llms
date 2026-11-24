@@ -82,9 +82,11 @@ in [`docs/MAESTRO_DIVERGENCES.md`](docs/MAESTRO_DIVERGENCES.md).
   [ADR-0011](docs/adr/0011-toolloop-helper.md).
 - **MCP server tools** (`mcp/mcpclient`, a separate v0 module): connect to
   an MCP server over stdio or Streamable HTTP and run its tools in the tool
-  loop as `toolloop.Tool` values. The MCP SDK stays out of the core module's
-  dependency graph. See
-  [ADR-0049](docs/adr/0049-mcp-module-and-client.md).
+  loop as `toolloop.Tool` values, with per-call `_meta` and call errors
+  that say whether a retry is safe. The MCP SDK stays out of the core
+  module's dependency graph. See
+  [ADR-0049](docs/adr/0049-mcp-module-and-client.md) and
+  [ADR-0053](docs/adr/0053-mcpclient-meta-and-call-errors.md).
 - **MCP server** (`mcp/mcpserver`, same module): serve your `toolloop.Tool`
   values to ChatGPT and other MCP clients over Streamable HTTP (optionally
   as an OAuth resource server) or stdio. See
@@ -762,7 +764,9 @@ serves over stdin/stdout without auth.
   over HTTP with protocol 2026-07-28 the go-sdk rejects a number outside
   float64's range (`1e1000`) before the call (an upstream limit).
 - **Not yet:** per-tool scopes (ChatGPT's `securitySchemes`), resources,
-  prompts, `structuredContent`.
+  prompts, `structuredContent`, and a request's `_meta`: `Execute` doesn't
+  receive it, so a server can't read what `mcpclient`'s `Options.Meta`
+  sends.
 
 ### OpenTelemetry (`otel/llmotel`)
 
@@ -1820,6 +1824,16 @@ with package-enforced audience, expiry and scope checks and RFC 9728
 metadata, and the authorization server left to the app — see
 [ADR-0050](docs/adr/0050-mcp-server.md); built on go-sdk v1.8.0 and
 requires the root module at v1.7.0; nothing changes for root-module users).
+**mcp/v0.2.0** (`mcpserver` gains `Options.AllowedHosts`, and with `Auth`
+set, its default Host check also accepts `Resource`'s host on a loopback
+connection, for serving behind a reverse proxy — amending
+[ADR-0050](docs/adr/0050-mcp-server.md); `mcpclient` gains `Options.Meta`
+for a per-call `_meta`, and every `Execute` error is exactly one of
+`ErrNotSent`, `ErrServerError` (`*CallError`) or `ErrOutcomeUnknown`, with
+unknown reported whenever the client can't be sure — see
+[ADR-0053](docs/adr/0053-mcpclient-meta-and-call-errors.md); `Execute`
+error messages now name their class; `mcpserver` doesn't yet pass a
+received `_meta` to `Execute`; still go-sdk v1.8.0 and root v1.7.0).
 
 The separate `otel` module has its own v0 line, tagged `otel/vX.Y.Z` and
 outside the stability contract: **otel/v0.1.0** (`llmotel` exports chat,

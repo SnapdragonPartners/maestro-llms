@@ -1835,6 +1835,12 @@ unknown reported whenever the client can't be sure — see
 [ADR-0053](docs/adr/0053-mcpclient-meta-and-call-errors.md); `Execute`
 error messages now name their class; `mcpserver` doesn't yet pass a
 received `_meta` to `Execute`; still go-sdk v1.8.0 and root v1.7.0).
+**mcp/v0.3.0** (`mcpserver.MetaFromContext` gives a tool the `_meta` the
+client sent with the call, without MCP's own keys, so what `mcpclient`'s
+`Options.Meta` sends now reaches tools served by `mcpserver`; the two share
+one reserved-key rule — see the
+[ADR-0050](docs/adr/0050-mcp-server.md) amendment for #200; additive;
+still go-sdk v1.8.0 and root v1.7.0).
 
 The separate `otel` module has its own v0 line, tagged `otel/vX.Y.Z` and
 outside the stability contract: **otel/v0.1.0** (`llmotel` exports chat,

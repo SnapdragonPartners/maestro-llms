@@ -176,30 +176,6 @@ func TestMetaRefused(t *testing.T) {
 	}
 }
 
-func TestCheckMetaKey(t *testing.T) {
-	valid := []string{
-		"run", "run_id", "a", "x.y-z_1", "com.example/run", "example/x", "a-b.c1/n",
-		"com.example.mcpish/x", "mcpx/y", "progressToken2", "app/progressToken",
-	}
-	invalid := []string{
-		"", "/x", "com.example/", "-a", "a-", "_a", "a b", "a/b/c",
-		"1com/x", "com-/x", "com..example/x",
-		"io.modelcontextprotocol/protocolVersion", "modelcontextprotocol.io/x",
-		"mcp/x", "mcp.dev/x", "tools.mcp.com/x", "api.MCP.org/x",
-		"progressToken",
-	}
-	for _, k := range valid {
-		if err := checkMetaKey(k); err != nil {
-			t.Errorf("checkMetaKey(%q) = %v, want valid", k, err)
-		}
-	}
-	for _, k := range invalid {
-		if err := checkMetaKey(k); err == nil {
-			t.Errorf("checkMetaKey(%q) = nil, want an error", k)
-		}
-	}
-}
-
 func TestNotSentBeforeTheSDK(t *testing.T) {
 	var n atomic.Int32
 	open := func(t *testing.T) (*Session, toolloop.Tool) {

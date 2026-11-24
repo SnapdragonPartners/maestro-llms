@@ -1,6 +1,6 @@
 # 0050. `mcpserver`: serve `toolloop.Tool` over MCP, as an OAuth resource server
 
-- **Status:** Accepted; §6's DNS-rebinding default amended for reverse proxies (2026-11-23, #188, see the amendment at the end)
+- **Status:** Accepted; §6's DNS-rebinding default amended for reverse proxies (2026-11-23, #188), and a request's `_meta` passed to `Execute` (2026-11-24, #200); see the amendments at the end
 - **Date:** 2026-11-17
 
 ## Context
@@ -386,7 +386,9 @@ absolute URI. `Verifier` must be non-nil. Any failure is an error from
   output schemas, and server-to-client requests.
 - The `openai/profile` tool and other OpenAI `_meta` keys. An app can
   serve a profile tool as an ordinary tool; its `_meta` flag waits for a
-  generic `_meta` seam.
+  generic `_meta` seam. (Since the #200 amendment a request's `_meta`
+  reaches `Execute`; publishing `_meta` on listed tools or results, and
+  OpenAI's own keys, are still out.)
 - Stateful sessions, SSE responses and resumability (§6).
 
 ## Consequences
@@ -513,3 +515,58 @@ Rejected alternatives:
 - **Trust `X-Forwarded-Host`.** Only the proxy knows whether that header
   is its own; trusting it lets any client choose the host it is checked
   against.
+
+## Amendment: a request's `_meta` reaches `Execute` (2026-11-24, #200)
+
+ADR-0053 gave `mcpclient` a per-call `_meta` (`Options.Meta`), but this
+package passed `Execute` only the tool's name and arguments, so a tool it
+served couldn't read what that client sent. maestro-agents found it as soon
+as its tools needed the run context and idempotency key on the server
+side. The two packages are meant to reverse each other (ADR-0049 §5), so
+the server now hands `_meta` to the tool:
+
+```go
+// MetaFromContext returns the _meta a client sent with the tools/call
+// request, inside the tool's Execute. ok is false when the request carried
+// no keys besides MCP's own.
+func MetaFromContext(ctx context.Context) (map[string]any, bool)
+```
+
+- **The context, not `llms.ToolCall`.** `ToolCall` is the root module's
+  type, under the v1 contract, and a `_meta` field there would mean
+  nothing to an in-process tool. A context value matches
+  `TokenInfoFromContext`, the other per-request fact a tool reads.
+- **App keys only.** Keys MCP reserves are left out: a prefix with a
+  label `modelcontextprotocol` or `mcp`, which includes the go-sdk's own
+  `io.modelcontextprotocol/...` keys under protocol 2026-07-28, and
+  `progressToken`. This is the client's reservation rule from ADR-0053 §1.
+  The two packages share it from `internal/convert`, so they can't drift.
+  Every other key is passed as sent, without checking its format: the
+  client refuses malformed keys on the way out, and a server is lenient
+  on the way in.
+- **Values as the go-sdk decoded them.** Numbers are float64, objects
+  `map[string]any`, arrays `[]any`. The go-sdk decodes `_meta` before this
+  package sees it, so its raw bytes aren't available. That is the same
+  limit ADR-0049 §4.4 records for listed schemas. Idempotency keys and run
+  IDs are strings, so none is lost.
+- **Each call owns its map.** The handler builds a fresh map per request,
+  so a tool may modify it. `ok` is false when the request had no app keys.
+- **Unverified client input.** Unlike `TokenInfoFromContext`, which is the
+  verified user, `_meta` is whatever the calling client sent. A tool may
+  use it as run context or an idempotency hint, never for authorization or
+  scoping; an idempotency store keyed on it should also key on the
+  verified subject.
+- **Scope.** Exposing `_meta` only. Deduplicating calls or caching results
+  by an idempotency key stays the app's job, including recovering the
+  result of a call whose HTTP connection dropped (§3: it runs to
+  completion and its result is discarded).
+
+Rejected alternatives:
+
+- **Expose every key, including MCP's own.** A tool would see protocol
+  bookkeeping it can't act on, and the key set would change with the
+  protocol version.
+- **Raw JSON per key (`map[string]json.RawMessage`).** Exact numbers
+  would need the request's bytes, which the go-sdk has already decoded.
+  Re-encoding them gains nothing, and the client sends a `map[string]any`
+  too.

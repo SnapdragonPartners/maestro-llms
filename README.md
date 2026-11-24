@@ -727,7 +727,11 @@ mux.Handle(srv.MetadataPath(), srv.MetadataHandler())
 ```
 
 Inside a tool, `mcpserver.TokenInfoFromContext(ctx)` returns the verified
-user (`Subject`, `Scopes`, `Extra`). For a local server, `srv.ServeStdio(ctx)`
+user (`Subject`, `Scopes`, `Extra`), and `mcpserver.MetaFromContext(ctx)`
+returns the `_meta` the client sent with the call (what `mcpclient`'s
+`Options.Meta` sends: a run ID, an idempotency key), without MCP's own
+keys. `_meta` is unverified client input: use it as context or an
+idempotency hint, never for authorization or scoping. For a local server, `srv.ServeStdio(ctx)`
 serves over stdin/stdout without auth.
 
 - **Resource server only.** The package checks tokens and publishes
@@ -764,9 +768,7 @@ serves over stdin/stdout without auth.
   over HTTP with protocol 2026-07-28 the go-sdk rejects a number outside
   float64's range (`1e1000`) before the call (an upstream limit).
 - **Not yet:** per-tool scopes (ChatGPT's `securitySchemes`), resources,
-  prompts, `structuredContent`, and a request's `_meta`: `Execute` doesn't
-  receive it, so a server can't read what `mcpclient`'s `Options.Meta`
-  sends.
+  prompts, `structuredContent`.
 
 ### OpenTelemetry (`otel/llmotel`)
 
@@ -1832,8 +1834,14 @@ for a per-call `_meta`, and every `Execute` error is exactly one of
 `ErrNotSent`, `ErrServerError` (`*CallError`) or `ErrOutcomeUnknown`, with
 unknown reported whenever the client can't be sure — see
 [ADR-0053](docs/adr/0053-mcpclient-meta-and-call-errors.md); `Execute`
-error messages now name their class; `mcpserver` doesn't yet pass a
+error messages now name their class; `mcpserver` didn't yet pass a
 received `_meta` to `Execute`; still go-sdk v1.8.0 and root v1.7.0).
+**mcp/v0.3.0** (`mcpserver.MetaFromContext` gives a tool the `_meta` the
+client sent with the call, without MCP's own keys, so what `mcpclient`'s
+`Options.Meta` sends now reaches tools served by `mcpserver`; the two share
+one reserved-key rule — see the
+[ADR-0050](docs/adr/0050-mcp-server.md) amendment for #200; additive;
+still go-sdk v1.8.0 and root v1.7.0).
 
 The separate `otel` module has its own v0 line, tagged `otel/vX.Y.Z` and
 outside the stability contract: **otel/v0.1.0** (`llmotel` exports chat,

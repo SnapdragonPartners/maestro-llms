@@ -764,7 +764,9 @@ serves over stdin/stdout without auth.
   over HTTP with protocol 2026-07-28 the go-sdk rejects a number outside
   float64's range (`1e1000`) before the call (an upstream limit).
 - **Not yet:** per-tool scopes (ChatGPT's `securitySchemes`), resources,
-  prompts, `structuredContent`.
+  prompts, `structuredContent`, and a request's `_meta`: `Execute` doesn't
+  receive it, so a server can't read what `mcpclient`'s `Options.Meta`
+  sends.
 
 ### OpenTelemetry (`otel/llmotel`)
 
@@ -1830,7 +1832,8 @@ for a per-call `_meta`, and every `Execute` error is exactly one of
 `ErrNotSent`, `ErrServerError` (`*CallError`) or `ErrOutcomeUnknown`, with
 unknown reported whenever the client can't be sure — see
 [ADR-0053](docs/adr/0053-mcpclient-meta-and-call-errors.md); `Execute`
-error messages now name their class; still go-sdk v1.8.0 and root v1.7.0).
+error messages now name their class; `mcpserver` doesn't yet pass a
+received `_meta` to `Execute`; still go-sdk v1.8.0 and root v1.7.0).
 
 The separate `otel` module has its own v0 line, tagged `otel/vX.Y.Z` and
 outside the stability contract: **otel/v0.1.0** (`llmotel` exports chat,

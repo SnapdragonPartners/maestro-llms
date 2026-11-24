@@ -338,6 +338,9 @@ func TestRawServerReplies(t *testing.T) {
 				if !ce.Malformed || ce.Code != 0 {
 					t.Errorf("CallError = %+v", ce)
 				}
+				if msg := ce.Error(); strings.Count(msg, "malformed result") != 1 || strings.HasPrefix(ce.Message, "malformed result") {
+					t.Errorf("Error() = %q, Message = %q: want one \"malformed result\", in Error only", msg, ce.Message)
+				}
 			}},
 		// Codes the go-sdk also creates itself are never trusted as the
 		// server's answer.

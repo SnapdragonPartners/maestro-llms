@@ -131,7 +131,9 @@ func (s *Session) executor(serverName string) func(context.Context, llms.ToolCal
 		}
 		out, err := convert.Result(res)
 		if err != nil {
-			return toolloop.ToolResult{}, &CallError{Tool: serverName, Message: err.Error(), Malformed: true, Err: err}
+			// convert's errors already say "malformed result"; Error adds it.
+			msg := strings.TrimPrefix(err.Error(), "malformed result: ")
+			return toolloop.ToolResult{}, &CallError{Tool: serverName, Message: msg, Malformed: true, Err: err}
 		}
 		return out, nil
 	}

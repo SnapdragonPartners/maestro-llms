@@ -1,6 +1,6 @@
 # 0049. MCP module: a nested v0 module, and server tools as `toolloop.Tool`
 
-- **Status:** Accepted
+- **Status:** Accepted; §4.6's call errors classified and per-call `_meta` added by ADR-0053 (2026-11-23, #194)
 - **Date:** 2026-11-17
 
 ## Context
@@ -114,6 +114,10 @@ type Options struct {
     Name func(serverName string) string
     // Filter selects tools by the server's name. Nil keeps every tool.
     Filter func(serverName string) bool
+    // Meta (added by ADR-0053) returns the _meta sent with each tools/call
+    // request. Nil, or a nil or empty map, sends none; an error or an
+    // invalid map fails the call with ErrNotSent before anything is sent.
+    Meta func(ctx context.Context, call llms.ToolCall) (map[string]any, error)
 }
 
 // Connect opens a session: it starts or dials the server and runs the MCP
@@ -127,7 +131,7 @@ type Session struct{ /* unexported */ }
 func (s *Session) Tools(ctx context.Context) ([]toolloop.Tool, error)
 
 // Close ends the session (and stops a Command server). Execute on a tool
-// from a closed session returns an error.
+// from a closed session returns an ErrNotSent error (ADR-0053).
 func (s *Session) Close() error
 
 // InvalidToolError reports a server tool that can't be offered to a model.
@@ -136,6 +140,9 @@ type InvalidToolError struct {
     Tool string // the server's name
 }
 ```
+
+ADR-0053 adds the call-error sentinels `ErrNotSent`, `ErrServerError` and
+`ErrOutcomeUnknown` and the `*CallError` type; its §3 has their listing.
 
 #### 4.1 Lifecycle and concurrency
 
@@ -258,6 +265,10 @@ loop passes.
   model-visible, and the loop continues.
 - `Stop` is never set: a remote tool can't end the loop. An app that wants
   a terminal MCP tool wraps it.
+
+(Amended by ADR-0053: `Options.Meta` adds a per-call `_meta`, and every
+`Execute` error is one of `ErrNotSent`, `ErrServerError` (`*CallError`) or
+`ErrOutcomeUnknown`.)
 
 #### 4.7 Results
 

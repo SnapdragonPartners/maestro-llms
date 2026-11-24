@@ -1,6 +1,6 @@
 # 0053. `mcpclient`: per-call `_meta` and classified call errors
 
-- **Status:** Accepted
+- **Status:** Accepted; the server side (`mcpserver.MetaFromContext`) added by the ADR-0050 amendment for #200 (2026-11-24)
 - **Date:** 2026-11-23
 
 ## Context
@@ -75,7 +75,10 @@ already wraps `toolloop.Tool`), and `Meta` reads them.
 - A `Meta` error or an invalid map is `ErrNotSent` (§2).
 
 `Meta` applies to `tools/call` only. Reading `_meta` on the server side
-(`mcpserver`, ADR-0050) is not part of this decision.
+(`mcpserver`, ADR-0050) is not part of this decision. (Added since: the
+ADR-0050 amendment for #200 gives tools `mcpserver.MetaFromContext`,
+dropping the keys this rule reserves, from the same `internal/convert`
+rule.)
 
 ### 2. Three classes of call error
 
@@ -184,8 +187,8 @@ type appears in the API (ADR-0049 §2); `Unwrap` reaches the SDK's error, as
   context error still works.
 - A call with invalid JSON arguments, or on a session whose connection has
   ended, now fails before reaching the SDK.
-- `mcpserver` doesn't yet pass a request's `_meta` to `Execute`; a server
-  built with it can't read what this client sends until that is added.
+- `mcpserver` didn't pass a request's `_meta` to `Execute` when this
+  shipped (mcp/v0.2.0). The ADR-0050 amendment for #200 adds it.
 - No `MAESTRO_DIVERGENCES.md` row: Maestro has no MCP client (ADR-0049).
 
 ## References

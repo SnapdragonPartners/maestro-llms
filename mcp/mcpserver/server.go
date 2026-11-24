@@ -231,6 +231,7 @@ func (s *Server) handler(name string, execute func(context.Context, llms.ToolCal
 				ctx = context.WithValue(ctx, tokenInfoKey{}, info)
 			}
 		}
+		ctx = withMeta(ctx, req.Params.Meta)
 		res, err := execute(ctx, llms.ToolCall{Name: name, Parameters: args})
 		if err != nil {
 			return nil, s.failed(ctx, name, fmt.Errorf("mcpserver: tool %q: %w", name, err))

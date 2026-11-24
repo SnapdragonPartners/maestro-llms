@@ -727,7 +727,10 @@ mux.Handle(srv.MetadataPath(), srv.MetadataHandler())
 ```
 
 Inside a tool, `mcpserver.TokenInfoFromContext(ctx)` returns the verified
-user (`Subject`, `Scopes`, `Extra`). For a local server, `srv.ServeStdio(ctx)`
+user (`Subject`, `Scopes`, `Extra`), and `mcpserver.MetaFromContext(ctx)`
+returns the `_meta` the client sent with the call (what `mcpclient`'s
+`Options.Meta` sends: a run ID, an idempotency key), without MCP's own
+keys. For a local server, `srv.ServeStdio(ctx)`
 serves over stdin/stdout without auth.
 
 - **Resource server only.** The package checks tokens and publishes
@@ -764,9 +767,7 @@ serves over stdin/stdout without auth.
   over HTTP with protocol 2026-07-28 the go-sdk rejects a number outside
   float64's range (`1e1000`) before the call (an upstream limit).
 - **Not yet:** per-tool scopes (ChatGPT's `securitySchemes`), resources,
-  prompts, `structuredContent`, and a request's `_meta`: `Execute` doesn't
-  receive it, so a server can't read what `mcpclient`'s `Options.Meta`
-  sends.
+  prompts, `structuredContent`.
 
 ### OpenTelemetry (`otel/llmotel`)
 

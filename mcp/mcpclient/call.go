@@ -178,7 +178,7 @@ func sdkLocalCode(code int64) bool {
 // the reservations, and checks that the values marshal to JSON.
 func checkMeta(meta map[string]any) error {
 	for k := range meta {
-		if err := checkMetaKey(k); err != nil {
+		if err := convert.CheckMetaKey(k); err != nil {
 			return fmt.Errorf("Options.Meta: key %q: %w", k, err)
 		}
 	}
@@ -189,66 +189,4 @@ func checkMeta(meta map[string]any) error {
 		return fmt.Errorf("Options.Meta: %w", err)
 	}
 	return nil
-}
-
-// checkMetaKey applies MCP's _meta key rule: an optional prefix of
-// dot-separated labels followed by a slash, then a name. A label starts with
-// a letter, ends with a letter or digit, and has letters, digits or hyphens
-// inside. A name starts and ends with a letter or digit and has letters,
-// digits, hyphens, underscores or dots inside. A prefix with a label
-// "modelcontextprotocol" or "mcp" is reserved for MCP (the go-sdk's own keys
-// are io.modelcontextprotocol/...), and progressToken is a field MCP defines.
-func checkMetaKey(k string) error {
-	prefix, name, hasPrefix := strings.Cut(k, "/")
-	if !hasPrefix {
-		prefix, name = "", k
-	}
-	if hasPrefix {
-		if prefix == "" {
-			return errors.New("empty prefix")
-		}
-		for label := range strings.SplitSeq(prefix, ".") {
-			if !validLabel(label) {
-				return fmt.Errorf("invalid prefix label %q", label)
-			}
-			if l := strings.ToLower(label); l == "modelcontextprotocol" || l == "mcp" {
-				return errors.New("the prefix is reserved for MCP")
-			}
-		}
-	}
-	if !validName(name) {
-		return errors.New("invalid name")
-	}
-	if !hasPrefix && name == "progressToken" {
-		return errors.New("progressToken is defined by MCP")
-	}
-	return nil
-}
-
-func isAlpha(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
-func isDigit(c byte) bool { return c >= '0' && c <= '9' }
-func isAlnum(c byte) bool { return isAlpha(c) || isDigit(c) }
-
-func validLabel(l string) bool {
-	if l == "" || !isAlpha(l[0]) || !isAlnum(l[len(l)-1]) {
-		return false
-	}
-	for i := range len(l) {
-		if c := l[i]; !isAlnum(c) && c != '-' {
-			return false
-		}
-	}
-	return true
-}
-
-func validName(n string) bool {
-	if n == "" || !isAlnum(n[0]) || !isAlnum(n[len(n)-1]) {
-		return false
-	}
-	for i := range len(n) {
-		if c := n[i]; !isAlnum(c) && c != '-' && c != '_' && c != '.' {
-			return false
-		}
-	}
-	return true
 }

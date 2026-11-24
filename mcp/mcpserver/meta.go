@@ -22,6 +22,11 @@ type metaKey struct{}
 //
 // The map belongs to this call: each request gets its own, so a tool may
 // modify it.
+//
+// Unlike TokenInfoFromContext, the map is unverified: it is whatever the
+// calling client sent. Use it as run context or an idempotency hint, never
+// for authorization or scoping; an idempotency store keyed on it should
+// also key on the verified subject.
 func MetaFromContext(ctx context.Context) (map[string]any, bool) {
 	m, ok := ctx.Value(metaKey{}).(map[string]any)
 	return m, ok

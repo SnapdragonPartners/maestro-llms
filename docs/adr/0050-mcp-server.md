@@ -386,7 +386,9 @@ absolute URI. `Verifier` must be non-nil. Any failure is an error from
   output schemas, and server-to-client requests.
 - The `openai/profile` tool and other OpenAI `_meta` keys. An app can
   serve a profile tool as an ordinary tool; its `_meta` flag waits for a
-  generic `_meta` seam.
+  generic `_meta` seam. (Since the #200 amendment a request's `_meta`
+  reaches `Execute`; publishing `_meta` on listed tools or results, and
+  OpenAI's own keys, are still out.)
 - Stateful sessions, SSE responses and resumability (§6).
 
 ## Consequences
@@ -549,6 +551,11 @@ func MetaFromContext(ctx context.Context) (map[string]any, bool)
   IDs are strings, so none is lost.
 - **Each call owns its map.** The handler builds a fresh map per request,
   so a tool may modify it. `ok` is false when the request had no app keys.
+- **Unverified client input.** Unlike `TokenInfoFromContext`, which is the
+  verified user, `_meta` is whatever the calling client sent. A tool may
+  use it as run context or an idempotency hint, never for authorization or
+  scoping; an idempotency store keyed on it should also key on the
+  verified subject.
 - **Scope.** Exposing `_meta` only. Deduplicating calls or caching results
   by an idempotency key stays the app's job, including recovering the
   result of a call whose HTTP connection dropped (§3: it runs to
